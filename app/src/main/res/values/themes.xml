@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- InstaFrame Nothing風ダークテーマ -->
+    <style name="Theme.InstaFrame" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- プライマリカラー -->
+        <item name="colorPrimary">@color/white</item>
+        <item name="colorOnPrimary">@color/black</item>
+        <item name="colorPrimaryContainer">@color/gray_light</item>
+        <item name="colorOnPrimaryContainer">@color/black</item>
+        
+        <!-- セカンダリカラー -->
+        <item name="colorSecondary">@color/gray</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="colorSecondaryContainer">@color/gray_dark</item>
+        <item name="colorOnSecondaryContainer">@color/white</item>
+        
+        <!-- 背景・サーフェス -->
+        <item name="android:colorBackground">@color/black</item>
+        <item name="colorOnBackground">@color/white</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/white</item>
+        <item name="colorSurfaceVariant">@color/surface_variant_dark</item>
+        <item name="colorOnSurfaceVariant">@color/gray_light</item>
+        
+        <!-- システムバー -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        
+        <!-- その他 -->
+        <item name="colorOutline">@color/gray</item>
+        <item name="colorError">@color/error</item>
+        <item name="colorOnError">@color/black</item>
+    </style>
+</resources>

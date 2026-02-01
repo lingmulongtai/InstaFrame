@@ -1,4 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PhotoFrame</string>
+    <string name="app_name">InstaFrame</string>
+    
+    <!-- カメラ画面 -->
+    <string name="camera_flash">フラッシュ</string>
+    <string name="camera_switch">カメラ切替</string>
+    <string name="camera_capture">撮影</string>
+    <string name="camera_gallery">ギャラリー</string>
+    <string name="camera_filter">フィルター</string>
+    
+    <!-- 編集画面 -->
+    <string name="edit_filters">フィルター</string>
+    <string name="edit_frames">フレーム</string>
+    <string name="edit_adjust">調整</string>
+    <string name="edit_watermark">スタンプ</string>
+    <string name="edit_save">保存</string>
+    <string name="edit_cancel">キャンセル</string>
+    
+    <!-- 調整項目 -->
+    <string name="adjust_brightness">明るさ</string>
+    <string name="adjust_contrast">コントラスト</string>
+    <string name="adjust_saturation">彩度</string>
+    <string name="adjust_exposure">露出</string>
+    <string name="adjust_highlights">ハイライト</string>
+    <string name="adjust_shadows">シャドウ</string>
+    <string name="adjust_temperature">色温度</string>
+    <string name="adjust_tint">ティント</string>
+    <string name="adjust_vibrance">バイブランス</string>
+    <string name="adjust_clarity">クラリティ</string>
+    <string name="adjust_dehaze">デヘイズ</string>
+    <string name="adjust_sharpness">シャープネス</string>
+    
+    <!-- ウォーターマーク -->
+    <string name="watermark_shot_on">Shot on ウォーターマーク</string>
+    <string name="watermark_date_stamp">日付スタンプ</string>
+    <string name="watermark_custom">カスタムテキスト</string>
+    
+    <!-- ギャラリー画面 -->
+    <string name="gallery_empty_title">写真を選択して編集を始めましょう</string>
+    <string name="gallery_select_photos">写真を選択</string>
+    <string name="gallery_open_camera">カメラ</string>
+    
+    <!-- 権限 -->
+    <string name="permission_camera_required">カメラを使用するには権限が必要です</string>
+    <string name="permission_storage_required">写真にアクセスするには権限が必要です</string>
 </resources>
