@@ -108,6 +108,25 @@ object ImageUtils {
     }
 
     /**
+     * 複数のBitmapをギャラリーに一括保存
+     * @return 保存に成功した件数
+     */
+    suspend fun saveMultipleToGallery(
+        context: Context,
+        bitmaps: List<Bitmap>,
+        quality: Int = 95
+    ): Int = withContext(Dispatchers.IO) {
+        var savedCount = 0
+        val timestamp = System.currentTimeMillis()
+        bitmaps.forEachIndexed { index, bitmap ->
+            val fileName = "InstaFrame_${timestamp}_${index + 1}"
+            val uri = saveBitmapToGallery(context, bitmap, fileName, quality)
+            if (uri != null) savedCount++
+        }
+        savedCount
+    }
+
+    /**
      * EXIF情報を保存画像にコピー
      */
     suspend fun copyExifData(
