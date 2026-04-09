@@ -12,13 +12,16 @@
   <meta property="og:description" content="Add beautiful EXIF frames to your photos in batch. Free, local, private.">
   <meta property="og:type" content="website">
 
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap">
+
   <!-- Styles -->
   <link rel="stylesheet" href="css/style.css">
 
   <!-- CDN Libraries -->
-  <!-- exifr: modern EXIF reader -->
   <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
-  <!-- JSZip: ZIP file creation -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
@@ -54,60 +57,136 @@
   </div>
 
   <!-- Settings Panel -->
-  <div class="card">
+  <div class="card settings-card">
     <div class="card-header" data-i18n="settingsTitle">Frame Settings</div>
-    <div class="card-body">
-      <div class="settings-grid">
+    <div class="settings-layout">
 
-        <!-- Frame Color -->
-        <div class="setting-row">
-          <div class="setting-label" data-i18n="frameColor">Frame Color</div>
-          <div class="color-options">
-            <label class="color-option">
-              <input type="radio" name="frameColor" value="#ffffff">
-              <span class="color-swatch white"></span>
-              <span data-i18n="colorWhite">White</span>
-            </label>
-            <label class="color-option">
-              <input type="radio" name="frameColor" value="#F0F0F0" checked>
-              <span class="color-swatch lightgray"></span>
-              <span data-i18n="colorLightGray">Light Gray</span>
-            </label>
-            <label class="color-option">
-              <input type="radio" name="frameColor" value="#1a1a1a">
-              <span class="color-swatch black"></span>
-              <span data-i18n="colorBlack">Black</span>
-            </label>
+      <!-- Live Preview Pane (hidden until images are loaded) -->
+      <div class="live-preview-pane" id="livePreviewPane" style="display:none;">
+        <div class="live-preview-label" data-i18n="livePreview">Preview</div>
+        <canvas id="livePreviewCanvas"></canvas>
+      </div>
+
+      <!-- Settings Controls -->
+      <div class="card-body settings-pane">
+        <div class="settings-grid">
+
+          <!-- Frame Color -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="frameColor">Frame Color</div>
+            <div class="color-options">
+              <label class="color-option">
+                <input type="radio" name="frameColor" value="#ffffff">
+                <span class="color-swatch white"></span>
+                <span data-i18n="colorWhite">White</span>
+              </label>
+              <label class="color-option">
+                <input type="radio" name="frameColor" value="#F0F0F0" checked>
+                <span class="color-swatch lightgray"></span>
+                <span data-i18n="colorLightGray">Light Gray</span>
+              </label>
+              <label class="color-option">
+                <input type="radio" name="frameColor" value="#1a1a1a">
+                <span class="color-swatch black"></span>
+                <span data-i18n="colorBlack">Black</span>
+              </label>
+              <label class="color-option">
+                <input type="radio" name="frameColor" value="custom">
+                <span class="color-swatch" id="customColorSwatch" style="background:#e8c49a;"></span>
+                <span data-i18n="colorCustom">Custom</span>
+              </label>
+              <input type="color" id="customColorPicker" value="#e8c49a" title="Pick custom color">
+            </div>
           </div>
-        </div>
 
-        <!-- Frame Thickness -->
-        <div class="setting-row">
-          <div class="setting-label" data-i18n="frameThickness">Frame Thickness</div>
-          <div class="setting-row-inline">
-            <input type="range" id="thicknessRange" min="0.4" max="2.0" step="0.1" value="1.0">
-            <span class="range-val" id="thicknessRangeVal">1.0×</span>
+          <!-- Frame Thickness -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="frameThickness">Frame Thickness</div>
+            <div class="setting-row-inline">
+              <input type="range" id="thicknessRange" min="0.4" max="2.0" step="0.1" value="1.0">
+              <span class="range-val" id="thicknessRangeVal">1.0×</span>
+            </div>
           </div>
-        </div>
 
-        <!-- Shot on Font -->
-        <div class="setting-row">
-          <div class="setting-label" data-i18n="shotOnFontSize">"Shot on" Font Size</div>
-          <div class="setting-row-inline">
-            <input type="range" id="shotOnFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
-            <span class="range-val" id="shotOnFontRangeVal">1.0×</span>
+          <!-- Shot on Font -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="shotOnFontSize">"Shot on" Font Size</div>
+            <div class="setting-row-inline">
+              <input type="range" id="shotOnFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
+              <span class="range-val" id="shotOnFontRangeVal">1.0×</span>
+            </div>
           </div>
-        </div>
 
-        <!-- EXIF Font -->
-        <div class="setting-row">
-          <div class="setting-label" data-i18n="exifFontSize">EXIF Font Size</div>
-          <div class="setting-row-inline">
-            <input type="range" id="exifFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
-            <span class="range-val" id="exifFontRangeVal">1.0×</span>
+          <!-- EXIF Font -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="exifFontSize">EXIF Font Size</div>
+            <div class="setting-row-inline">
+              <input type="range" id="exifFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
+              <span class="range-val" id="exifFontRangeVal">1.0×</span>
+            </div>
           </div>
-        </div>
 
+          <!-- Text Vertical Offset -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="textOffsetY">Text Vertical Offset</div>
+            <div class="setting-row-inline">
+              <input type="range" id="textOffsetRange" min="-2.0" max="2.0" step="0.1" value="0">
+              <span class="range-val" id="textOffsetRangeVal">0.0</span>
+            </div>
+          </div>
+
+          <!-- Text Visibility Toggles -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="textVisibility">Text Visibility</div>
+            <div class="toggle-group">
+              <label class="toggle-option">
+                <input type="checkbox" id="showShotOn" checked>
+                <span data-i18n="showShotOn">Show "Shot on"</span>
+              </label>
+              <label class="toggle-option">
+                <input type="checkbox" id="showDecoLine" checked>
+                <span data-i18n="showDecoLine">Decorative Line</span>
+              </label>
+              <label class="toggle-option">
+                <input type="checkbox" id="showExifInfo" checked>
+                <span data-i18n="showExifInfo">EXIF Info</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Outer Padding -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="outerPadding">Outer Padding</div>
+            <div class="setting-row-inline">
+              <input type="range" id="outerPaddingRange" min="0" max="15" step="1" value="0">
+              <span class="range-val" id="outerPaddingRangeVal">0%</span>
+            </div>
+          </div>
+
+          <!-- Aspect Ratio -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="aspectRatio">Aspect Ratio</div>
+            <div class="ratio-options">
+              <label class="ratio-option">
+                <input type="radio" name="aspectRatio" value="original" checked>
+                <span data-i18n="ratioOriginal">Original</span>
+              </label>
+              <label class="ratio-option">
+                <input type="radio" name="aspectRatio" value="1:1">
+                <span>1:1</span>
+              </label>
+              <label class="ratio-option">
+                <input type="radio" name="aspectRatio" value="4:5">
+                <span>4:5</span>
+              </label>
+              <label class="ratio-option">
+                <input type="radio" name="aspectRatio" value="16:9">
+                <span>16:9</span>
+              </label>
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
   </div>
@@ -150,6 +229,25 @@
 <footer class="site-footer">
   InstaFrame &mdash; Open source &middot; Client-side only &middot; No server, no tracking
 </footer>
+
+<!-- ─── Photo Preview Modal ─────────────────────────────────────────────────── -->
+<div id="photoModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Photo preview">
+  <div class="modal-inner">
+    <button class="modal-close" id="modalClose" aria-label="Close">&times;</button>
+    <button class="modal-nav modal-prev" id="modalPrev" aria-label="Previous photo">&#8249;</button>
+    <div class="modal-image-wrap">
+      <canvas id="modalCanvas"></canvas>
+      <img id="modalImg" alt="">
+    </div>
+    <button class="modal-nav modal-next" id="modalNext" aria-label="Next photo">&#8250;</button>
+    <div class="modal-footer">
+      <span id="modalFilename" class="modal-filename"></span>
+      <button class="btn btn-primary btn-sm" id="modalDownload">
+        <span data-i18n="downloadSingle">Download</span>
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- Scripts -->
 <script src="js/i18n.js"></script>
