@@ -5,8 +5,11 @@
 
 const FrameEngine = (() => {
 
+  // Wait for fonts (including Google Fonts) to be ready before canvas rendering
+  const fontsReady = document.fonts ? document.fonts.ready : Promise.resolve();
+
   /**
-   * Main entry point.
+   * Main entry point (sync).
    * @param {HTMLImageElement} img  - Loaded image element
    * @param {object} exif          - EXIF data fields
    * @param {object} settings      - Frame settings
@@ -53,7 +56,7 @@ const FrameEngine = (() => {
     ctx.drawImage(img, sB, tB, W, H);
 
     // --- Subtle inner shadow on image edges ---
-    drawInnerShadow(ctx, sB, tB, W, H, frameColor);
+    drawInnerShadow(ctx, sB, tB, W, H);
 
     // --- EXIF text in bottom area ---
     drawExifText(ctx, exif, settings, {
@@ -67,7 +70,17 @@ const FrameEngine = (() => {
     return canvas;
   }
 
-  function drawInnerShadow(ctx, x, y, w, h, frameColor) {
+  /**
+   * Async render: waits for fonts, renders frame, applies post-processing.
+   * This is the primary public render function.
+   */
+  async function renderFrameWhenReady(img, exif, settings) {
+    await fontsReady;
+    const base = renderFrame(img, exif, settings);
+    return applyPostProcess(base, settings);
+  }
+
+  function drawInnerShadow(ctx, x, y, w, h) {
     // Very subtle gradient shadow along the bottom edge of the image
     const grad = ctx.createLinearGradient(x, y + h - 4, x, y + h);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
@@ -77,14 +90,20 @@ const FrameEngine = (() => {
   }
 
   function drawExifText(ctx, exif, settings, layout) {
-    const { canvasW, canvasH, imageBottom, bottomAreaHeight, isPortrait, frameColor } = layout;
-    const { shotOnFontScale = 1.0, exifFontScale = 1.0 } = settings;
+    const { canvasW, imageBottom, bottomAreaHeight, isPortrait, frameColor } = layout;
+    const {
+      shotOnFontScale = 1.0,
+      exifFontScale = 1.0,
+      textOffsetY = 0,
+      showShotOn = true,
+      showDecoLine = true,
+      showExifInfo = true,
+    } = settings;
 
     // Determine text color based on frame color
     const isDarkFrame = isColorDark(frameColor);
     const primaryColor   = isDarkFrame ? '#E8E8E8' : '#000000';
     const secondaryColor = isDarkFrame ? '#AAAAAA' : '#969696';
-    const labelColor     = isDarkFrame ? '#888888' : '#BBBBBB';
 
     const centerX = canvasW / 2;
 
@@ -92,65 +111,123 @@ const FrameEngine = (() => {
     const baseFontSize = canvasW * 0.022;
     const shotOnSize   = Math.round(baseFontSize * 1.15 * shotOnFontScale);
     const exifSize     = Math.round(baseFontSize * 0.92 * exifFontScale);
-    const lineGap      = shotOnSize * (isPortrait ? 1.6 : 2.0);
+    const lineGap      = shotOnSize * (isPortrait ? 1.4 : 1.7);
 
-    // Vertical center of bottom area
-    const textCenterY = imageBottom + bottomAreaHeight * 0.45;
-
-    // --- Line 1: "Shot on" + Camera Make + Model ---
-    const shotOnLabel = currentLang === 'ja' ? 'Shot on' : 'Shot on';
-    const cameraName  = [exif.make, exif.model].filter(Boolean).join(' ') || '';
+    // Vertical center of bottom area — offset by user setting
+    const textCenterY = imageBottom + bottomAreaHeight * 0.50 + (textOffsetY * shotOnSize);
 
     ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign    = 'left';
 
-    if (cameraName) {
+    // --- Line 1: "Shot on" + Camera Make + Model ---
+    const cameraName = [exif.make, exif.model].filter(Boolean).join(' ') || '';
+
+    if (showShotOn && cameraName) {
+      const shotOnLabel = 'Shot on';
       // Measure widths to center the composite
-      ctx.font = `300 ${shotOnSize}px Arial, sans-serif`;
-      const labelW = ctx.measureText(shotOnLabel + '  ').width;
-      ctx.font = `500 ${shotOnSize}px Arial, sans-serif`;
+      ctx.font = `300 ${shotOnSize}px 'Inter', Arial, sans-serif`;
+      const labelW  = ctx.measureText(shotOnLabel + '  ').width;
+      ctx.font = `500 ${shotOnSize}px 'Inter', Arial, sans-serif`;
       const cameraW = ctx.measureText(cameraName).width;
-      const totalW = labelW + cameraW;
-      const startX = centerX - totalW / 2;
+      const totalW  = labelW + cameraW;
+      const startX  = centerX - totalW / 2;
 
-      ctx.font = `300 ${shotOnSize}px Arial, sans-serif`;
+      ctx.font = `300 ${shotOnSize}px 'Inter', Arial, sans-serif`;
       ctx.fillStyle = secondaryColor;
       ctx.fillText(shotOnLabel + '  ', startX, textCenterY - lineGap / 2);
 
-      ctx.font = `500 ${shotOnSize}px Arial, sans-serif`;
+      ctx.font = `500 ${shotOnSize}px 'Inter', Arial, sans-serif`;
       ctx.fillStyle = primaryColor;
       ctx.fillText(cameraName, startX + labelW, textCenterY - lineGap / 2);
     }
 
     // --- Line 2: Lens info + exposure settings ---
-    const parts = [];
-    if (exif.lensModel)    parts.push(exif.lensModel);
-    if (exif.focalLength)  parts.push(`${exif.focalLength}mm`);
-    if (exif.fNumber)      parts.push(`f/${exif.fNumber}`);
-    if (exif.exposureTime) parts.push(formatShutter(exif.exposureTime));
-    if (exif.iso)          parts.push(`ISO\u2009${exif.iso}`);
+    if (showExifInfo) {
+      const parts = [];
+      if (exif.lensModel)    parts.push(exif.lensModel);
+      if (exif.focalLength)  parts.push(`${exif.focalLength}mm`);
+      if (exif.fNumber)      parts.push(`f/${exif.fNumber}`);
+      if (exif.exposureTime) parts.push(formatShutter(exif.exposureTime));
+      if (exif.iso)          parts.push(`ISO\u2009${exif.iso}`);
 
-    const exifLine = parts.join('  \u2003  ');
+      const exifLine = parts.join('  \u2003  ');
 
-    if (exifLine) {
-      ctx.font = `300 ${exifSize}px Arial, sans-serif`;
-      ctx.fillStyle = secondaryColor;
-      ctx.textAlign = 'center';
-      ctx.fillText(exifLine, centerX, textCenterY + lineGap / 2);
+      if (exifLine) {
+        ctx.font      = `300 ${exifSize}px 'Inter', Arial, sans-serif`;
+        ctx.fillStyle = secondaryColor;
+        ctx.textAlign = 'center';
+        ctx.fillText(exifLine, centerX, textCenterY + lineGap / 2);
+      }
     }
 
     // --- Small decorative line between image and text ---
-    if (!isDarkFrame) {
-      ctx.strokeStyle = 'rgba(0,0,0,0.06)';
-    } else {
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    if (showDecoLine) {
+      ctx.strokeStyle = isDarkFrame ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(canvasW * 0.35, imageBottom + bottomAreaHeight * 0.22);
+      ctx.lineTo(canvasW * 0.65, imageBottom + bottomAreaHeight * 0.22);
+      ctx.stroke();
     }
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(canvasW * 0.35, imageBottom + bottomAreaHeight * 0.18);
-    ctx.lineTo(canvasW * 0.65, imageBottom + bottomAreaHeight * 0.18);
-    ctx.stroke();
 
     ctx.restore();
+  }
+
+  /**
+   * Post-process: apply aspect ratio letterboxing + outer padding.
+   * Returns the source canvas unchanged if no transform is needed.
+   */
+  function applyPostProcess(sourceCanvas, settings) {
+    const {
+      frameColor    = '#F0F0F0',
+      outerPadding  = 0,
+      aspectRatio   = 'original',
+    } = settings;
+
+    let W = sourceCanvas.width;
+    let H = sourceCanvas.height;
+
+    // Step 1: Determine target dimensions from aspect ratio
+    let targetW = W, targetH = H;
+    if (aspectRatio && aspectRatio !== 'original') {
+      const parts = aspectRatio.split(':').map(Number);
+      const targetRatio  = parts[0] / parts[1];
+      const sourceRatio  = W / H;
+      if (targetRatio > sourceRatio) {
+        // Need more width → pillarbox
+        targetW = Math.round(H * targetRatio);
+        targetH = H;
+      } else if (targetRatio < sourceRatio) {
+        // Need more height → letterbox
+        targetW = W;
+        targetH = Math.round(W / targetRatio);
+      }
+    }
+
+    // Step 2: Add outer padding (% of the longer side)
+    const paddingFrac = (outerPadding || 0) / 100;
+    const padPx = Math.round(Math.max(targetW, targetH) * paddingFrac);
+    const finalW = targetW + padPx * 2;
+    const finalH = targetH + padPx * 2;
+
+    // Short-circuit: nothing to do
+    if (finalW === W && finalH === H) return sourceCanvas;
+
+    const out = document.createElement('canvas');
+    out.width  = finalW;
+    out.height = finalH;
+    const ctx = out.getContext('2d');
+
+    ctx.fillStyle = frameColor;
+    ctx.fillRect(0, 0, finalW, finalH);
+
+    // Center the source canvas
+    const offsetX = Math.round((finalW - W) / 2);
+    const offsetY = Math.round((finalH - H) / 2);
+    ctx.drawImage(sourceCanvas, offsetX, offsetY);
+
+    return out;
   }
 
   function formatShutter(val) {
@@ -158,13 +235,11 @@ const FrameEngine = (() => {
     const n = parseFloat(val);
     if (isNaN(n)) return String(val);
     if (n >= 1) return `${n}s`;
-    // Express as fraction
     const denom = Math.round(1 / n);
     return `1/${denom}s`;
   }
 
   function isColorDark(hex) {
-    // Parse hex color and check luminance
     const c = hex.replace('#', '');
     const r = parseInt(c.substring(0, 2), 16);
     const g = parseInt(c.substring(2, 4), 16);
@@ -195,5 +270,5 @@ const FrameEngine = (() => {
     });
   }
 
-  return { renderFrame, canvasToBlob, loadImage };
+  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage };
 })();

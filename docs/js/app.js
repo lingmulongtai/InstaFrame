@@ -11,6 +11,12 @@ const state = {
     thicknessScale:  1.0,
     shotOnFontScale: 1.0,
     exifFontScale:   1.0,
+    textOffsetY:     0,
+    showShotOn:      true,
+    showDecoLine:    true,
+    showExifInfo:    true,
+    outerPadding:    0,
+    aspectRatio:     'original',
   },
 };
 
@@ -29,7 +35,6 @@ let itemIdCounter = 0;
 // ─── EXIF Reading ─────────────────────────────────────────────────────────────
 async function readExif(file) {
   try {
-    // exifr is loaded globally from CDN
     const raw = await exifr.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
              'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings'],
@@ -84,6 +89,7 @@ async function addFiles(files) {
   }
 
   updateUI();
+  scheduleLivePreview();
 }
 
 function removeItem(id) {
@@ -92,6 +98,7 @@ function removeItem(id) {
   const el = document.getElementById(`item-${id}`);
   if (el) el.remove();
   updateUI();
+  scheduleLivePreview();
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -101,7 +108,7 @@ async function generateItem(item) {
 
   try {
     const img = await FrameEngine.loadImage(item.file);
-    item.canvas = FrameEngine.renderFrame(img, item.exif, state.settings);
+    item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
     item.status = 'done';
     item.errorMsg = null;
   } catch (e) {
@@ -188,11 +195,25 @@ function triggerDownload(blob, filename) {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function applySettings() {
+  // Frame color (support custom color picker)
   const colorRadio = document.querySelector('input[name="frameColor"]:checked');
-  state.settings.frameColor      = colorRadio ? colorRadio.value : '#F0F0F0';
+  if (colorRadio && colorRadio.value === 'custom') {
+    state.settings.frameColor = document.getElementById('customColorPicker').value;
+  } else {
+    state.settings.frameColor = colorRadio ? colorRadio.value : '#F0F0F0';
+  }
+
   state.settings.thicknessScale  = parseFloat(document.getElementById('thicknessRange').value);
   state.settings.shotOnFontScale = parseFloat(document.getElementById('shotOnFontRange').value);
   state.settings.exifFontScale   = parseFloat(document.getElementById('exifFontRange').value);
+  state.settings.textOffsetY     = parseFloat(document.getElementById('textOffsetRange').value);
+  state.settings.showShotOn      = document.getElementById('showShotOn').checked;
+  state.settings.showDecoLine    = document.getElementById('showDecoLine').checked;
+  state.settings.showExifInfo    = document.getElementById('showExifInfo').checked;
+  state.settings.outerPadding    = parseInt(document.getElementById('outerPaddingRange').value, 10);
+
+  const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
+  state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
 
   // Mark all done items as pending (need re-render)
   state.items.forEach(i => {
@@ -203,7 +224,9 @@ function applySettings() {
       updateItemPreview(i);
     }
   });
+
   updateUI();
+  scheduleLivePreview();
 }
 
 // ─── EXIF Editor ──────────────────────────────────────────────────────────────
@@ -224,13 +247,139 @@ function applyExifEdit(id) {
   item.exif.exposureTime = document.getElementById(`exif-et-${id}`).value.trim();
   item.exif.iso          = document.getElementById(`exif-iso-${id}`).value.trim();
 
-  // Mark as pending to re-render
   item.status = 'pending';
   item.canvas = null;
   updateItemStatus(item);
   updateItemPreview(item);
   toggleExifEditor(id);
   updateUI();
+  scheduleLivePreview();
+}
+
+// ─── Live Preview ─────────────────────────────────────────────────────────────
+let _livePreviewTimer = null;
+
+function scheduleLivePreview() {
+  clearTimeout(_livePreviewTimer);
+  _livePreviewTimer = setTimeout(renderLivePreview, 300);
+}
+
+async function renderLivePreview() {
+  const pane = document.getElementById('livePreviewPane');
+  if (!pane) return;
+
+  if (state.items.length === 0) {
+    pane.style.display = 'none';
+    return;
+  }
+
+  pane.style.display = '';
+
+  const item = state.items[0];
+  try {
+    const img    = await FrameEngine.loadImage(item.file);
+    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
+
+    const previewCanvas = document.getElementById('livePreviewCanvas');
+    // Scale to fit preview pane (max 240px wide)
+    const maxW  = 240;
+    const scale = Math.min(maxW / canvas.width, 1);
+    previewCanvas.width  = Math.round(canvas.width  * scale);
+    previewCanvas.height = Math.round(canvas.height * scale);
+    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+  } catch (e) {
+    // Non-critical — silently ignore preview failures
+  }
+}
+
+// ─── Photo Preview Modal ──────────────────────────────────────────────────────
+let _modalIndex = 0;
+let _lastModalObjUrl = null;
+
+function openModal(itemId) {
+  const idx = state.items.findIndex(i => i.id === itemId);
+  if (idx === -1) return;
+  _modalIndex = idx;
+  _renderModal();
+  document.getElementById('photoModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+  document.getElementById('photoModal').classList.remove('open');
+  document.body.style.overflow = '';
+  // Revoke any object URL we created
+  if (_lastModalObjUrl) {
+    URL.revokeObjectURL(_lastModalObjUrl);
+    _lastModalObjUrl = null;
+  }
+}
+
+function _renderModal() {
+  const item      = state.items[_modalIndex];
+  if (!item) return;
+
+  const canvasEl  = document.getElementById('modalCanvas');
+  const imgEl     = document.getElementById('modalImg');
+  const filename  = document.getElementById('modalFilename');
+  const dlBtn     = document.getElementById('modalDownload');
+  const prevBtn   = document.getElementById('modalPrev');
+  const nextBtn   = document.getElementById('modalNext');
+
+  filename.textContent   = item.file.name;
+  prevBtn.disabled       = _modalIndex === 0;
+  nextBtn.disabled       = _modalIndex === state.items.length - 1;
+
+  if (item.canvas) {
+    // Show full-resolution framed canvas
+    canvasEl.width  = item.canvas.width;
+    canvasEl.height = item.canvas.height;
+    canvasEl.getContext('2d').drawImage(item.canvas, 0, 0);
+    canvasEl.style.display = 'block';
+    imgEl.style.display    = 'none';
+    dlBtn.disabled         = false;
+  } else {
+    // Show original image
+    if (_lastModalObjUrl) URL.revokeObjectURL(_lastModalObjUrl);
+    _lastModalObjUrl    = URL.createObjectURL(item.file);
+    imgEl.src           = _lastModalObjUrl;
+    imgEl.style.display = 'block';
+    canvasEl.style.display = 'none';
+    dlBtn.disabled         = true;
+  }
+}
+
+function setupModal() {
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+
+  // Close on backdrop click
+  document.getElementById('photoModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('photoModal')) closeModal();
+  });
+
+  document.getElementById('modalPrev').addEventListener('click', () => {
+    if (_modalIndex > 0) { _modalIndex--; _renderModal(); }
+  });
+  document.getElementById('modalNext').addEventListener('click', () => {
+    if (_modalIndex < state.items.length - 1) { _modalIndex++; _renderModal(); }
+  });
+  document.getElementById('modalDownload').addEventListener('click', () => {
+    const item = state.items[_modalIndex];
+    if (item) downloadSingle(item.id);
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', e => {
+    const modal = document.getElementById('photoModal');
+    if (!modal.classList.contains('open')) return;
+    if (e.key === 'Escape') { closeModal(); return; }
+    if (e.key === 'ArrowLeft'  && _modalIndex > 0) {
+      _modalIndex--; _renderModal();
+    }
+    if (e.key === 'ArrowRight' && _modalIndex < state.items.length - 1) {
+      _modalIndex++; _renderModal();
+    }
+  });
 }
 
 // ─── DOM Rendering ────────────────────────────────────────────────────────────
@@ -289,6 +438,9 @@ function renderItem(item) {
     </div>
   `;
 
+  // Click preview to open modal
+  card.querySelector('.card-preview').addEventListener('click', () => openModal(item.id));
+
   grid.appendChild(card);
 }
 
@@ -317,7 +469,7 @@ function updateItemPreview(item) {
       previewDiv.insertBefore(existing, previewDiv.firstChild);
     }
     // Scale canvas to preview size
-    const maxW = 300, maxH = 300;
+    const maxW = 400, maxH = 400;
     const scale = Math.min(maxW / item.canvas.width, maxH / item.canvas.height);
     existing.width  = Math.round(item.canvas.width  * scale);
     existing.height = Math.round(item.canvas.height * scale);
@@ -336,21 +488,26 @@ function updateItemPreview(item) {
 }
 
 function updateUI() {
-  const hasItems  = state.items.length > 0;
-  const hasDone   = state.items.some(i => i.status === 'done');
-  const hasPending = state.items.some(i => i.status === 'pending');
+  const hasItems   = state.items.length > 0;
+  const hasDone    = state.items.some(i => i.status === 'done');
+  const hasItems2  = state.items.length > 0;
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
   const counter = document.getElementById('imageCounter');
 
-  if (genBtn)  genBtn.disabled  = !hasItems;
+  if (genBtn)  genBtn.disabled  = !hasItems2;
   if (dlBtn)   dlBtn.disabled   = !hasDone;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
-  // Show section headers
   const imageSection = document.getElementById('imageSection');
   if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
+
+  // Show/hide live preview pane
+  const previewPane = document.getElementById('livePreviewPane');
+  if (previewPane && state.items.length === 0) {
+    previewPane.style.display = 'none';
+  }
 }
 
 function setGlobalBusy(busy) {
@@ -392,23 +549,57 @@ function setupDropZone() {
 
   input.addEventListener('change', () => {
     addFiles(input.files);
-    input.value = ''; // Allow re-selecting same files
+    input.value = '';
   });
 }
 
 // ─── Settings Listeners ───────────────────────────────────────────────────────
 function setupSettingsListeners() {
-  ['thicknessRange', 'shotOnFontRange', 'exifFontRange'].forEach(id => {
-    const el = document.getElementById(id);
-    const valEl = document.getElementById(id + 'Val');
+  // Range sliders
+  [
+    ['thicknessRange',    'thicknessRangeVal',    v => parseFloat(v).toFixed(1) + '×'],
+    ['shotOnFontRange',   'shotOnFontRangeVal',   v => parseFloat(v).toFixed(1) + '×'],
+    ['exifFontRange',     'exifFontRangeVal',     v => parseFloat(v).toFixed(1) + '×'],
+    ['textOffsetRange',   'textOffsetRangeVal',   v => parseFloat(v).toFixed(1)],
+    ['outerPaddingRange', 'outerPaddingRangeVal', v => v + '%'],
+  ].forEach(([id, valId, fmt]) => {
+    const el    = document.getElementById(id);
+    const valEl = document.getElementById(valId);
     if (!el) return;
     el.addEventListener('input', () => {
-      if (valEl) valEl.textContent = parseFloat(el.value).toFixed(1) + '×';
+      if (valEl) valEl.textContent = fmt(el.value);
       applySettings();
     });
   });
 
+  // Frame color radios
   document.querySelectorAll('input[name="frameColor"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
+  });
+
+  // Custom color picker
+  const picker      = document.getElementById('customColorPicker');
+  const customSwatch = document.getElementById('customColorSwatch');
+  const customRadio = document.querySelector('input[name="frameColor"][value="custom"]');
+  if (picker) {
+    picker.addEventListener('input', () => {
+      if (customSwatch) customSwatch.style.background = picker.value;
+      if (customRadio) customRadio.checked = true;
+      applySettings();
+    });
+    picker.addEventListener('click', () => {
+      if (customRadio) customRadio.checked = true;
+    });
+  }
+
+  // Visibility checkboxes
+  ['showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', applySettings);
+  });
+
+  // Aspect ratio radios
+  document.querySelectorAll('input[name="aspectRatio"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
   });
 }
@@ -431,6 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   setupDropZone();
   setupSettingsListeners();
+  setupModal();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
@@ -443,7 +635,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedItems = [...state.items];
     state.items = [];
     itemIdCounter = 0;
-    // Re-add without reading exif again
     savedItems.forEach(item => {
       const newItem = { ...item, id: ++itemIdCounter };
       state.items.push(newItem);
@@ -456,6 +647,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUI();
   });
 
-  // Show image section hidden by default
+  // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
 });
