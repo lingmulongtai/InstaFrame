@@ -1,11 +1,9 @@
 /**
  * frame-engine.js — Canvas-based EXIF frame generator
- * Matches the visual style of calmtempo.com/soft/makeframe.html
  */
 
 const FrameEngine = (() => {
 
-  // Font stacks: maps family name → CSS font-family string with appropriate fallback
   const FONT_STACKS = {
     'Inter':              "'Inter', Arial, sans-serif",
     'Montserrat':         "'Montserrat', Arial, sans-serif",
@@ -17,36 +15,26 @@ const FrameEngine = (() => {
   };
 
   /**
-   * Main entry point (sync).
-   * @param {HTMLImageElement} img  - Loaded image element
-   * @param {object} exif          - EXIF data fields
-   * @param {object} settings      - Frame settings
-   * @returns {HTMLCanvasElement}
+   * Core synchronous renderer — works at whatever resolution img was loaded at.
    */
   function renderFrame(img, exif, settings) {
     const {
-      frameColor = '#F0F0F0',
+      frameColor     = '#F0F0F0',
       thicknessScale = 1.0,
-      shotOnFontScale = 1.0,
-      exifFontScale = 1.0,
     } = settings;
 
     const W = img.naturalWidth;
     const H = img.naturalHeight;
     const isPortrait = H > W;
 
-    // --- Frame dimensions (matching reference site algorithm) ---
-    const baseBorder = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
-    const sideBorder  = baseBorder * 0.5;
-    const topBorder   = sideBorder;
-    const extraHeight = H * 0.10 * thicknessScale;
+    const baseBorder   = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
+    const sideBorder   = baseBorder * 0.5;
+    const extraHeight  = H * 0.10 * thicknessScale;
     const bottomBorder = sideBorder * 4 + extraHeight;
-
-    // Portrait adjustment
-    const portraitFactor = isPortrait ? 0.75 : 1.0;
-    const sB = sideBorder * portraitFactor;
-    const tB = topBorder  * portraitFactor;
-    const bB = bottomBorder * portraitFactor;
+    const pf           = isPortrait ? 0.75 : 1.0;
+    const sB = sideBorder   * pf;
+    const tB = sideBorder   * pf;
+    const bB = bottomBorder * pf;
 
     const canvasW = Math.round(W + sB * 2);
     const canvasH = Math.round(H + tB + bB);
@@ -56,17 +44,10 @@ const FrameEngine = (() => {
     canvas.height = canvasH;
     const ctx = canvas.getContext('2d');
 
-    // --- Background (frame color) ---
     ctx.fillStyle = frameColor;
     ctx.fillRect(0, 0, canvasW, canvasH);
-
-    // --- Draw original image ---
     ctx.drawImage(img, sB, tB, W, H);
-
-    // --- Subtle inner shadow on image edges ---
     drawInnerShadow(ctx, sB, tB, W, H);
-
-    // --- EXIF text in bottom area ---
     drawExifText(ctx, exif, settings, {
       canvasW, canvasH,
       imageBottom: tB + H,
@@ -79,36 +60,56 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Async render: ensures the selected font is loaded, renders frame, applies post-processing.
-   * This is the primary public render function.
+   * Scale an HTMLImageElement down to maxPx on the longest side.
+   * Returns the original img unchanged if it's already small enough.
    */
-  async function renderFrameWhenReady(img, exif, settings) {
+  async function scaleImage(img, maxPx) {
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    if (longest <= maxPx) return img;
+
+    const scale = maxPx / longest;
+    const w = Math.round(img.naturalWidth  * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    tmp.getContext('2d').drawImage(img, 0, 0, w, h);
+
+    return new Promise((resolve, reject) => {
+      const out = new Image();
+      out.onload  = () => resolve(out);
+      out.onerror = reject;
+      out.src = tmp.toDataURL('image/jpeg', 0.9);
+    });
+  }
+
+  /**
+   * Load fonts needed for the current settings, then render.
+   * Pass maxPreviewPx to scale the image down for fast live preview.
+   */
+  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null } = {}) {
     const family = settings.fontFamily || 'Inter';
-    // Ensure all weight/style variants we might use are loaded
+
     if (document.fonts) {
-      const stack = FONT_STACKS[family] || `'${family}', sans-serif`;
-      // Extract the quoted family name for document.fonts.load()
-      const loadFamily = `'${family}'`;
-      try {
-        await Promise.all([
-          document.fonts.load(`300 16px ${loadFamily}`),
-          document.fonts.load(`500 16px ${loadFamily}`),
-          document.fonts.load(`700 16px ${loadFamily}`),
-          document.fonts.load(`italic 300 16px ${loadFamily}`),
-          document.fonts.load(`italic 500 16px ${loadFamily}`),
-          document.fonts.load(`italic 700 16px ${loadFamily}`),
-        ]);
-      } catch (e) { /* fall back gracefully */ }
+      const fam = `'${family}'`;
+      const specs = [
+        `300 16px ${fam}`, `400 16px ${fam}`, `500 16px ${fam}`, `700 16px ${fam}`,
+        `italic 300 16px ${fam}`, `italic 400 16px ${fam}`, `italic 500 16px ${fam}`, `italic 700 16px ${fam}`,
+      ];
+      // load() resolves even for unavailable variants — safe to Promise.all
+      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
     }
-    const base = renderFrame(img, exif, settings);
+
+    const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx) : img;
+    const base = renderFrame(renderImg, exif, settings);
     return applyPostProcess(base, settings);
   }
 
+  // ─── Drawing helpers ──────────────────────────────────────────────────────
+
   function drawInnerShadow(ctx, x, y, w, h) {
-    // Very subtle gradient shadow along the bottom edge of the image
-    const grad = ctx.createLinearGradient(x, y + h - 4, x, y + h);
+    const grad = ctx.createLinearGradient(x, y + h - 6, x, y + h);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.04)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.05)');
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
   }
@@ -129,58 +130,53 @@ const FrameEngine = (() => {
       showExifInfo     = true,
     } = settings;
 
-    // Determine text color based on frame color
-    const isDarkFrame = isColorDark(frameColor);
-    const primaryColor   = isDarkFrame ? '#E8E8E8' : '#000000';
-    const secondaryColor = isDarkFrame ? '#AAAAAA' : '#969696';
+    const isDark  = isColorDark(frameColor);
+    const primary = isDark ? '#E8E8E8' : '#111111';
+    const muted   = isDark ? '#999999' : '#888888';
 
-    const centerX  = canvasW / 2;
-    const fontStack = FONT_STACKS[fontFamily] || `'${fontFamily}', Arial, sans-serif`;
+    const stack  = FONT_STACKS[fontFamily] || `'${fontFamily}', Arial, sans-serif`;
+    const baseFs = canvasW * 0.022;
+    const soSize = Math.round(baseFs * 1.15 * shotOnFontScale);
+    const exSize = Math.round(baseFs * 0.92 * exifFontScale);
+    const gap    = soSize * (isPortrait ? 1.4 : 1.7) * lineGapScale;
 
-    // Font size relative to canvas width
-    const baseFontSize = canvasW * 0.022;
-    const shotOnSize   = Math.round(baseFontSize * 1.15 * shotOnFontScale);
-    const exifSize     = Math.round(baseFontSize * 0.92 * exifFontScale);
-    const lineGap      = shotOnSize * (isPortrait ? 1.4 : 1.7) * lineGapScale;
+    const centerY = imageBottom + bottomAreaHeight * 0.50 + textOffsetY * soSize;
+    const centerX = canvasW / 2;
 
-    // Vertical center of bottom area — offset by user setting
-    const textCenterY = imageBottom + bottomAreaHeight * 0.50 + (textOffsetY * shotOnSize);
-
-    // Build font strings
-    const labelFont  = `300 ${shotOnSize}px ${fontStack}`;
-    const cameraWeight = cameraNameBold ? '700' : '500';
-    const cameraStyle  = cameraNameItalic ? 'italic ' : '';
-    const cameraFont   = `${cameraStyle}${cameraWeight} ${shotOnSize}px ${fontStack}`;
-    const exifStyle    = exifItalic ? 'italic ' : '';
-    const exifFont     = `${exifStyle}300 ${exifSize}px ${fontStack}`;
+    // Build font strings — CSS shorthand: [style] [weight] [size] [family]
+    const labelFont  = `300 ${soSize}px ${stack}`;
+    const camWeight  = cameraNameBold ? '700' : '500';
+    const camStyle   = cameraNameItalic ? 'italic ' : '';
+    const camFont    = `${camStyle}${camWeight} ${soSize}px ${stack}`;
+    const exStyle    = exifItalic ? 'italic ' : '';
+    const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
 
     ctx.save();
     ctx.textBaseline = 'middle';
-    ctx.textAlign    = 'left';
 
-    // --- Line 1: "Shot on" + Camera Make + Model ---
-    const cameraName = [exif.make, exif.model].filter(Boolean).join(' ') || '';
+    // Line 1: Shot on + Camera
+    if (showShotOn) {
+      const cam = [exif.make, exif.model].filter(Boolean).join(' ');
+      if (cam) {
+        const label = 'Shot on';
+        ctx.font = labelFont;
+        const lw = ctx.measureText(label + '  ').width;
+        ctx.font = camFont;
+        const cw = ctx.measureText(cam).width;
+        const x0 = centerX - (lw + cw) / 2;
 
-    if (showShotOn && cameraName) {
-      const shotOnLabel = 'Shot on';
-      // Measure widths to center the composite
-      ctx.font = labelFont;
-      const labelW  = ctx.measureText(shotOnLabel + '  ').width;
-      ctx.font = cameraFont;
-      const cameraW = ctx.measureText(cameraName).width;
-      const totalW  = labelW + cameraW;
-      const startX  = centerX - totalW / 2;
+        ctx.textAlign = 'left';
+        ctx.font      = labelFont;
+        ctx.fillStyle = muted;
+        ctx.fillText(label + '  ', x0, centerY - gap / 2);
 
-      ctx.font      = labelFont;
-      ctx.fillStyle = secondaryColor;
-      ctx.fillText(shotOnLabel + '  ', startX, textCenterY - lineGap / 2);
-
-      ctx.font      = cameraFont;
-      ctx.fillStyle = primaryColor;
-      ctx.fillText(cameraName, startX + labelW, textCenterY - lineGap / 2);
+        ctx.font      = camFont;
+        ctx.fillStyle = primary;
+        ctx.fillText(cam, x0 + lw, centerY - gap / 2);
+      }
     }
 
-    // --- Line 2: Lens info + exposure settings ---
+    // Line 2: EXIF data
     if (showExifInfo) {
       const parts = [];
       if (exif.lensModel)    parts.push(exif.lensModel);
@@ -188,21 +184,19 @@ const FrameEngine = (() => {
       if (exif.fNumber)      parts.push(`f/${exif.fNumber}`);
       if (exif.exposureTime) parts.push(formatShutter(exif.exposureTime));
       if (exif.iso)          parts.push(`ISO\u2009${exif.iso}`);
-
-      const exifLine = parts.join('  \u2003  ');
-
-      if (exifLine) {
+      const line = parts.join('  \u2003  ');
+      if (line) {
         ctx.font      = exifFont;
-        ctx.fillStyle = secondaryColor;
+        ctx.fillStyle = muted;
         ctx.textAlign = 'center';
-        ctx.fillText(exifLine, centerX, textCenterY + lineGap / 2);
+        ctx.fillText(line, centerX, centerY + gap / 2);
       }
     }
 
-    // --- Small decorative line between image and text ---
+    // Decorative separator line
     if (showDecoLine) {
-      ctx.strokeStyle = isDarkFrame ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+      ctx.lineWidth   = 1;
       ctx.beginPath();
       ctx.moveTo(canvasW * 0.35, imageBottom + bottomAreaHeight * 0.22);
       ctx.lineTo(canvasW * 0.65, imageBottom + bottomAreaHeight * 0.22);
@@ -212,92 +206,50 @@ const FrameEngine = (() => {
     ctx.restore();
   }
 
-  /**
-   * Post-process: apply aspect ratio letterboxing + outer padding.
-   * Returns the source canvas unchanged if no transform is needed.
-   */
-  function applyPostProcess(sourceCanvas, settings) {
-    const {
-      frameColor    = '#F0F0F0',
-      outerPadding  = 0,
-      aspectRatio   = 'original',
-    } = settings;
+  function applyPostProcess(src, settings) {
+    const { frameColor = '#F0F0F0', outerPadding = 0, aspectRatio = 'original' } = settings;
+    let W = src.width, H = src.height;
 
-    let W = sourceCanvas.width;
-    let H = sourceCanvas.height;
-
-    // Step 1: Determine target dimensions from aspect ratio
-    let targetW = W, targetH = H;
+    let tW = W, tH = H;
     if (aspectRatio && aspectRatio !== 'original') {
-      const parts = aspectRatio.split(':').map(Number);
-      const targetRatio  = parts[0] / parts[1];
-      const sourceRatio  = W / H;
-      if (targetRatio > sourceRatio) {
-        // Need more width → pillarbox
-        targetW = Math.round(H * targetRatio);
-        targetH = H;
-      } else if (targetRatio < sourceRatio) {
-        // Need more height → letterbox
-        targetW = W;
-        targetH = Math.round(W / targetRatio);
-      }
+      const [aw, ah] = aspectRatio.split(':').map(Number);
+      const tr = aw / ah, sr = W / H;
+      if (tr > sr) { tW = Math.round(H * tr); tH = H; }
+      else if (tr < sr) { tW = W; tH = Math.round(W / tr); }
     }
 
-    // Step 2: Add outer padding (% of the longer side)
-    const paddingFrac = (outerPadding || 0) / 100;
-    const padPx = Math.round(Math.max(targetW, targetH) * paddingFrac);
-    const finalW = targetW + padPx * 2;
-    const finalH = targetH + padPx * 2;
-
-    // Short-circuit: nothing to do
-    if (finalW === W && finalH === H) return sourceCanvas;
+    const pad = Math.round(Math.max(tW, tH) * (outerPadding || 0) / 100);
+    const fW = tW + pad * 2, fH = tH + pad * 2;
+    if (fW === W && fH === H) return src;
 
     const out = document.createElement('canvas');
-    out.width  = finalW;
-    out.height = finalH;
+    out.width = fW; out.height = fH;
     const ctx = out.getContext('2d');
-
     ctx.fillStyle = frameColor;
-    ctx.fillRect(0, 0, finalW, finalH);
-
-    // Center the source canvas
-    const offsetX = Math.round((finalW - W) / 2);
-    const offsetY = Math.round((finalH - H) / 2);
-    ctx.drawImage(sourceCanvas, offsetX, offsetY);
-
+    ctx.fillRect(0, 0, fW, fH);
+    ctx.drawImage(src, Math.round((fW - W) / 2), Math.round((fH - H) / 2));
     return out;
   }
 
   function formatShutter(val) {
-    if (!val) return '';
     const n = parseFloat(val);
     if (isNaN(n)) return String(val);
     if (n >= 1) return `${n}s`;
-    const denom = Math.round(1 / n);
-    return `1/${denom}s`;
+    return `1/${Math.round(1 / n)}s`;
   }
 
   function isColorDark(hex) {
-    const c = hex.replace('#', '');
-    const r = parseInt(c.substring(0, 2), 16);
-    const g = parseInt(c.substring(2, 4), 16);
-    const b = parseInt(c.substring(4, 6), 16);
-    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return lum < 0.5;
+    const c = (hex || '#f0f0f0').replace('#', '');
+    const r = parseInt(c.slice(0, 2), 16);
+    const g = parseInt(c.slice(2, 4), 16);
+    const b = parseInt(c.slice(4, 6), 16);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
   }
 
-  /**
-   * Convert canvas to Blob (async)
-   */
   function canvasToBlob(canvas, quality = 0.95) {
-    return new Promise(resolve => {
-      canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality);
-    });
+    return new Promise(resolve => canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality));
   }
 
-  /**
-   * Load an HTMLImageElement from a File object
-   */
   function loadImage(file) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
