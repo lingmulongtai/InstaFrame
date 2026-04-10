@@ -275,43 +275,44 @@ function scheduleLivePreview() {
 }
 
 async function renderLivePreview() {
-  const pane = document.getElementById('livePreviewPane');
-  if (!pane) return;
+  const pane         = document.getElementById('livePreviewPane');
+  const previewCanvas = document.getElementById('livePreviewCanvas');
+  const emptyEl      = document.getElementById('previewEmpty');
+  if (!pane || !previewCanvas) return;
 
   if (state.items.length === 0) {
-    pane.style.display = 'none';
+    previewCanvas.style.display = 'none';
+    if (emptyEl) emptyEl.style.display = '';
     return;
   }
-
-  pane.style.display = '';
 
   const item = state.items[0];
   try {
     const img    = await FrameEngine.loadImage(item.file);
-    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
+    // maxPreviewPx:1200 scales down huge originals so font-load + render is fast
+    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx: 1200 });
 
-    const previewCanvas = document.getElementById('livePreviewCanvas');
-    const dpr = window.devicePixelRatio || 1;
+    const dpr      = window.devicePixelRatio || 1;
+    const areaW    = Math.max(pane.clientWidth  - 40, 80);
+    const areaH    = Math.max(pane.clientHeight - 40, 60);
+    const srcRatio = canvas.height / canvas.width;
 
-    // CSS display size — fill the pane content area (subtract 2×16px padding)
-    const paneContentW = Math.max(pane.clientWidth - 32, 80);
-    const srcAspect    = canvas.height / canvas.width;
-    const maxDisplayH  = 420;
+    // Fit canvas inside the available area, maintain aspect ratio
+    let displayW = Math.min(areaW, Math.round(areaH / srcRatio));
+    let displayH = Math.round(displayW * srcRatio);
+    if (displayH > areaH) { displayH = areaH; displayW = Math.round(areaH / srcRatio); }
+    displayW = Math.max(displayW, 80);
+    displayH = Math.max(displayH, 60);
 
-    let displayW = paneContentW;
-    let displayH = Math.round(displayW * srcAspect);
-    if (displayH > maxDisplayH) {
-      displayH = maxDisplayH;
-      displayW = Math.round(displayH / srcAspect);
-    }
-
-    // Physical pixels = CSS pixels × DPR → sharp on HiDPI / Retina screens
+    // Physical pixels = CSS pixels × DPR → sharp on HiDPI / Retina
     previewCanvas.width  = Math.round(displayW * dpr);
     previewCanvas.height = Math.round(displayH * dpr);
     previewCanvas.style.width  = displayW + 'px';
     previewCanvas.style.height = displayH + 'px';
-
     previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+
+    previewCanvas.style.display = 'block';
+    if (emptyEl) emptyEl.style.display = 'none';
   } catch (e) {
     // Non-critical — silently ignore preview failures
   }
@@ -425,20 +426,22 @@ function renderItem(item) {
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
       </div>
     </div>
-    <div class="card-filename">${escHtml(item.file.name)}</div>
-    <div class="card-actions">
-      <button class="btn btn-sm btn-secondary" onclick="toggleExifEditor(${item.id})">
-        <span data-i18n="editExif">${t('editExif')}</span>
-      </button>
-      <button class="btn btn-sm btn-secondary" onclick="regenerateItem(${item.id})">
-        <span data-i18n="regenerate">${t('regenerate')}</span>
-      </button>
-      <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="downloadSingle(${item.id})" disabled>
-        <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
-      </button>
-      <button class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">
-        <span data-i18n="remove">${t('remove')}</span>
-      </button>
+    <div class="card-body">
+      <div class="card-filename">${escHtml(item.file.name)}</div>
+      <div class="card-actions">
+        <button class="btn btn-sm btn-secondary" onclick="toggleExifEditor(${item.id})">
+          <span data-i18n="editExif">${t('editExif')}</span>
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="regenerateItem(${item.id})">
+          <span data-i18n="regenerate">${t('regenerate')}</span>
+        </button>
+        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="downloadSingle(${item.id})" disabled>
+          <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">
+          <span data-i18n="remove">${t('remove')}</span>
+        </button>
+      </div>
     </div>
     <div class="exif-panel hidden" id="exif-panel-${item.id}">
       <div class="exif-grid">
@@ -513,26 +516,19 @@ function updateItemPreview(item) {
 }
 
 function updateUI() {
-  const hasItems   = state.items.length > 0;
-  const hasDone    = state.items.some(i => i.status === 'done');
-  const hasItems2  = state.items.length > 0;
+  const hasItems = state.items.length > 0;
+  const hasDone  = state.items.some(i => i.status === 'done');
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
   const counter = document.getElementById('imageCounter');
 
-  if (genBtn)  genBtn.disabled  = !hasItems2;
+  if (genBtn)  genBtn.disabled  = !hasItems;
   if (dlBtn)   dlBtn.disabled   = !hasDone;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
   const imageSection = document.getElementById('imageSection');
   if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
-
-  // Show/hide live preview pane
-  const previewPane = document.getElementById('livePreviewPane');
-  if (previewPane && state.items.length === 0) {
-    previewPane.style.display = 'none';
-  }
 }
 
 function setGlobalBusy(busy) {

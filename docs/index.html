@@ -6,8 +6,6 @@
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
   <meta name="theme-color" content="#ffffff">
   <title>InstaFrame — EXIF Photo Frame Generator</title>
-
-  <!-- Open Graph -->
   <meta property="og:title" content="InstaFrame">
   <meta property="og:description" content="Add beautiful EXIF frames to your photos in batch. Free, local, private.">
   <meta property="og:type" content="website">
@@ -17,7 +15,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Montserrat:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=DM+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Lato:ital,wght@0,300;0,700;1,300;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&display=swap">
 
-  <!-- Styles -->
   <link rel="stylesheet" href="css/style.css">
 
   <!-- CDN Libraries -->
@@ -25,92 +22,119 @@
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
+<div class="app-shell">
 
-<!-- ─── Header ─────────────────────────────────────────────────────────────── -->
-<header class="site-header">
-  <div class="header-inner">
-    <div class="logo">
-      <span class="logo-title">InstaFrame</span>
-      <span class="logo-subtitle" data-i18n="appSubtitle">EXIF Photo Frame Generator</span>
-    </div>
-    <div class="header-actions">
+  <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div>
+        <span class="logo">InstaFrame</span>
+        <span class="logo-sub" data-i18n="appSubtitle">EXIF Photo Frame Generator</span>
+      </div>
       <button id="langToggleBtn">日本語</button>
     </div>
-  </div>
-</header>
 
-<!-- ─── Main ───────────────────────────────────────────────────────────────── -->
-<main class="main-content">
+    <div class="sidebar-scroll">
 
-  <!-- Drop Zone -->
-  <div class="drop-zone" id="dropZone" role="button" tabindex="0"
-       aria-label="Upload images">
-    <input type="file" id="fileInput" multiple
-           accept="image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.heif,.webp">
-    <div class="drop-zone-icon">🖼️</div>
-    <div class="drop-zone-text" data-i18n="dropZoneText">
-      Drag &amp; drop photos here, or click to select
-    </div>
-    <div class="drop-zone-subtext" data-i18n="dropZoneSubtext">
-      Supports JPEG, PNG, HEIC — multiple files at once
-    </div>
-  </div>
-
-  <!-- Settings Panel -->
-  <div class="card settings-card">
-    <div class="card-header" data-i18n="settingsTitle">Frame Settings</div>
-    <div class="settings-layout">
-
-      <!-- Live Preview Pane (hidden until images are loaded) -->
-      <div class="live-preview-pane" id="livePreviewPane" style="display:none;">
-        <div class="live-preview-label" data-i18n="livePreview">Preview</div>
-        <canvas id="livePreviewCanvas"></canvas>
+      <!-- Upload -->
+      <div class="upload-strip" id="dropZone" role="button" tabindex="0" aria-label="Upload images">
+        <input type="file" id="fileInput" multiple
+               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.heif,.webp">
+        <span class="upload-strip-icon">🖼️</span>
+        <div class="upload-strip-text">
+          <strong data-i18n="dropZoneText">Drop photos here or click</strong>
+          <span class="upload-strip-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · multiple files</span>
+        </div>
       </div>
 
-      <!-- Settings Controls -->
-      <div class="card-body settings-pane">
-        <div class="settings-grid">
+      <!-- ── Frame ─────────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <div class="section-heading">Frame</div>
 
-          <!-- Frame Color -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="frameColor">Frame Color</div>
-            <div class="color-options">
-              <label class="color-option">
+        <!-- Color -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="frameColor">Color</div>
+          <div class="setting-control">
+            <div class="color-row">
+              <label class="color-option" title="White">
                 <input type="radio" name="frameColor" value="#ffffff">
                 <span class="color-swatch white"></span>
-                <span data-i18n="colorWhite">White</span>
               </label>
-              <label class="color-option">
+              <label class="color-option" title="Light Gray">
                 <input type="radio" name="frameColor" value="#F0F0F0" checked>
                 <span class="color-swatch lightgray"></span>
-                <span data-i18n="colorLightGray">Light Gray</span>
               </label>
-              <label class="color-option">
+              <label class="color-option" title="Black">
                 <input type="radio" name="frameColor" value="#1a1a1a">
                 <span class="color-swatch black"></span>
-                <span data-i18n="colorBlack">Black</span>
               </label>
-              <label class="color-option">
+              <label class="color-option" title="Custom">
                 <input type="radio" name="frameColor" value="custom">
                 <span class="color-swatch" id="customColorSwatch" style="background:#e8c49a;"></span>
-                <span data-i18n="colorCustom">Custom</span>
               </label>
               <input type="color" id="customColorPicker" value="#e8c49a" title="Pick custom color">
             </div>
           </div>
+        </div>
 
-          <!-- Frame Thickness -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="frameThickness">Frame Thickness</div>
-            <div class="setting-row-inline">
+        <!-- Thickness -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="frameThickness">Thickness</div>
+          <div class="setting-control">
+            <div class="range-wrap">
               <input type="range" id="thicknessRange" min="0.4" max="2.0" step="0.1" value="1.0">
               <span class="range-val" id="thicknessRangeVal">1.0×</span>
             </div>
           </div>
+        </div>
 
-          <!-- Font Family -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="fontFamily">Font</div>
+        <!-- Aspect Ratio -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="aspectRatio">Ratio</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="aspectRatio" id="ratio-orig" value="original" checked>
+                <label for="ratio-orig" data-i18n="ratioOriginal">Free</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="aspectRatio" id="ratio-1-1" value="1:1">
+                <label for="ratio-1-1">1:1</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="aspectRatio" id="ratio-4-5" value="4:5">
+                <label for="ratio-4-5">4:5</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="aspectRatio" id="ratio-16-9" value="16:9">
+                <label for="ratio-16-9">16:9</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Outer Padding -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="outerPadding">Padding</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="outerPaddingRange" min="0" max="15" step="1" value="0">
+              <span class="range-val" id="outerPaddingRangeVal">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-sep"></div>
+
+      <!-- ── Typography ─────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <div class="section-heading">Typography</div>
+
+        <!-- Font Family -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="fontFamily">Font</div>
+          <div class="setting-control">
             <select id="fontFamily" class="font-select">
               <option value="Inter">Inter</option>
               <option value="Montserrat">Montserrat</option>
@@ -121,156 +145,144 @@
               <option value="EB Garamond">EB Garamond</option>
             </select>
           </div>
+        </div>
 
-          <!-- Camera Name Style -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="cameraStyle">Camera Name Style</div>
-            <div class="toggle-group">
-              <label class="toggle-option style-preview-bold">
+        <!-- Camera Style -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="cameraStyle">Style</div>
+          <div class="setting-control">
+            <div class="style-toggles">
+              <div class="style-toggle-btn">
                 <input type="checkbox" id="cameraNameBold">
-                <span data-i18n="styleBold">Bold</span>
-              </label>
-              <label class="toggle-option style-preview-italic">
+                <label for="cameraNameBold" style="font-weight:700;">B</label>
+              </div>
+              <div class="style-toggle-btn">
                 <input type="checkbox" id="cameraNameItalic">
-                <span data-i18n="styleItalic">Italic</span>
-              </label>
-              <label class="toggle-option style-preview-italic" style="margin-top:4px;">
+                <label for="cameraNameItalic" style="font-style:italic;">I</label>
+              </div>
+              <div class="style-toggle-btn">
                 <input type="checkbox" id="exifItalic">
-                <span data-i18n="exifItalicLabel">Italic (EXIF line)</span>
-              </label>
+                <label for="exifItalic" style="font-style:italic; font-size:10px;">I&thinsp;exif</label>
+              </div>
             </div>
           </div>
+        </div>
 
-          <!-- Shot on Font -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="shotOnFontSize">"Shot on" Font Size</div>
-            <div class="setting-row-inline">
+        <!-- Shot-on Font Size -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="shotOnFontSize">Shot size</div>
+          <div class="setting-control">
+            <div class="range-wrap">
               <input type="range" id="shotOnFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
               <span class="range-val" id="shotOnFontRangeVal">1.0×</span>
             </div>
           </div>
+        </div>
 
-          <!-- EXIF Font -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="exifFontSize">EXIF Font Size</div>
-            <div class="setting-row-inline">
+        <!-- EXIF Font Size -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="exifFontSize">EXIF size</div>
+          <div class="setting-control">
+            <div class="range-wrap">
               <input type="range" id="exifFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
               <span class="range-val" id="exifFontRangeVal">1.0×</span>
             </div>
           </div>
+        </div>
 
-          <!-- Line Spacing -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="lineGap">Line Spacing</div>
-            <div class="setting-row-inline">
+        <!-- Line Spacing -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="lineGap">Spacing</div>
+          <div class="setting-control">
+            <div class="range-wrap">
               <input type="range" id="lineGapRange" min="0.5" max="3.0" step="0.1" value="1.0">
               <span class="range-val" id="lineGapRangeVal">1.0×</span>
             </div>
           </div>
+        </div>
 
-          <!-- Text Vertical Offset -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="textOffsetY">Text Vertical Offset</div>
-            <div class="setting-row-inline">
+        <!-- Text Vertical Offset -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="textOffsetY">V-offset</div>
+          <div class="setting-control">
+            <div class="range-wrap">
               <input type="range" id="textOffsetRange" min="-2.0" max="2.0" step="0.1" value="0">
               <span class="range-val" id="textOffsetRangeVal">0.0</span>
             </div>
           </div>
+        </div>
+      </div>
 
-          <!-- Text Visibility Toggles -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="textVisibility">Text Visibility</div>
-            <div class="toggle-group">
-              <label class="toggle-option">
+      <div class="sidebar-sep"></div>
+
+      <!-- ── Elements ───────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <div class="section-heading" data-i18n="textVisibility">Elements</div>
+        <div class="setting-row">
+          <div class="setting-control">
+            <div class="vis-toggles">
+              <label class="vis-toggle">
                 <input type="checkbox" id="showShotOn" checked>
                 <span data-i18n="showShotOn">Show "Shot on"</span>
               </label>
-              <label class="toggle-option">
+              <label class="vis-toggle">
                 <input type="checkbox" id="showDecoLine" checked>
                 <span data-i18n="showDecoLine">Decorative Line</span>
               </label>
-              <label class="toggle-option">
+              <label class="vis-toggle">
                 <input type="checkbox" id="showExifInfo" checked>
                 <span data-i18n="showExifInfo">EXIF Info</span>
               </label>
             </div>
           </div>
-
-          <!-- Outer Padding -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="outerPadding">Outer Padding</div>
-            <div class="setting-row-inline">
-              <input type="range" id="outerPaddingRange" min="0" max="15" step="1" value="0">
-              <span class="range-val" id="outerPaddingRangeVal">0%</span>
-            </div>
-          </div>
-
-          <!-- Aspect Ratio -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="aspectRatio">Aspect Ratio</div>
-            <div class="ratio-options">
-              <label class="ratio-option">
-                <input type="radio" name="aspectRatio" value="original" checked>
-                <span data-i18n="ratioOriginal">Original</span>
-              </label>
-              <label class="ratio-option">
-                <input type="radio" name="aspectRatio" value="1:1">
-                <span>1:1</span>
-              </label>
-              <label class="ratio-option">
-                <input type="radio" name="aspectRatio" value="4:5">
-                <span>4:5</span>
-              </label>
-              <label class="ratio-option">
-                <input type="radio" name="aspectRatio" value="16:9">
-                <span>16:9</span>
-              </label>
-            </div>
-          </div>
-
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Image Section -->
-  <div id="imageSection">
+    </div><!-- /sidebar-scroll -->
+  </aside>
 
-    <!-- Section header -->
-    <div class="section-header">
-      <span class="section-title" data-i18n="imagesTitle">Images</span>
-      <span id="imageCounter"></span>
-    </div>
+  <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
+  <main class="main">
 
-    <!-- Image Grid -->
-    <div id="imageGrid"></div>
-
-    <!-- Batch Action Bar -->
-    <div class="batch-bar" style="margin-top:16px;">
-      <button class="btn btn-primary btn-lg" id="generateAllBtn" disabled>
-        <span>▶</span>
-        <span data-i18n="generateAll">Generate All</span>
-      </button>
-      <button class="btn btn-secondary btn-lg" id="downloadAllBtn" disabled>
-        <span>⬇</span>
-        <span data-i18n="downloadAll">Download All (ZIP)</span>
-      </button>
+    <!-- Live Preview -->
+    <div class="preview-area" id="livePreviewPane">
+      <canvas id="livePreviewCanvas"></canvas>
+      <div class="preview-empty" id="previewEmpty">
+        <div class="preview-empty-icon">🖼️</div>
+        <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos to see a live preview</div>
+      </div>
     </div>
 
-  </div>
+    <!-- Image Section -->
+    <div class="image-section" id="imageSection" style="display:none;">
 
-  <!-- Privacy notice -->
-  <div class="notice">
-    <span class="notice-icon">🔒</span>
-    <span data-i18n="localProcessing">All processing is done locally. Your photos are never uploaded.</span>
-  </div>
+      <div class="section-header">
+        <span class="section-title" data-i18n="imagesTitle">Images</span>
+        <span class="section-counter" id="imageCounter"></span>
+      </div>
 
-</main>
+      <div class="batch-bar">
+        <button class="btn btn-primary btn-lg" id="generateAllBtn" disabled>
+          <span>▶</span>
+          <span data-i18n="generateAll">Generate All</span>
+        </button>
+        <button class="btn btn-secondary btn-lg" id="downloadAllBtn" disabled>
+          <span>⬇</span>
+          <span data-i18n="downloadAll">Download All (ZIP)</span>
+        </button>
+      </div>
 
-<!-- ─── Footer ─────────────────────────────────────────────────────────────── -->
-<footer class="site-footer">
-  InstaFrame &mdash; Open source &middot; Client-side only &middot; No server, no tracking
-</footer>
+      <div id="imageGrid"></div>
+
+      <div class="notice">
+        <span>🔒</span>
+        <span data-i18n="localProcessing">All processing is done locally. Your photos are never uploaded.</span>
+      </div>
+
+    </div>
+  </main>
+
+</div><!-- /app-shell -->
 
 <!-- ─── Photo Preview Modal ─────────────────────────────────────────────────── -->
 <div id="photoModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Photo preview">
@@ -295,6 +307,5 @@
 <script src="js/i18n.js"></script>
 <script src="js/frame-engine.js"></script>
 <script src="js/app.js"></script>
-
 </body>
 </html>
