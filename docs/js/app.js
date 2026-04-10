@@ -281,11 +281,26 @@ async function renderLivePreview() {
     const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
 
     const previewCanvas = document.getElementById('livePreviewCanvas');
-    // Scale to fit preview pane (max 240px wide)
-    const maxW  = 240;
-    const scale = Math.min(maxW / canvas.width, 1);
-    previewCanvas.width  = Math.round(canvas.width  * scale);
-    previewCanvas.height = Math.round(canvas.height * scale);
+    const dpr = window.devicePixelRatio || 1;
+
+    // CSS display size — fill the pane content area (subtract 2×16px padding)
+    const paneContentW = Math.max(pane.clientWidth - 32, 80);
+    const srcAspect    = canvas.height / canvas.width;
+    const maxDisplayH  = 420;
+
+    let displayW = paneContentW;
+    let displayH = Math.round(displayW * srcAspect);
+    if (displayH > maxDisplayH) {
+      displayH = maxDisplayH;
+      displayW = Math.round(displayH / srcAspect);
+    }
+
+    // Physical pixels = CSS pixels × DPR → sharp on HiDPI / Retina screens
+    previewCanvas.width  = Math.round(displayW * dpr);
+    previewCanvas.height = Math.round(displayH * dpr);
+    previewCanvas.style.width  = displayW + 'px';
+    previewCanvas.style.height = displayH + 'px';
+
     previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
   } catch (e) {
     // Non-critical — silently ignore preview failures
