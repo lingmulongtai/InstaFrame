@@ -5,8 +5,16 @@
 
 const FrameEngine = (() => {
 
-  // Wait for fonts (including Google Fonts) to be ready before canvas rendering
-  const fontsReady = document.fonts ? document.fonts.ready : Promise.resolve();
+  // Font stacks: maps family name → CSS font-family string with appropriate fallback
+  const FONT_STACKS = {
+    'Inter':              "'Inter', Arial, sans-serif",
+    'Montserrat':         "'Montserrat', Arial, sans-serif",
+    'DM Sans':            "'DM Sans', Arial, sans-serif",
+    'Lato':               "'Lato', Arial, sans-serif",
+    'Playfair Display':   "'Playfair Display', Georgia, serif",
+    'Cormorant Garamond': "'Cormorant Garamond', Georgia, serif",
+    'EB Garamond':        "'EB Garamond', Georgia, serif",
+  };
 
   /**
    * Main entry point (sync).
@@ -71,11 +79,27 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Async render: waits for fonts, renders frame, applies post-processing.
+   * Async render: ensures the selected font is loaded, renders frame, applies post-processing.
    * This is the primary public render function.
    */
   async function renderFrameWhenReady(img, exif, settings) {
-    await fontsReady;
+    const family = settings.fontFamily || 'Inter';
+    // Ensure all weight/style variants we might use are loaded
+    if (document.fonts) {
+      const stack = FONT_STACKS[family] || `'${family}', sans-serif`;
+      // Extract the quoted family name for document.fonts.load()
+      const loadFamily = `'${family}'`;
+      try {
+        await Promise.all([
+          document.fonts.load(`300 16px ${loadFamily}`),
+          document.fonts.load(`500 16px ${loadFamily}`),
+          document.fonts.load(`700 16px ${loadFamily}`),
+          document.fonts.load(`italic 300 16px ${loadFamily}`),
+          document.fonts.load(`italic 500 16px ${loadFamily}`),
+          document.fonts.load(`italic 700 16px ${loadFamily}`),
+        ]);
+      } catch (e) { /* fall back gracefully */ }
+    }
     const base = renderFrame(img, exif, settings);
     return applyPostProcess(base, settings);
   }
@@ -92,12 +116,17 @@ const FrameEngine = (() => {
   function drawExifText(ctx, exif, settings, layout) {
     const { canvasW, imageBottom, bottomAreaHeight, isPortrait, frameColor } = layout;
     const {
-      shotOnFontScale = 1.0,
-      exifFontScale = 1.0,
-      textOffsetY = 0,
-      showShotOn = true,
-      showDecoLine = true,
-      showExifInfo = true,
+      fontFamily       = 'Inter',
+      shotOnFontScale  = 1.0,
+      exifFontScale    = 1.0,
+      textOffsetY      = 0,
+      lineGapScale     = 1.0,
+      cameraNameBold   = false,
+      cameraNameItalic = false,
+      exifItalic       = false,
+      showShotOn       = true,
+      showDecoLine     = true,
+      showExifInfo     = true,
     } = settings;
 
     // Determine text color based on frame color
@@ -105,16 +134,25 @@ const FrameEngine = (() => {
     const primaryColor   = isDarkFrame ? '#E8E8E8' : '#000000';
     const secondaryColor = isDarkFrame ? '#AAAAAA' : '#969696';
 
-    const centerX = canvasW / 2;
+    const centerX  = canvasW / 2;
+    const fontStack = FONT_STACKS[fontFamily] || `'${fontFamily}', Arial, sans-serif`;
 
     // Font size relative to canvas width
     const baseFontSize = canvasW * 0.022;
     const shotOnSize   = Math.round(baseFontSize * 1.15 * shotOnFontScale);
     const exifSize     = Math.round(baseFontSize * 0.92 * exifFontScale);
-    const lineGap      = shotOnSize * (isPortrait ? 1.4 : 1.7);
+    const lineGap      = shotOnSize * (isPortrait ? 1.4 : 1.7) * lineGapScale;
 
     // Vertical center of bottom area — offset by user setting
     const textCenterY = imageBottom + bottomAreaHeight * 0.50 + (textOffsetY * shotOnSize);
+
+    // Build font strings
+    const labelFont  = `300 ${shotOnSize}px ${fontStack}`;
+    const cameraWeight = cameraNameBold ? '700' : '500';
+    const cameraStyle  = cameraNameItalic ? 'italic ' : '';
+    const cameraFont   = `${cameraStyle}${cameraWeight} ${shotOnSize}px ${fontStack}`;
+    const exifStyle    = exifItalic ? 'italic ' : '';
+    const exifFont     = `${exifStyle}300 ${exifSize}px ${fontStack}`;
 
     ctx.save();
     ctx.textBaseline = 'middle';
@@ -126,18 +164,18 @@ const FrameEngine = (() => {
     if (showShotOn && cameraName) {
       const shotOnLabel = 'Shot on';
       // Measure widths to center the composite
-      ctx.font = `300 ${shotOnSize}px 'Inter', Arial, sans-serif`;
+      ctx.font = labelFont;
       const labelW  = ctx.measureText(shotOnLabel + '  ').width;
-      ctx.font = `500 ${shotOnSize}px 'Inter', Arial, sans-serif`;
+      ctx.font = cameraFont;
       const cameraW = ctx.measureText(cameraName).width;
       const totalW  = labelW + cameraW;
       const startX  = centerX - totalW / 2;
 
-      ctx.font = `300 ${shotOnSize}px 'Inter', Arial, sans-serif`;
+      ctx.font      = labelFont;
       ctx.fillStyle = secondaryColor;
       ctx.fillText(shotOnLabel + '  ', startX, textCenterY - lineGap / 2);
 
-      ctx.font = `500 ${shotOnSize}px 'Inter', Arial, sans-serif`;
+      ctx.font      = cameraFont;
       ctx.fillStyle = primaryColor;
       ctx.fillText(cameraName, startX + labelW, textCenterY - lineGap / 2);
     }
@@ -154,7 +192,7 @@ const FrameEngine = (() => {
       const exifLine = parts.join('  \u2003  ');
 
       if (exifLine) {
-        ctx.font      = `300 ${exifSize}px 'Inter', Arial, sans-serif`;
+        ctx.font      = exifFont;
         ctx.fillStyle = secondaryColor;
         ctx.textAlign = 'center';
         ctx.fillText(exifLine, centerX, textCenterY + lineGap / 2);
