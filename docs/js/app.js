@@ -20,10 +20,16 @@ const state = {
     showShotOn:       true,
     showDecoLine:     true,
     showExifInfo:     true,
+    cameraNameOnly:   false,
     outerPadding:     0,
     aspectRatio:      'original',
   },
 };
+
+// ImageItem extra fields for video:
+//   isVideo:   boolean
+//   videoBlob: Blob | null   (filled after generation)
+//   progress:  number 0..1   (encoding progress)
 
 let itemIdCounter = 0;
 
@@ -37,7 +43,33 @@ let itemIdCounter = 0;
 //   errorMsg: string | null,
 // }
 
-// ─── EXIF Reading ─────────────────────────────────────────────────────────────
+// ─── EXIF / Metadata Reading ──────────────────────────────────────────────────
+function isVideoFile(file) {
+  return file.type.startsWith('video/') ||
+    /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(file.name);
+}
+
+async function readVideoMetadata(file) {
+  // exifr can read some QuickTime/XMP metadata from MP4/MOV
+  try {
+    const raw = await exifr.parse(file, {
+      pick: ['Make', 'Model', 'Software', 'Author'],
+    });
+    if (raw) {
+      return {
+        make:         cleanStr(raw.Make     || raw.Author   || ''),
+        model:        cleanStr(raw.Model    || raw.Software || ''),
+        lensModel:    '',
+        focalLength:  '',
+        fNumber:      '',
+        exposureTime: '',
+        iso:          '',
+      };
+    }
+  } catch (_) {}
+  return emptyExif();
+}
+
 async function readExif(file) {
   try {
     const raw = await exifr.parse(file, {
@@ -74,23 +106,40 @@ function formatFNumber(v) {
 
 // ─── Item Management ──────────────────────────────────────────────────────────
 async function addFiles(files) {
-  const imageFiles = Array.from(files).filter(f =>
-    f.type.startsWith('image/') || f.name.match(/\.(jpe?g|png|heic|heif|webp)$/i)
+  const accepted = Array.from(files).filter(f =>
+    f.type.startsWith('image/') || f.type.startsWith('video/') ||
+    /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(f.name)
   );
-  if (!imageFiles.length) return;
+  if (!accepted.length) return;
 
-  for (const file of imageFiles) {
-    const exif = await readExif(file);
-    const item = {
+  for (const file of accepted) {
+    const video = isVideoFile(file);
+    const exif  = video ? await readVideoMetadata(file) : await readExif(file);
+    const item  = {
       id: ++itemIdCounter,
       file,
       exif,
-      canvas: null,
-      status: 'pending',
-      errorMsg: null,
+      canvas:    null,
+      videoBlob: null,
+      progress:  0,
+      status:    'pending',
+      errorMsg:  null,
+      isVideo:   video,
     };
     state.items.push(item);
     renderItem(item);
+
+    // Generate thumbnail for video cards asynchronously
+    if (video) {
+      FrameEngine.captureVideoFrame(file)
+        .then(img => {
+          const previewDiv = document.getElementById(`preview-${item.id}`);
+          if (!previewDiv) return;
+          const thumb = previewDiv.querySelector('img.thumb-orig');
+          if (thumb && img) thumb.src = img.src;
+        })
+        .catch(() => {});
+    }
   }
 
   updateUI();
@@ -108,16 +157,29 @@ function removeItem(id) {
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
 async function generateItem(item) {
-  item.status = 'processing';
+  item.status   = 'processing';
+  item.progress = 0;
   updateItemStatus(item);
 
   try {
-    const img = await FrameEngine.loadImage(item.file);
-    item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
-    item.status = 'done';
+    if (item.isVideo) {
+      item.videoBlob = await FrameEngine.renderVideoFrameWhenReady(
+        item.file, item.exif, state.settings,
+        {
+          onProgress: p => {
+            item.progress = p;
+            updateItemStatus(item);
+          },
+        }
+      );
+    } else {
+      const img  = await FrameEngine.loadImage(item.file);
+      item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
+    }
+    item.status   = 'done';
     item.errorMsg = null;
   } catch (e) {
-    item.status = 'error';
+    item.status   = 'error';
     item.errorMsg = e.message;
   }
 
@@ -158,11 +220,17 @@ async function regenerateItem(id) {
 // ─── Download ─────────────────────────────────────────────────────────────────
 async function downloadSingle(id) {
   const item = state.items.find(i => i.id === id);
-  if (!item || !item.canvas) return;
+  if (!item) return;
 
-  const blob = await FrameEngine.canvasToBlob(item.canvas);
-  const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.jpg';
-  triggerDownload(blob, name);
+  if (item.isVideo && item.videoBlob) {
+    const ext  = item.videoBlob.type.includes('webm') ? 'webm' : 'mp4';
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + ext;
+    triggerDownload(item.videoBlob, name);
+  } else if (item.canvas) {
+    const blob = await FrameEngine.canvasToBlob(item.canvas);
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.jpg';
+    triggerDownload(blob, name);
+  }
 }
 
 async function downloadAll() {
@@ -259,6 +327,7 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
+    ['cameraNameOnly',   saved.cameraNameOnly],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -294,6 +363,7 @@ function applySettings() {
   state.settings.showShotOn       = document.getElementById('showShotOn').checked;
   state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
+  state.settings.cameraNameOnly   = document.getElementById('cameraNameOnly').checked;
   state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
@@ -363,7 +433,10 @@ async function renderLivePreview() {
 
   const item = state.items[0];
   try {
-    const img    = await FrameEngine.loadImage(item.file);
+    // For video items, capture a frame first
+    const img = item.isVideo
+      ? await FrameEngine.captureVideoFrame(item.file)
+      : await FrameEngine.loadImage(item.file);
     // maxPreviewPx:1200 scales down huge originals so font-load + render is fast
     const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx: 1200 });
 
@@ -493,9 +566,12 @@ function renderItem(item) {
   card.className = 'image-card';
   card.id = `item-${item.id}`;
 
+  const thumbSrc = item.isVideo ? '' : URL.createObjectURL(item.file);
+
   card.innerHTML = `
     <div class="card-preview" id="preview-${item.id}">
-      <img class="thumb-orig" src="${URL.createObjectURL(item.file)}" alt="">
+      ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
+      <img class="thumb-orig" src="${thumbSrc}" alt="">
       <div class="card-status" id="status-badge-${item.id}">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
@@ -554,8 +630,13 @@ function updateItemStatus(item) {
   const dot  = badge.querySelector('.status-dot');
   const text = badge.querySelector('.status-text');
 
-  dot.className  = `status-dot ${item.status}`;
-  text.textContent = t(`status${capitalize(item.status)}`);
+  dot.className = `status-dot ${item.status}`;
+
+  if (item.status === 'processing' && item.isVideo && item.progress > 0) {
+    text.textContent = `${Math.round(item.progress * 100)}%`;
+  } else {
+    text.textContent = t(`status${capitalize(item.status)}`);
+  }
 }
 
 function updateItemPreview(item) {
@@ -563,23 +644,28 @@ function updateItemPreview(item) {
   const dlBtn      = document.getElementById(`dl-btn-${item.id}`);
   if (!previewDiv) return;
 
-  if (item.status === 'done' && item.canvas) {
-    // Replace original thumb with framed canvas preview
-    let existing = previewDiv.querySelector('canvas.thumb-framed');
-    if (!existing) {
-      existing = document.createElement('canvas');
-      existing.className = 'thumb-framed';
-      previewDiv.insertBefore(existing, previewDiv.firstChild);
-    }
-    // Scale canvas to preview size
-    const maxW = 400, maxH = 400;
-    const scale = Math.min(maxW / item.canvas.width, maxH / item.canvas.height);
-    existing.width  = Math.round(item.canvas.width  * scale);
-    existing.height = Math.round(item.canvas.height * scale);
-    existing.getContext('2d').drawImage(item.canvas, 0, 0, existing.width, existing.height);
+  if (item.status === 'done' && (item.canvas || item.videoBlob)) {
+    if (item.isVideo) {
+      // Video done: thumbnail stays, add a "ready" overlay on badge; enable download
+      const origThumb = previewDiv.querySelector('img.thumb-orig');
+      if (origThumb) origThumb.style.display = '';
+    } else {
+      // Photo done: replace thumbnail with framed canvas preview
+      let existing = previewDiv.querySelector('canvas.thumb-framed');
+      if (!existing) {
+        existing = document.createElement('canvas');
+        existing.className = 'thumb-framed';
+        previewDiv.insertBefore(existing, previewDiv.firstChild);
+      }
+      const maxW = 400, maxH = 400;
+      const scale = Math.min(maxW / item.canvas.width, maxH / item.canvas.height);
+      existing.width  = Math.round(item.canvas.width  * scale);
+      existing.height = Math.round(item.canvas.height * scale);
+      existing.getContext('2d').drawImage(item.canvas, 0, 0, existing.width, existing.height);
 
-    const origThumb = previewDiv.querySelector('img.thumb-orig');
-    if (origThumb) origThumb.style.display = 'none';
+      const origThumb = previewDiv.querySelector('img.thumb-orig');
+      if (origThumb) origThumb.style.display = 'none';
+    }
     if (dlBtn) dlBtn.disabled = false;
   } else {
     const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
@@ -694,7 +780,7 @@ function setupSettingsListeners() {
   if (fontFamilyEl) fontFamilyEl.addEventListener('change', applySettings);
 
   // Font style checkboxes (camera name + EXIF)
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'cameraNameOnly'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
