@@ -198,6 +198,80 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// ─── Settings persistence ─────────────────────────────────────────────────────
+const SETTINGS_KEY = 'instaframe_settings';
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) {}
+}
+
+function restoreSettings() {
+  let saved;
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch (e) { return; }
+
+  // Frame color
+  if (saved.frameColor != null) {
+    const standardColors = ['#ffffff', '#F0F0F0', '#1a1a1a'];
+    if (standardColors.includes(saved.frameColor)) {
+      const r = document.querySelector(`input[name="frameColor"][value="${saved.frameColor}"]`);
+      if (r) r.checked = true;
+    } else {
+      const r = document.querySelector('input[name="frameColor"][value="custom"]');
+      if (r) r.checked = true;
+      const picker = document.getElementById('customColorPicker');
+      if (picker) picker.value = saved.frameColor;
+      const swatch = document.getElementById('customColorSwatch');
+      if (swatch) swatch.style.background = saved.frameColor;
+    }
+  }
+
+  // Range sliders
+  [
+    ['thicknessRange',    'thicknessRangeVal',    saved.thicknessScale,  v => parseFloat(v).toFixed(1) + '×'],
+    ['shotOnFontRange',   'shotOnFontRangeVal',   saved.shotOnFontScale, v => parseFloat(v).toFixed(1) + '×'],
+    ['exifFontRange',     'exifFontRangeVal',     saved.exifFontScale,   v => parseFloat(v).toFixed(1) + '×'],
+    ['lineGapRange',      'lineGapRangeVal',      saved.lineGapScale,    v => parseFloat(v).toFixed(1) + '×'],
+    ['textOffsetRange',   'textOffsetRangeVal',   saved.textOffsetY,     v => parseFloat(v).toFixed(1)],
+    ['outerPaddingRange', 'outerPaddingRangeVal', saved.outerPadding,    v => v + '%'],
+  ].forEach(([id, valId, val, fmt]) => {
+    if (val == null) return;
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+    const valEl = document.getElementById(valId);
+    if (valEl) valEl.textContent = fmt(val);
+  });
+
+  // Font family
+  if (saved.fontFamily) {
+    const el = document.getElementById('fontFamily');
+    if (el) el.value = saved.fontFamily;
+  }
+
+  // Checkboxes
+  [
+    ['cameraNameBold',   saved.cameraNameBold],
+    ['cameraNameItalic', saved.cameraNameItalic],
+    ['exifItalic',       saved.exifItalic],
+    ['showShotOn',       saved.showShotOn],
+    ['showDecoLine',     saved.showDecoLine],
+    ['showExifInfo',     saved.showExifInfo],
+  ].forEach(([id, val]) => {
+    if (val == null) return;
+    const el = document.getElementById(id);
+    if (el) el.checked = val;
+  });
+
+  // Aspect ratio
+  if (saved.aspectRatio) {
+    const r = document.querySelector(`input[name="aspectRatio"][value="${saved.aspectRatio}"]`);
+    if (r) r.checked = true;
+  }
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function applySettings() {
   // Frame color (support custom color picker)
@@ -235,6 +309,7 @@ function applySettings() {
     }
   });
 
+  saveSettings();
   updateUI();
   scheduleLivePreview();
 }
@@ -646,6 +721,8 @@ function capitalize(s) {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
+  restoreSettings();   // ← restore saved settings before wiring listeners
+  applySettings();     // ← sync state.settings from restored DOM values
   setupDropZone();
   setupSettingsListeners();
   setupModal();
