@@ -128,7 +128,12 @@ const FrameEngine = (() => {
       showShotOn       = true,
       showDecoLine     = true,
       showExifInfo     = true,
+      cameraNameOnly   = false,   // hide EXIF line + deco, show only "Shot on"
     } = settings;
+
+    const effectiveShowShotOn   = cameraNameOnly ? true  : showShotOn;
+    const effectiveShowExifInfo = cameraNameOnly ? false : showExifInfo;
+    const effectiveShowDecoLine = cameraNameOnly ? false : showDecoLine;
 
     const isDark  = isColorDark(frameColor);
     const primary = isDark ? '#E8E8E8' : '#111111';
@@ -155,7 +160,7 @@ const FrameEngine = (() => {
     ctx.textBaseline = 'middle';
 
     // Line 1: Shot on + Camera
-    if (showShotOn) {
+    if (effectiveShowShotOn) {
       const cam = [exif.make, exif.model].filter(Boolean).join(' ');
       if (cam) {
         const label = 'Shot on';
@@ -177,7 +182,7 @@ const FrameEngine = (() => {
     }
 
     // Line 2: EXIF data
-    if (showExifInfo) {
+    if (effectiveShowExifInfo) {
       const parts = [];
       if (exif.lensModel)    parts.push(exif.lensModel);
       if (exif.focalLength)  parts.push(`${exif.focalLength}mm`);
@@ -194,7 +199,7 @@ const FrameEngine = (() => {
     }
 
     // Decorative separator line
-    if (showDecoLine) {
+    if (effectiveShowDecoLine) {
       ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
       ctx.lineWidth   = 1;
       ctx.beginPath();
@@ -260,5 +265,168 @@ const FrameEngine = (() => {
     });
   }
 
-  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage };
+  // ─── Video helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Capture a single frame from a video file as an HTMLImageElement.
+   * @param {File}   file      - video file
+   * @param {number} [atSecond=0] - timestamp to seek to
+   */
+  function captureVideoFrame(file, atSecond = 0) {
+    return new Promise((resolve, reject) => {
+      const url   = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted   = true;
+      video.preload = 'metadata';
+      let captured  = false;
+
+      video.onloadedmetadata = () => {
+        const t = Math.min(atSecond, Math.max(0, video.duration - 0.05));
+        video.currentTime = t;
+      };
+
+      video.onseeked = () => {
+        if (captured) return;
+        captured = true;
+        const c = document.createElement('canvas');
+        c.width  = video.videoWidth  || 1280;
+        c.height = video.videoHeight || 720;
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        video.src = '';
+        URL.revokeObjectURL(url);
+        const img = new Image();
+        img.onload  = () => resolve(img);
+        img.onerror = reject;
+        img.src = c.toDataURL('image/jpeg', 0.92);
+      };
+
+      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.src  = url;
+      video.load();
+    });
+  }
+
+  /**
+   * Render a video with EXIF frame borders using the Canvas + MediaRecorder pipeline.
+   * Resolves with a Blob (video/webm) that includes the original audio track.
+   * @param {File}     file
+   * @param {object}   exif
+   * @param {object}   settings
+   * @param {object}   [opts]
+   * @param {function} [opts.onProgress]  called with 0..1 during encoding
+   */
+  async function renderVideoFrameWhenReady(file, exif, settings, { onProgress } = {}) {
+    // Pre-load fonts (same as photo path)
+    const family = settings.fontFamily || 'Inter';
+    if (document.fonts) {
+      const fam   = `'${family}'`;
+      const specs = ['300', '400', '500', '700'].flatMap(w => [
+        `${w} 16px ${fam}`, `italic ${w} 16px ${fam}`,
+      ]);
+      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
+    }
+
+    return new Promise((resolve, reject) => {
+      const url   = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted   = true;   // must be muted for autoplay; audio routed via AudioContext
+      video.preload = 'auto';
+
+      video.onloadedmetadata = () => {
+        const W = video.videoWidth;
+        const H = video.videoHeight;
+        if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
+
+        const isPortrait  = H > W;
+        const ts          = settings.thicknessScale || 1;
+        const baseBorder  = Math.min(W, H) * 0.05 * 1.2 * ts;
+        const sideBorder  = baseBorder * 0.5;
+        const bottomBorder= sideBorder * 4 + H * 0.10 * ts;
+        const pf          = isPortrait ? 0.75 : 1.0;
+        const sB = sideBorder    * pf;
+        const tB = sideBorder    * pf;
+        const bB = bottomBorder  * pf;
+
+        const canvasW = Math.round(W + sB * 2);
+        const canvasH = Math.round(H + tB + bB);
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = canvasW;
+        canvas.height = canvasH;
+        const ctx     = canvas.getContext('2d');
+
+        const layout = {
+          canvasW, canvasH,
+          imageBottom: tB + H,
+          bottomAreaHeight: bB,
+          isPortrait,
+          frameColor: settings.frameColor || '#F0F0F0',
+        };
+        const frameColor = settings.frameColor || '#F0F0F0';
+        const duration   = video.duration || 0;
+
+        // ── Route audio through AudioContext so it's captured but not played ──
+        let audioTrack = null;
+        try {
+          const actx = new (window.AudioContext || window.webkitAudioContext)();
+          const src  = actx.createMediaElementSource(video);
+          const dest = actx.createMediaStreamDestination();
+          src.connect(dest);   // route to MediaStream (recorded)
+          // NOT connecting to actx.destination keeps page muted
+          audioTrack = dest.stream.getAudioTracks()[0] || null;
+        } catch (_) { /* no audio support or no audio track */ }
+
+        // ── Build output stream: canvas video + original audio ──
+        const outStream = canvas.captureStream(30);
+        if (audioTrack) outStream.addTrack(audioTrack);
+
+        const mimeType = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm',
+        ].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+        const recorder = new MediaRecorder(outStream, {
+          mimeType,
+          videoBitsPerSecond: 12_000_000,
+        });
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          URL.revokeObjectURL(url);
+          resolve(new Blob(chunks, { type: mimeType }));
+        };
+
+        let rafId;
+        function drawLoop() {
+          ctx.fillStyle = frameColor;
+          ctx.fillRect(0, 0, canvasW, canvasH);
+          ctx.drawImage(video, sB, tB, W, H);
+          drawInnerShadow(ctx, sB, tB, W, H);
+          drawExifText(ctx, exif, settings, layout);
+
+          if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
+
+          if (!video.ended && !video.paused) {
+            rafId = requestAnimationFrame(drawLoop);
+          } else {
+            cancelAnimationFrame(rafId);
+            // Give recorder a moment to flush, then stop
+            setTimeout(() => recorder.stop(), 120);
+          }
+        }
+
+        recorder.start(200);
+        video.play()
+          .then(() => { rafId = requestAnimationFrame(drawLoop); })
+          .catch(err => { recorder.stop(); URL.revokeObjectURL(url); reject(err); });
+      };
+
+      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.src  = url;
+      video.load();
+    });
+  }
+
+  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady };
 })();

@@ -39,11 +39,11 @@
       <!-- Upload -->
       <div class="upload-strip" id="dropZone" role="button" tabindex="0" aria-label="Upload images">
         <input type="file" id="fileInput" multiple
-               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.heif,.webp">
+               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
         <span class="upload-strip-icon">🖼️</span>
         <div class="upload-strip-text">
           <strong data-i18n="dropZoneText">Drop photos here or click</strong>
-          <span class="upload-strip-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · multiple files</span>
+          <span class="upload-strip-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV · multiple files</span>
         </div>
       </div>
 
@@ -232,6 +232,10 @@
               <label class="vis-toggle">
                 <input type="checkbox" id="showExifInfo" checked>
                 <span data-i18n="showExifInfo">EXIF Info</span>
+              </label>
+              <label class="vis-toggle vis-toggle-accent" title="Recommended for video — hides lens/aperture/shutter/ISO line">
+                <input type="checkbox" id="cameraNameOnly">
+                <span data-i18n="cameraNameOnly">Camera name only</span>
               </label>
             </div>
           </div>
