@@ -426,6 +426,26 @@ select.font-select:focus { outline: none; border-color: var(--accent); box-shado
 }
 .card-preview canvas { object-fit: contain; background: #f0f0f0; }
 
+/* Video badge overlay */
+.video-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: white;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 100px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* "Camera name only" toggle — slight accent tint */
+.vis-toggle-accent { color: var(--accent); }
+.vis-toggle-accent input { accent-color: var(--accent); }
+
 .card-status {
   position: absolute;
   bottom: 6px;
