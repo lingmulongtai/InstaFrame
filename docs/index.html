@@ -12,10 +12,10 @@
   <meta property="og:description" content="Add beautiful EXIF frames to your photos in batch. Free, local, private.">
   <meta property="og:type" content="website">
 
-  <!-- Google Fonts: Inter -->
+  <!-- Google Fonts: frame text fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Montserrat:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=DM+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Lato:ital,wght@0,300;0,700;1,300;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&display=swap">
 
   <!-- Styles -->
   <link rel="stylesheet" href="css/style.css">
@@ -108,6 +108,39 @@
             </div>
           </div>
 
+          <!-- Font Family -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="fontFamily">Font</div>
+            <select id="fontFamily" class="font-select">
+              <option value="Inter">Inter</option>
+              <option value="Montserrat">Montserrat</option>
+              <option value="DM Sans">DM Sans</option>
+              <option value="Lato">Lato</option>
+              <option value="Playfair Display">Playfair Display</option>
+              <option value="Cormorant Garamond">Cormorant Garamond</option>
+              <option value="EB Garamond">EB Garamond</option>
+            </select>
+          </div>
+
+          <!-- Camera Name Style -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="cameraStyle">Camera Name Style</div>
+            <div class="toggle-group">
+              <label class="toggle-option style-preview-bold">
+                <input type="checkbox" id="cameraNameBold">
+                <span data-i18n="styleBold">Bold</span>
+              </label>
+              <label class="toggle-option style-preview-italic">
+                <input type="checkbox" id="cameraNameItalic">
+                <span data-i18n="styleItalic">Italic</span>
+              </label>
+              <label class="toggle-option style-preview-italic" style="margin-top:4px;">
+                <input type="checkbox" id="exifItalic">
+                <span data-i18n="exifItalicLabel">Italic (EXIF line)</span>
+              </label>
+            </div>
+          </div>
+
           <!-- Shot on Font -->
           <div class="setting-row">
             <div class="setting-label" data-i18n="shotOnFontSize">"Shot on" Font Size</div>
@@ -123,6 +156,15 @@
             <div class="setting-row-inline">
               <input type="range" id="exifFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
               <span class="range-val" id="exifFontRangeVal">1.0×</span>
+            </div>
+          </div>
+
+          <!-- Line Spacing -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="lineGap">Line Spacing</div>
+            <div class="setting-row-inline">
+              <input type="range" id="lineGapRange" min="0.5" max="3.0" step="0.1" value="1.0">
+              <span class="range-val" id="lineGapRangeVal">1.0×</span>
             </div>
           </div>
 
