@@ -7,16 +7,21 @@
 const state = {
   items: [],       // Array of ImageItem objects
   settings: {
-    frameColor:      '#F0F0F0',
-    thicknessScale:  1.0,
-    shotOnFontScale: 1.0,
-    exifFontScale:   1.0,
-    textOffsetY:     0,
-    showShotOn:      true,
-    showDecoLine:    true,
-    showExifInfo:    true,
-    outerPadding:    0,
-    aspectRatio:     'original',
+    frameColor:       '#F0F0F0',
+    thicknessScale:   1.0,
+    fontFamily:       'Inter',
+    shotOnFontScale:  1.0,
+    exifFontScale:    1.0,
+    lineGapScale:     1.0,
+    textOffsetY:      0,
+    cameraNameBold:   false,
+    cameraNameItalic: false,
+    exifItalic:       false,
+    showShotOn:       true,
+    showDecoLine:     true,
+    showExifInfo:     true,
+    outerPadding:     0,
+    aspectRatio:      'original',
   },
 };
 
@@ -203,14 +208,19 @@ function applySettings() {
     state.settings.frameColor = colorRadio ? colorRadio.value : '#F0F0F0';
   }
 
-  state.settings.thicknessScale  = parseFloat(document.getElementById('thicknessRange').value);
-  state.settings.shotOnFontScale = parseFloat(document.getElementById('shotOnFontRange').value);
-  state.settings.exifFontScale   = parseFloat(document.getElementById('exifFontRange').value);
-  state.settings.textOffsetY     = parseFloat(document.getElementById('textOffsetRange').value);
-  state.settings.showShotOn      = document.getElementById('showShotOn').checked;
-  state.settings.showDecoLine    = document.getElementById('showDecoLine').checked;
-  state.settings.showExifInfo    = document.getElementById('showExifInfo').checked;
-  state.settings.outerPadding    = parseInt(document.getElementById('outerPaddingRange').value, 10);
+  state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
+  state.settings.fontFamily       = document.getElementById('fontFamily').value;
+  state.settings.shotOnFontScale  = parseFloat(document.getElementById('shotOnFontRange').value);
+  state.settings.exifFontScale    = parseFloat(document.getElementById('exifFontRange').value);
+  state.settings.lineGapScale     = parseFloat(document.getElementById('lineGapRange').value);
+  state.settings.textOffsetY      = parseFloat(document.getElementById('textOffsetRange').value);
+  state.settings.cameraNameBold   = document.getElementById('cameraNameBold').checked;
+  state.settings.cameraNameItalic = document.getElementById('cameraNameItalic').checked;
+  state.settings.exifItalic       = document.getElementById('exifItalic').checked;
+  state.settings.showShotOn       = document.getElementById('showShotOn').checked;
+  state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
+  state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
+  state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -575,6 +585,7 @@ function setupSettingsListeners() {
     ['thicknessRange',    'thicknessRangeVal',    v => parseFloat(v).toFixed(1) + '×'],
     ['shotOnFontRange',   'shotOnFontRangeVal',   v => parseFloat(v).toFixed(1) + '×'],
     ['exifFontRange',     'exifFontRangeVal',     v => parseFloat(v).toFixed(1) + '×'],
+    ['lineGapRange',      'lineGapRangeVal',      v => parseFloat(v).toFixed(1) + '×'],
     ['textOffsetRange',   'textOffsetRangeVal',   v => parseFloat(v).toFixed(1)],
     ['outerPaddingRange', 'outerPaddingRangeVal', v => v + '%'],
   ].forEach(([id, valId, fmt]) => {
@@ -607,8 +618,12 @@ function setupSettingsListeners() {
     });
   }
 
-  // Visibility checkboxes
-  ['showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
+  // Font family selector
+  const fontFamilyEl = document.getElementById('fontFamily');
+  if (fontFamilyEl) fontFamilyEl.addEventListener('change', applySettings);
+
+  // Font style checkboxes (camera name + EXIF)
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });

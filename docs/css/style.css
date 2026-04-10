@@ -285,6 +285,32 @@ body {
   flex-shrink: 0;
 }
 
+/* Font family select */
+.font-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+.font-select:focus { border-color: var(--accent); }
+
+/* Bold/Italic style preview labels */
+.style-preview-bold span { font-weight: 700; }
+.style-preview-italic span { font-style: italic; }
+
 /* Text visibility toggles */
 .toggle-group {
   display: flex;
