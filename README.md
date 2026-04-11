@@ -61,7 +61,7 @@ Everything runs locally. Your files never leave your device.
 
 ## Usage
 
-1. Open `docs/index.html` in any modern browser  
+1. Open `index.html` in any modern browser  
    *(or visit the [GitHub Pages](https://lingmulongtai.github.io/InstaFrame/) deployment)*
 2. Drag & drop photos or videos onto the upload area, or click to select files  
    Supported: JPEG · PNG · HEIC · WebP · MP4 · MOV · WebM
@@ -75,7 +75,6 @@ Everything runs locally. Your files never leave your device.
 ## Project structure
 
 ```
-docs/
 ├── index.html          Main page
 ├── css/
 │   └── style.css       Layout and component styles
@@ -94,7 +93,7 @@ docs/
 - [Google Fonts](https://fonts.google.com/) — Inter, Montserrat, DM Sans, Lato, Playfair Display, Cormorant Garamond, EB Garamond
 - Canvas 2D API + MediaRecorder API — frame rendering and video encoding
 
-No build step. No dependencies to install. Open `docs/index.html` and go.
+No build step. No dependencies to install. Open `index.html` and go.
 
 ---
 
@@ -168,7 +167,7 @@ InstaFrame は、写真や動画にカメラのメタデータ（メーカー・
 
 ## 使い方
 
-1. `docs/index.html` をブラウザで開く  
+1. `index.html` をブラウザで開く  
    *（または [GitHub Pages](https://lingmulongtai.github.io/InstaFrame/) からアクセス）*
 2. 写真・動画をドロップエリアにドラッグ＆ドロップ、またはクリックして選択  
    対応形式: JPEG · PNG · HEIC · WebP · MP4 · MOV · WebM
@@ -182,7 +181,6 @@ InstaFrame は、写真や動画にカメラのメタデータ（メーカー・
 ## ファイル構成
 
 ```
-docs/
 ├── index.html          メインページ
 ├── css/
 │   └── style.css       レイアウト・コンポーネントスタイル
@@ -201,7 +199,7 @@ docs/
 - [Google Fonts](https://fonts.google.com/) — Inter, Montserrat, DM Sans, Lato, Playfair Display, Cormorant Garamond, EB Garamond
 - Canvas 2D API + MediaRecorder API — フレーム描画・動画エンコード
 
-ビルドステップなし。インストール不要。`docs/index.html` を開くだけで動作します。
+ビルドステップなし。インストール不要。`index.html` を開くだけで動作します。
 
 ---
 

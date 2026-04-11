@@ -517,7 +517,7 @@ function scheduleLivePreview() {
 }
 
 async function renderLivePreview() {
-  const pane         = document.getElementById('livePreviewPane');
+  const pane         = document.getElementById('dropZone');
   const previewCanvas = document.getElementById('livePreviewCanvas');
   const emptyEl      = document.getElementById('previewEmpty');
   if (!pane || !previewCanvas) return;
@@ -525,6 +525,7 @@ async function renderLivePreview() {
   if (state.items.length === 0) {
     previewCanvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = '';
+    pane.classList.remove('has-preview');
     return;
   }
 
@@ -558,6 +559,7 @@ async function renderLivePreview() {
 
     previewCanvas.style.display = 'block';
     if (emptyEl) emptyEl.style.display = 'none';
+    pane.classList.add('has-preview');
   } catch (e) {
     // Non-critical — silently ignore preview failures
   }
@@ -787,6 +789,16 @@ function updateUI() {
 
   const imageSection = document.getElementById('imageSection');
   if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
+
+  // If no items, reset the drop zone to its empty/clickable state
+  if (!hasItems) {
+    const dropZone = document.getElementById('dropZone');
+    if (dropZone) dropZone.classList.remove('has-preview');
+    const previewCanvas = document.getElementById('livePreviewCanvas');
+    if (previewCanvas) previewCanvas.style.display = 'none';
+    const emptyEl = document.getElementById('previewEmpty');
+    if (emptyEl) emptyEl.style.display = '';
+  }
 }
 
 function setGlobalBusy(busy) {
@@ -894,14 +906,10 @@ function setupDropZone() {
   const zone  = document.getElementById('dropZone');
   const input = document.getElementById('fileInput');
 
-  // The file input is an invisible overlay covering the entire zone.
-  // Clicking the zone clicks the input directly — no JS click trigger needed.
-  // A second input.click() call would close the already-open dialog.
-
-  // Keyboard accessibility (Enter / Space)
-  zone.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
-  });
+  // The file input is an invisible overlay (inset:0) covering the preview area
+  // when no files are loaded. Clicking anywhere in the empty area opens the file
+  // dialog directly. When files are present, `has-preview` disables the overlay
+  // so canvas clicks work normally.
 
   zone.addEventListener('dragover', e => {
     e.preventDefault();
@@ -920,6 +928,12 @@ function setupDropZone() {
     addFiles(input.files);
     input.value = '';
   });
+
+  // "Add more files" button (visible in section header when files are loaded)
+  const addMoreBtn = document.getElementById('addMoreBtn');
+  if (addMoreBtn) {
+    addMoreBtn.addEventListener('click', () => input.click());
+  }
 }
 
 // ─── Settings Listeners ───────────────────────────────────────────────────────

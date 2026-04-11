@@ -36,17 +36,6 @@
 
     <div class="sidebar-scroll">
 
-      <!-- Upload -->
-      <div class="upload-strip" id="dropZone" role="button" tabindex="0" aria-label="Upload images">
-        <input type="file" id="fileInput" multiple
-               accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
-        <span class="upload-strip-icon">🖼️</span>
-        <div class="upload-strip-text">
-          <strong data-i18n="dropZoneText">Drop photos here or click</strong>
-          <span class="upload-strip-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV · multiple files</span>
-        </div>
-      </div>
-
       <!-- ── Frame ─────────────────────────────────────────────────────────── -->
       <div class="settings-section">
         <div class="section-heading">Frame</div>
@@ -320,12 +309,15 @@
   <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
   <main class="main">
 
-    <!-- Live Preview -->
-    <div class="preview-area" id="livePreviewPane">
+    <!-- Live Preview + Drop Zone -->
+    <div class="preview-area" id="dropZone">
+      <input type="file" id="fileInput" multiple
+             accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
       <canvas id="livePreviewCanvas"></canvas>
       <div class="preview-empty" id="previewEmpty">
-        <div class="preview-empty-icon">🖼️</div>
-        <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos to see a live preview</div>
+        <div class="preview-empty-icon">📷</div>
+        <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
+        <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
       </div>
     </div>
 
@@ -334,7 +326,10 @@
 
       <div class="section-header">
         <span class="section-title" data-i18n="imagesTitle">Images</span>
-        <span class="section-counter" id="imageCounter"></span>
+        <div class="section-header-right">
+          <span class="section-counter" id="imageCounter"></span>
+          <button class="btn btn-secondary btn-sm" id="addMoreBtn" data-i18n="addMore">+ Add</button>
+        </div>
       </div>
 
       <!-- Export progress bar (shown during generation / ZIP creation) -->
