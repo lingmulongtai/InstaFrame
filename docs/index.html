@@ -242,6 +242,78 @@
         </div>
       </div>
 
+      <div class="sidebar-sep"></div>
+
+      <!-- ── Export ────────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <div class="section-heading">Export</div>
+
+        <!-- Photo format -->
+        <div class="setting-row">
+          <div class="setting-label">Photo</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="exportPhotoFormat" id="fmt-jpeg" value="jpeg" checked>
+                <label for="fmt-jpeg">JPEG</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportPhotoFormat" id="fmt-webp" value="webp">
+                <label for="fmt-webp">WebP</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportPhotoFormat" id="fmt-png" value="png">
+                <label for="fmt-png">PNG</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Photo quality (hidden when PNG) -->
+        <div class="setting-row" id="photoQualityRow">
+          <div class="setting-label">Quality</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="photoQualityRange" min="60" max="100" step="5" value="92">
+              <span class="range-val" id="photoQualityRangeVal">92%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video format (dynamically filled by JS) -->
+        <div class="setting-row">
+          <div class="setting-label">Video</div>
+          <div class="setting-control">
+            <div class="ratio-pills" id="videoFormatPills"><!-- filled by JS --></div>
+          </div>
+        </div>
+
+        <!-- Video bitrate -->
+        <div class="setting-row">
+          <div class="setting-label">Bitrate</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="exportVideoBitrate" id="vbr-4" value="4">
+                <label for="vbr-4">4M</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportVideoBitrate" id="vbr-8" value="8" checked>
+                <label for="vbr-8">8M</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportVideoBitrate" id="vbr-16" value="16">
+                <label for="vbr-16">16M</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportVideoBitrate" id="vbr-24" value="24">
+                <label for="vbr-24">24M</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /sidebar-scroll -->
   </aside>
 
@@ -263,6 +335,17 @@
       <div class="section-header">
         <span class="section-title" data-i18n="imagesTitle">Images</span>
         <span class="section-counter" id="imageCounter"></span>
+      </div>
+
+      <!-- Export progress bar (shown during generation / ZIP creation) -->
+      <div id="exportProgress" class="export-progress" style="display:none;">
+        <div class="export-progress-header">
+          <span id="exportProgressLabel" class="export-progress-label">Processing…</span>
+          <span id="exportProgressPct" class="export-progress-pct">0%</span>
+        </div>
+        <div class="export-progress-track">
+          <div id="exportProgressFill" class="export-progress-fill"></div>
+        </div>
       </div>
 
       <div class="batch-bar">
