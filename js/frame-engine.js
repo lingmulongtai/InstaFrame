@@ -12,6 +12,15 @@ const FrameEngine = (() => {
     'Playfair Display':   "'Playfair Display', Georgia, serif",
     'Cormorant Garamond': "'Cormorant Garamond', Georgia, serif",
     'EB Garamond':        "'EB Garamond', Georgia, serif",
+    'Poppins':            "'Poppins', Arial, sans-serif",
+    'Raleway':            "'Raleway', Arial, sans-serif",
+    'Nunito':             "'Nunito', Arial, sans-serif",
+    'Josefin Sans':       "'Josefin Sans', Arial, sans-serif",
+    'Oswald':             "'Oswald', Arial, sans-serif",
+    'Work Sans':          "'Work Sans', Arial, sans-serif",
+    'Libre Baskerville':  "'Libre Baskerville', Georgia, serif",
+    'Cinzel':             "'Cinzel', Georgia, serif",
+    'Source Serif 4':     "'Source Serif 4', Georgia, serif",
   };
 
   /**
@@ -19,18 +28,22 @@ const FrameEngine = (() => {
    */
   function renderFrame(img, exif, settings) {
     const {
-      frameColor     = '#F0F0F0',
-      thicknessScale = 1.0,
+      frameColor       = '#F0F0F0',
+      thicknessScale   = 1.0,
+      showLocation     = false,
+      locationPosition = 'below-exif',
     } = settings;
 
     const W = img.naturalWidth;
     const H = img.naturalHeight;
     const isPortrait = H > W;
 
-    const baseBorder   = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
-    const sideBorder   = baseBorder * 0.5;
-    const extraHeight  = H * 0.10 * thicknessScale;
-    const bottomBorder = sideBorder * 4 + extraHeight;
+    const baseBorder      = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
+    const sideBorder      = baseBorder * 0.5;
+    const extraHeight     = H * 0.10 * thicknessScale;
+    const locationExtra   = (showLocation && exif.location && locationPosition === 'below-exif')
+                            ? H * 0.038 * thicknessScale : 0;
+    const bottomBorder    = sideBorder * 4 + extraHeight + locationExtra;
     const pf           = isPortrait ? 0.75 : 1.0;
     const sB = sideBorder   * pf;
     const tB = sideBorder   * pf;
@@ -129,11 +142,14 @@ const FrameEngine = (() => {
       showDecoLine     = true,
       showExifInfo     = true,
       cameraNameOnly   = false,   // hide EXIF line + deco, show only "Shot on"
+      showLocation     = false,
+      locationPosition = 'below-exif',
     } = settings;
 
     const effectiveShowShotOn   = cameraNameOnly ? true  : showShotOn;
     const effectiveShowExifInfo = cameraNameOnly ? false : showExifInfo;
     const effectiveShowDecoLine = cameraNameOnly ? false : showDecoLine;
+    const effectiveShowLocation = showLocation && !!(exif.location);
 
     const isDark  = isColorDark(frameColor);
     const primary = isDark ? '#E8E8E8' : '#111111';
@@ -156,6 +172,13 @@ const FrameEngine = (() => {
     const exStyle    = exifItalic ? 'italic ' : '';
     const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
 
+    // Determine if location goes below (needs 3-line layout)
+    const hasLocationBelow = effectiveShowLocation && locationPosition === 'below-exif';
+    // Y positions — when 3 lines, shift lines 1 & 2 up slightly to center the group
+    const line1Y = hasLocationBelow ? centerY - gap * 0.85 : centerY - gap / 2;
+    const line2Y = hasLocationBelow ? centerY              : centerY + gap / 2;
+    const line3Y = centerY + gap * 0.85;
+
     ctx.save();
     ctx.textBaseline = 'middle';
 
@@ -173,11 +196,32 @@ const FrameEngine = (() => {
         ctx.textAlign = 'left';
         ctx.font      = labelFont;
         ctx.fillStyle = muted;
-        ctx.fillText(label + '  ', x0, centerY - gap / 2);
+        ctx.fillText(label + '  ', x0, line1Y);
 
         ctx.font      = camFont;
         ctx.fillStyle = primary;
-        ctx.fillText(cam, x0 + lw, centerY - gap / 2);
+        ctx.fillText(cam, x0 + lw, line1Y);
+
+        // Location beside camera name (cam-right / cam-left)
+        if (effectiveShowLocation && (locationPosition === 'cam-right' || locationPosition === 'cam-left')) {
+          const locFont = `300 ${Math.round(soSize * 0.82)}px ${stack}`;
+          ctx.font      = locFont;
+          ctx.fillStyle = muted;
+          const pinSize = soSize * 0.52;
+          const sidePad = canvasW * 0.04;
+
+          if (locationPosition === 'cam-right') {
+            ctx.textAlign = 'right';
+            ctx.fillText(exif.location, canvasW - sidePad, line1Y);
+            const tw = ctx.measureText(exif.location).width;
+            drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted);
+          } else {
+            const pinCx = sidePad + pinSize * 0.6;
+            drawLocationPin(ctx, pinCx, line1Y, pinSize, muted);
+            ctx.textAlign = 'left';
+            ctx.fillText(exif.location, sidePad + pinSize * 1.5, line1Y);
+          }
+        }
       }
     }
 
@@ -194,8 +238,22 @@ const FrameEngine = (() => {
         ctx.font      = exifFont;
         ctx.fillStyle = muted;
         ctx.textAlign = 'center';
-        ctx.fillText(line, centerX, centerY + gap / 2);
+        ctx.fillText(line, centerX, line2Y);
       }
+    }
+
+    // Line 3: Location (below EXIF)
+    if (hasLocationBelow) {
+      const locFont = `300 ${Math.round(soSize * 0.82)}px ${stack}`;
+      ctx.font      = locFont;
+      ctx.fillStyle = muted;
+      const pinSize = soSize * 0.52;
+      const textW   = ctx.measureText(exif.location).width;
+      const totalW  = pinSize * 1.5 + textW;
+      const startX  = centerX - totalW / 2;
+      drawLocationPin(ctx, startX + pinSize * 0.6, line3Y, pinSize, muted);
+      ctx.textAlign = 'left';
+      ctx.fillText(exif.location, startX + pinSize * 1.5, line3Y);
     }
 
     // Decorative separator line
@@ -208,6 +266,28 @@ const FrameEngine = (() => {
       ctx.stroke();
     }
 
+    ctx.restore();
+  }
+
+  function drawLocationPin(ctx, cx, cy, size, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    // Pin head (circle)
+    ctx.beginPath();
+    ctx.arc(cx, cy - size * 0.55, size * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+    // Pin tail (triangle pointing down)
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.28, cy - size * 0.2);
+    ctx.lineTo(cx + size * 0.28, cy - size * 0.2);
+    ctx.lineTo(cx, cy + size * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    // Inner dot highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.arc(cx, cy - size * 0.55, size * 0.17, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -343,11 +423,13 @@ const FrameEngine = (() => {
         const H = video.videoHeight;
         if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
 
-        const isPortrait  = H > W;
-        const ts          = settings.thicknessScale || 1;
-        const baseBorder  = Math.min(W, H) * 0.05 * 1.2 * ts;
-        const sideBorder  = baseBorder * 0.5;
-        const bottomBorder= sideBorder * 4 + H * 0.10 * ts;
+        const isPortrait      = H > W;
+        const ts              = settings.thicknessScale || 1;
+        const baseBorder      = Math.min(W, H) * 0.05 * 1.2 * ts;
+        const sideBorder      = baseBorder * 0.5;
+        const showLoc         = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
+        const locationExtra   = showLoc ? H * 0.038 * ts : 0;
+        const bottomBorder    = sideBorder * 4 + H * 0.10 * ts + locationExtra;
         const pf          = isPortrait ? 0.75 : 1.0;
         const sB = sideBorder    * pf;
         const tB = sideBorder    * pf;
@@ -433,5 +515,5 @@ const FrameEngine = (() => {
     });
   }
 
-  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady };
+  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark };
 })();
