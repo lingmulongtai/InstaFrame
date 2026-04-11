@@ -817,6 +817,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   box-shadow: 0 6px 30px rgba(0,0,0,0.55);
   cursor: grab;
   transition: box-shadow 0.2s;
+  touch-action: none;  /* allow JS to handle all touch gestures (pan + pinch) */
 }
 #livePreviewCanvas.frame-dark {
   box-shadow: 0 6px 30px rgba(0,0,0,0.55), 0 0 0 1.5px rgba(255,255,255,0.2);
@@ -1261,7 +1262,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   position: fixed;
   bottom: 20px;
   right: 20px;
-  z-index: 900;
+  z-index: 1010;  /* above overlay (950) and sidebar (1000) so always tappable */
   width: 52px;
   height: 52px;
   border-radius: 50%;
@@ -1288,9 +1289,13 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   opacity: 0;
+  pointer-events: none;        /* transparent = non-interactive */
   transition: opacity 0.25s;
 }
-.mobile-sidebar-overlay.visible { opacity: 1; }
+.mobile-sidebar-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;        /* only blocks when actually shown */
+}
 
 /* ── Tablet: narrower sidebar ────────────────────────────────────────────────── */
 @media (max-width: 1100px) and (min-width: 769px) {
@@ -1361,7 +1366,6 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
   /* Show mobile toggle button */
   .mobile-sidebar-toggle { display: flex; }
-  .mobile-sidebar-overlay { display: block; }
 
   /* Preview occupies ~45% of viewport, always visible */
   .preview-area {
