@@ -413,7 +413,7 @@ function restoreSettings() {
       r.checked = true;
       // Show/hide quality row
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.style.display = saved.exportPhotoFormat === 'png' ? 'none' : '';
+      if (qRow) qRow.classList.toggle('row-hidden', saved.exportPhotoFormat === 'png');
     }
   }
   // Photo quality
@@ -566,9 +566,17 @@ async function renderLivePreview() {
     previewCanvas.height = Math.round(displayH * dpr);
     previewCanvas.style.width  = displayW + 'px';
     previewCanvas.style.height = displayH + 'px';
-    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
-
+    // Fade in: start transparent, draw, then reveal
+    const isFirstRender = previewCanvas.style.display === 'none' || previewCanvas.style.display === '';
+    if (isFirstRender) previewCanvas.style.opacity = '0';
     previewCanvas.style.display = 'block';
+    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    if (isFirstRender) {
+      void previewCanvas.offsetWidth;
+      previewCanvas.style.opacity = '1';
+    } else {
+      previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    }
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
   } catch (e) {
@@ -798,18 +806,15 @@ function updateUI() {
   if (dlBtn)   dlBtn.disabled   = !hasDone;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
-  const imageSection = document.getElementById('imageSection');
-  if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
-
-  const emptyHint = document.getElementById('emptyHint');
-  if (emptyHint) emptyHint.style.display = hasItems ? 'none' : '';
+  setVisible(document.getElementById('imageSection'), hasItems, 'flex');
+  setVisible(document.getElementById('emptyHint'),    !hasItems);
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
     const dropZone = document.getElementById('dropZone');
     if (dropZone) dropZone.classList.remove('has-preview');
     const previewCanvas = document.getElementById('livePreviewCanvas');
-    if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.transform = ''; }
+    if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.opacity = ''; previewCanvas.style.transform = ''; }
     const emptyEl = document.getElementById('previewEmpty');
     if (emptyEl) emptyEl.style.display = '';
     previewZoom = 1.0;
@@ -829,7 +834,7 @@ function showProgress(label, pct) {
   const lbl   = document.getElementById('exportProgressLabel');
   const pctEl = document.getElementById('exportProgressPct');
   if (!wrap) return;
-  wrap.style.display = '';
+  setVisible(wrap, true);
   const p = Math.max(0, Math.min(1, pct));
   fill.style.width   = Math.round(p * 100) + '%';
   lbl.textContent    = label;
@@ -837,8 +842,7 @@ function showProgress(label, pct) {
 }
 
 function hideProgress() {
-  const wrap = document.getElementById('exportProgress');
-  if (wrap) wrap.style.display = 'none';
+  setVisible(document.getElementById('exportProgress'), false);
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────
@@ -1032,7 +1036,7 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.style.display = r.value === 'png' ? 'none' : '';
+      if (qRow) qRow.classList.toggle('row-hidden', r.value === 'png');
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
@@ -1054,6 +1058,32 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(r => {
     r.addEventListener('change', onVideoExportSettingChange);
   });
+}
+
+// ─── Animation helpers ────────────────────────────────────────────────────────
+/**
+ * Fade an element in or out without layout jank.
+ * - show=true:  set display, force reflow, then fade opacity to 1
+ * - show=false: fade opacity to 0, then set display:none after transition
+ */
+function setVisible(el, show, displayVal = '') {
+  if (!el) return;
+  if (el._fadeTimer) { clearTimeout(el._fadeTimer); el._fadeTimer = null; }
+
+  if (show) {
+    if (el.style.display === 'none') {
+      el.style.opacity = '0';
+      el.style.display = displayVal || '';
+      void el.offsetWidth; // force reflow so transition fires
+    }
+    el.style.opacity = '1';
+  } else {
+    el.style.opacity = '0';
+    el._fadeTimer = setTimeout(() => {
+      el.style.display = 'none';
+      el._fadeTimer = null;
+    }, 190);
+  }
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1102,11 +1132,11 @@ function setupCustomizePanel() {
   const scroll = document.getElementById('sidebarScroll');
   if (!btn || !panel || !scroll) return;
 
-  // Toggle panel visibility
+  // Toggle panel visibility — class-based so CSS transitions run
   btn.addEventListener('click', () => {
-    const open = panel.style.display !== 'none';
-    panel.style.display = open ? 'none' : '';
-    scroll.style.display = open ? '' : 'none';
+    const open = panel.classList.contains('panel-open');
+    panel.classList.toggle('panel-open', !open);
+    scroll.classList.toggle('panel-open', !open);
     btn.classList.toggle('active', !open);
   });
 
