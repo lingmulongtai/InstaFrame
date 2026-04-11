@@ -8,6 +8,7 @@
   --surface-2:  #f7f7f9;
   --border:     #e4e4e8;
   --text:       #111114;
+  /* light-only defaults continued below */
   --text-2:     #5f5f6b;
   --text-3:     #9999a8;
   --accent:     #2563eb;
@@ -18,6 +19,40 @@
   --shadow:     0 1px 4px rgba(0,0,0,0.08), 0 2px 10px rgba(0,0,0,0.05);
   --shadow-lg:  0 8px 32px rgba(0,0,0,0.14);
 }
+
+/* ── Dark theme ──────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:         #111113;
+  --surface:    #1c1c21;
+  --surface-2:  #26262d;
+  --border:     #32323b;
+  --text:       #f0f0f3;
+  --text-2:     #9898a8;
+  --text-3:     #55555f;
+  --accent:     #3b82f6;
+  --accent-h:   #2563eb;
+  --shadow:     0 1px 4px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
+  --shadow-lg:  0 8px 32px rgba(0,0,0,0.5);
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --bg:         #111113;
+    --surface:    #1c1c21;
+    --surface-2:  #26262d;
+    --border:     #32323b;
+    --text:       #f0f0f3;
+    --text-2:     #9898a8;
+    --text-3:     #55555f;
+    --accent:     #3b82f6;
+    --accent-h:   #2563eb;
+    --shadow:     0 1px 4px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
+    --shadow-lg:  0 8px 32px rgba(0,0,0,0.5);
+  }
+}
+
+/* ── Sidebar-right layout ────────────────────────────────────────────────────── */
+[data-layout="right"] .app-shell { flex-direction: row-reverse; }
+[data-layout="right"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
 
 html, body {
   height: 100%;
@@ -54,8 +89,10 @@ html, body {
   padding: 13px 14px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  gap: 8px;
 }
 
+.sidebar-brand { min-width: 0; flex: 1; }
 .logo { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; color: var(--text); }
 .logo-sub {
   display: block;
@@ -65,19 +102,181 @@ html, body {
   margin-top: 1px;
 }
 
-#langToggleBtn {
-  padding: 4px 10px;
-  border-radius: 5px;
+/* Icon button (gear / customize) */
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface-2);
-  font-size: 11px;
   color: var(--text-2);
   cursor: pointer;
-  transition: background 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
   flex-shrink: 0;
-  font-family: inherit;
 }
-#langToggleBtn:hover { background: var(--border); }
+.icon-btn svg { width: 15px; height: 15px; }
+.icon-btn:hover { background: var(--border); color: var(--text); }
+.icon-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* ── Section icon ────────────────────────────────────────────────────────────── */
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.section-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.7; }
+
+/* ── Customize panel ─────────────────────────────────────────────────────────── */
+.customize-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.customize-panel::-webkit-scrollbar { width: 4px; }
+.customize-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.customize-section { padding: 6px 0; }
+.customize-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 9px;
+}
+.customize-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.customize-row-label {
+  font-size: 11.5px;
+  color: var(--text-2);
+  flex: 0 0 62px;
+  white-space: nowrap;
+}
+.customize-sep { height: 1px; background: var(--border); margin: 8px 0; }
+
+.pill-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.pill-option { position: relative; }
+.pill-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+.pill-option span {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--text-2);
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  user-select: none;
+}
+.pill-option input:checked + span { background: var(--accent); border-color: var(--accent); color: white; }
+.pill-option span:hover { border-color: var(--accent); color: var(--accent); }
+.pill-option input:checked + span:hover { background: var(--accent-h); color: white; }
+
+/* ── iOS-style toggle ────────────────────────────────────────────────────────── */
+.ios-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 0;
+}
+.ios-toggle input[type="checkbox"] { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.ios-toggle-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  background: var(--border);
+  border-radius: 10px;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.ios-toggle input:checked + .ios-toggle-track { background: var(--accent); }
+.ios-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s cubic-bezier(.34,1.56,.64,1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.22);
+}
+.ios-toggle input:checked + .ios-toggle-track .ios-toggle-thumb { transform: translateX(14px); }
+.ios-toggle-label {
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────────── */
+.tooltip-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  background: var(--border);
+  color: var(--text-3);
+  border-radius: 50%;
+  font-size: 9.5px;
+  cursor: help;
+  flex-shrink: 0;
+  font-style: normal;
+}
+.tooltip-anchor:hover .tooltip-box { opacity: 1; pointer-events: all; }
+.tooltip-box {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%);
+  background: #18181b;
+  color: #e4e4e7;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 7px 10px;
+  border-radius: 7px;
+  width: 190px;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 200;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  white-space: normal;
+}
+.tooltip-box::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #18181b;
+}
 
 /* Sidebar scroll area */
 .sidebar-scroll {
@@ -94,15 +293,6 @@ html, body {
 
 /* ── Settings sections ───────────────────────────────────────────────────────── */
 .settings-section { padding: 10px 0 2px; }
-
-.section-heading {
-  padding: 0 14px 5px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
 
 .sidebar-sep {
   height: 1px;
@@ -272,25 +462,8 @@ select.font-select:focus { outline: none; border-color: var(--accent); box-shado
 .ratio-pill label:hover { border-color: var(--accent); color: var(--accent); }
 .ratio-pill input:checked + label:hover { background: var(--accent-h); color: white; }
 
-/* Visibility toggles */
-.vis-toggles { display: flex; flex-direction: column; gap: 5px; }
-
-.vis-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-2);
-  user-select: none;
-}
-.vis-toggle input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
-  flex-shrink: 0;
-}
+/* Visibility toggles (iOS) */
+.vis-toggles { display: flex; flex-direction: column; gap: 2px; }
 
 /* ── Main content area ───────────────────────────────────────────────────────── */
 .main {
@@ -591,9 +764,6 @@ select.font-select:focus { outline: none; border-color: var(--accent); box-shado
   z-index: 1;
 }
 
-/* "Camera name only" toggle — slight accent tint */
-.vis-toggle-accent { color: var(--accent); }
-.vis-toggle-accent input { accent-color: var(--accent); }
 
 .card-status {
   position: absolute;
