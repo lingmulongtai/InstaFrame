@@ -319,9 +319,42 @@
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
         <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
       </div>
+      <!-- Zoom controls (shown only when preview is active) -->
+      <div class="preview-zoom-bar" id="previewZoomBar">
+        <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
+        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100">
+        <button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>
+        <span class="zoom-label" id="zoomLabel">100%</span>
+      </div>
     </div>
 
-    <!-- Image Section -->
+    <!-- Empty hint (shown when no files are loaded) -->
+    <div class="empty-hint" id="emptyHint">
+      <div class="empty-hint-grid">
+        <div class="empty-hint-card">
+          <div class="empty-hint-emoji">📷</div>
+          <div class="empty-hint-card-title">EXIF Frame</div>
+          <div class="empty-hint-card-desc">Camera · Lens · Aperture<br>Shutter speed · ISO</div>
+        </div>
+        <div class="empty-hint-card">
+          <div class="empty-hint-emoji">🎬</div>
+          <div class="empty-hint-card-title">Video Support</div>
+          <div class="empty-hint-card-desc">MP4 · MOV · WebM<br>Original audio preserved</div>
+        </div>
+        <div class="empty-hint-card">
+          <div class="empty-hint-emoji">⚡</div>
+          <div class="empty-hint-card-title">Batch Export</div>
+          <div class="empty-hint-card-desc">Generate all &amp; download<br>as ZIP in one click</div>
+        </div>
+        <div class="empty-hint-card">
+          <div class="empty-hint-emoji">🔒</div>
+          <div class="empty-hint-card-title">100% Private</div>
+          <div class="empty-hint-card-desc">All local processing<br>Files never leave your device</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Image Section (shown when files are loaded) -->
     <div class="image-section" id="imageSection" style="display:none;">
 
       <div class="section-header">
