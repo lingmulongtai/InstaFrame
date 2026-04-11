@@ -251,8 +251,14 @@ const FrameEngine = (() => {
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
   }
 
-  function canvasToBlob(canvas, quality = 0.95) {
-    return new Promise(resolve => canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality));
+  function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92 } = {}) {
+    const mime = format === 'png'  ? 'image/png'
+               : format === 'webp' ? 'image/webp'
+               :                     'image/jpeg';
+    // PNG is lossless — no quality arg
+    return new Promise(resolve =>
+      canvas.toBlob(blob => resolve(blob), mime, format === 'png' ? undefined : quality)
+    );
   }
 
   function loadImage(file) {
@@ -315,7 +321,7 @@ const FrameEngine = (() => {
    * @param {object}   [opts]
    * @param {function} [opts.onProgress]  called with 0..1 during encoding
    */
-  async function renderVideoFrameWhenReady(file, exif, settings, { onProgress } = {}) {
+  async function renderVideoFrameWhenReady(file, exif, settings, { onProgress, preferredMime, videoBitsPerSecond = 10_000_000 } = {}) {
     // Pre-load fonts (same as photo path)
     const family = settings.fontFamily || 'Inter';
     if (document.fonts) {
@@ -380,15 +386,14 @@ const FrameEngine = (() => {
         const outStream = canvas.captureStream(30);
         if (audioTrack) outStream.addTrack(audioTrack);
 
-        const mimeType = [
-          'video/webm;codecs=vp9,opus',
-          'video/webm;codecs=vp8,opus',
-          'video/webm',
-        ].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+        const candidates = preferredMime
+          ? [preferredMime, 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+          : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+        const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
         const recorder = new MediaRecorder(outStream, {
           mimeType,
-          videoBitsPerSecond: 12_000_000,
+          videoBitsPerSecond,
         });
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
