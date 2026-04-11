@@ -1,167 +1,210 @@
 # InstaFrame
 
-EXIF Photo Frame Generator — Web App & Android App
+**Add beautiful EXIF frames to your photos and videos — right in your browser.**  
+100% client-side · No uploads · No accounts · No tracking
 
 ---
 
-## Web App
+## Overview
 
-A browser-based batch photo frame generator inspired by [calmtempo.com/soft/makeframe.html](https://calmtempo.com/soft/makeframe.html).  
-All processing runs locally in the browser — no uploads, no server.
+InstaFrame renders a clean typographic frame around your photos and videos, pulling camera metadata (make, model, lens, focal length, aperture, shutter speed, ISO) directly from EXIF data and displaying it in a "Shot on" style caption — the same look used by many photography apps.
 
-### Features
+Everything runs locally. Your files never leave your device.
 
-- **EXIF Frame** — Automatically reads camera make/model, lens, focal length, f-number, shutter speed, ISO and renders them in a clean "Shot on" style frame
-- **Inter font** — Matching the reference site's clean typographic style
-- **Live Preview** — First loaded photo is shown as a real-time preview at the top of the settings panel; updates instantly as you adjust any setting
-- **Click-to-Preview Modal** — Click any photo in the grid to open a full-screen preview; navigate with arrow keys or on-screen buttons
-- **Granular Frame Controls**
-  - Frame color: White / Light Gray / Black / Custom (color picker)
-  - Frame thickness (0.4× – 2.0×)
-  - "Shot on" font size (0.5× – 2.0×)
-  - EXIF font size (0.5× – 2.0×)
-  - Text vertical offset (fine-tune text position)
-  - Toggle: Show/hide "Shot on" label, decorative line, EXIF info
-- **Instagram Aspect Ratio** — Pad the output to 1:1 (Square), 4:5 (Portrait), or 16:9 (Landscape)
-- **Outer Padding** — Add extra frame color padding around the entire result (0–15%)
-- **Batch Processing** — Generate and download all frames as a ZIP in one click
-- **EXIF Editor** — Override any EXIF field per photo before generating
-- **Responsive Grid** — Feed adapts to screen width; cards grow on large displays
-- **English / Japanese** — Full i18n support
+---
 
-### Usage
+## Features
 
-Open `docs/index.html` in any modern browser, or deploy the `docs/` folder to GitHub Pages / Netlify.
+### Core
+- **EXIF frame rendering** — reads camera make/model, lens, focal length, f-number, shutter speed and ISO; renders them in a clean "Shot on …" caption below the photo
+- **Video support** — drag in MP4/MOV/WebM files; the frame is rendered via Canvas + MediaRecorder with the original audio preserved
+- **Live preview** — the first loaded file is shown as a real-time preview; updates within ~300 ms as you change any setting
+- **Batch processing** — Generate All → Download All as a ZIP in one click
+- **EXIF editor** — override any metadata field per file before generating
 
-1. Drag & drop photos (JPEG, PNG, HEIC, WebP) onto the upload area
-2. Adjust frame settings — the live preview updates in real-time
-3. Click **Generate All** to process all photos
-4. Click any photo thumbnail to preview it full-screen
-5. Download individual photos or all as a ZIP
+### Frame settings
+| Setting | Range |
+|---|---|
+| Frame color | White / Light Gray / Black / Custom (color picker) |
+| Frame thickness | 0.4× – 2.0× |
+| Aspect ratio | Original / 1:1 / 4:5 / 16:9 |
+| Outer padding | 0 – 15% |
 
-### Files
+### Typography
+| Setting | Options |
+|---|---|
+| Font family | Inter / Montserrat / DM Sans / Lato / Playfair Display / Cormorant Garamond / EB Garamond |
+| Camera name style | Bold · Italic |
+| EXIF line style | Italic |
+| "Shot on" font size | 0.5× – 2.0× |
+| EXIF font size | 0.5× – 2.0× |
+| Line spacing | 0.5× – 3.0× |
+| Text vertical offset | −2.0 – +2.0 |
+| Camera name only | Hides EXIF/deco line (recommended for video) |
+
+### Export
+| Setting | Options |
+|---|---|
+| Photo format | JPEG / WebP / PNG |
+| Photo quality | 60 – 100% |
+| Video format | VP9 / VP8 / MP4 (browser-detected) |
+| Video bitrate | 4 / 8 / 16 / 24 Mbps |
+
+### UX
+- Real-time export progress bar with filename and percentage
+- Full-screen photo preview modal with keyboard navigation (←/→/Esc)
+- English / Japanese UI
+- All settings persisted in `localStorage`
+- Responsive layout — works on desktop and mobile
+
+---
+
+## Usage
+
+1. Open `docs/index.html` in any modern browser  
+   *(or visit the [GitHub Pages](https://lingmulongtai.github.io/InstaFrame/) deployment)*
+2. Drag & drop photos or videos onto the upload area, or click to select files  
+   Supported: JPEG · PNG · HEIC · WebP · MP4 · MOV · WebM
+3. Adjust frame and typography settings — the live preview updates instantly
+4. Click **Generate All** to process all files (progress bar shows encoding status)
+5. Click any thumbnail to preview full-screen
+6. Download individual files or all as a ZIP
+
+---
+
+## Project structure
 
 ```
 docs/
-├── index.html          # Main page
-├── css/style.css       # Styling
+├── index.html          Main page
+├── css/
+│   └── style.css       Layout and component styles
 └── js/
-    ├── i18n.js         # EN/JA translations
-    ├── frame-engine.js # Canvas rendering (font, EXIF text, aspect ratio)
-    └── app.js          # App logic (state, settings, modal, live preview)
+    ├── i18n.js         EN / JA translations
+    ├── frame-engine.js Canvas rendering — EXIF text, fonts, aspect ratio, video pipeline
+    └── app.js          App logic — state, settings, live preview, modal, export
 ```
 
 ---
 
-## Android App
+## Technology
 
-**フィルム風写真編集アプリ for Android**
+- [exifr](https://github.com/MikeKovarik/exifr) — EXIF / metadata extraction
+- [JSZip](https://stuk.github.io/jszip/) — client-side ZIP creation
+- [Google Fonts](https://fonts.google.com/) — Inter, Montserrat, DM Sans, Lato, Playfair Display, Cormorant Garamond, EB Garamond
+- Canvas 2D API + MediaRecorder API — frame rendering and video encoding
 
-iPhoneアプリ「Liit」のような機能性・デザイン性を備えつつ、Androidの最新トレンドとユーザー体験を追求した写真編集アプリです。
-
-### ✨ 主な機能
-
-#### 📷 リアルタイムカメラ
-- CameraXを使用した高性能カメラ
-- リアルタイムフィルタープレビュー
-- フラッシュ制御、前後カメラ切替
-- ピンチズーム、タップフォーカス
-
-#### 🎨 フィルム風フィルター
-- **Kodak Portra 400** - ポートレートに最適な柔らかいトーン
-- **Kodak Gold 200** - 暖かみのあるゴールドトーン
-- **Fuji Superia** - クールなブルートーン
-- **Fuji Velvia** - 鮮やかな発色
-- **CineStill 800T** - シネマティックなタングステンルック
-- **ヴィンテージ** - フェード＆グレイン効果
-- **モノクロ各種** - クラシックからハイコントラストまで
-- **インスタント** - ポラロイド/チェキ風
-
-#### 🖼️ フレーム＆ウォーターマーク
-- シンプルな白/黒フレーム
-- **ポラロイド風** - 下部に余白のあるクラシックスタイル
-- **チェキ風** - Instax Mini/Square風
-- **フィルムストリップ** - 35mmフィルム風
-- **Shot on ◯◯** - 撮影機器情報の自動表示
-- **日付スタンプ** - フィルムカメラ風オレンジ日付
-- **EXIFフレーム** - ISO/シャッター速度/F値表示
-
-#### 🎚️ プロレベル編集
-- 明るさ・コントラスト・露出
-- 彩度・バイブランス
-- 色温度・ティント
-- ハイライト・シャドウ
-- クラリティ・デヘイズ
-- シャープネス
-- HSL個別調整
-
-### 🛠️ 技術スタック
-
-- **Kotlin** - 100% Kotlin
-- **Jetpack Compose** - モダンUI
-- **Material 3** - 最新デザインシステム
-- **CameraX** - カメラ機能
-- **Navigation Compose** - 画面遷移
-- **Coil** - 画像読み込み
-- **Coroutines** - 非同期処理
-- **ExifInterface** - メタデータ処理
-
-### 📱 動作要件
-
-- Android 8.0 (API 26) 以上
-- カメラ搭載デバイス
-
-### 🚀 ビルド方法
-
-```bash
-# リポジトリをクローン
-git clone https://github.com/lingmulongtai/InstaFrame.git
-
-# Android Studioで開く
-# Gradleが自動的に同期されます
-
-# デバイスまたはエミュレーターで実行
-```
-
-### 📂 プロジェクト構成
-
-```
-app/src/main/java/com/example/photoframe/
-├── MainActivity.kt
-├── camera/
-│   ├── CameraManager.kt
-│   └── CameraScreen.kt
-├── data/
-│   ├── FilterPreset.kt
-│   └── FrameStyle.kt
-├── processing/
-│   ├── FilterEngine.kt
-│   ├── FrameEngine.kt
-│   └── EditEngine.kt
-├── ui/
-│   ├── screens/
-│   │   ├── EditScreen.kt
-│   │   └── GalleryScreen.kt
-│   └── theme/
-│       ├── Theme.kt
-│       └── Type.kt
-└── utils/
-    ├── ImageUtils.kt
-    └── PermissionUtils.kt
-```
-
-### 🗺️ 開発ロードマップ
-
-- [x] フェーズ1: アーキテクチャ設計
-- [x] フェーズ2: カメラ機能
-- [x] フェーズ3: フィルター/エフェクトエンジン
-- [x] フェーズ4: フレーム＆ウォーターマーク機能
-- [x] フェーズ5: 本格編集機能
-- [x] フェーズ6: UI/UX仕上げ
-- [ ] フェーズ7: テスト・最適化・ベータリリース
+No build step. No dependencies to install. Open `docs/index.html` and go.
 
 ---
 
 ## License
 
-MIT License
+MIT
+
+---
+---
+
+# InstaFrame — 日本語
+
+**写真・動画にEXIFフレームを追加する、ブラウザだけで動くアプリです。**  
+完全ローカル処理 · アップロード不要 · アカウント不要 · トラッキングなし
+
+---
+
+## 概要
+
+InstaFrame は、写真や動画にカメラのメタデータ（メーカー・機種名・レンズ・焦点距離・絞り・シャッタースピード・ISO）を読み取り、"Shot on …" スタイルのキャプション付きフレームを合成するツールです。
+
+すべての処理はブラウザ内で完結します。ファイルがサーバーに送信されることは一切ありません。
+
+---
+
+## 機能
+
+### 基本機能
+- **EXIFフレーム描画** — カメラ情報を自動取得し、写真の下部にクリーンなキャプションを合成
+- **動画対応** — MP4 / MOV / WebM をドロップするだけで、Canvas + MediaRecorder でフレーム付き動画を出力（音声付き）
+- **ライブプレビュー** — 最初のファイルをリアルタイムプレビューとして表示。設定変更から約300ms で更新
+- **バッチ処理** — 「すべて生成」→「ZIP一括ダウンロード」のワンクリック操作
+- **EXIFエディター** — ファイルごとに任意のメタデータを手動で上書き可能
+
+### フレーム設定
+| 設定 | 範囲 |
+|---|---|
+| フレームカラー | ホワイト / ライトグレー / ブラック / カスタム（カラーピッカー） |
+| フレームの太さ | 0.4× – 2.0× |
+| アスペクト比 | オリジナル / 1:1 / 4:5 / 16:9 |
+| 外側の余白 | 0 – 15% |
+
+### タイポグラフィ
+| 設定 | 選択肢 |
+|---|---|
+| フォント | Inter / Montserrat / DM Sans / Lato / Playfair Display / Cormorant Garamond / EB Garamond |
+| カメラ名スタイル | ボールド · イタリック |
+| EXIF行スタイル | イタリック |
+| 「Shot on」フォントサイズ | 0.5× – 2.0× |
+| EXIFフォントサイズ | 0.5× – 2.0× |
+| 行間 | 0.5× – 3.0× |
+| テキスト縦位置 | −2.0 – +2.0 |
+| カメラ名のみ | EXIF行・装飾ラインを非表示（動画推奨） |
+
+### エクスポート
+| 設定 | 選択肢 |
+|---|---|
+| 写真フォーマット | JPEG / WebP / PNG |
+| 写真画質 | 60 – 100% |
+| 動画フォーマット | VP9 / VP8 / MP4（ブラウザ対応を自動検出） |
+| 動画ビットレート | 4 / 8 / 16 / 24 Mbps |
+
+### UX
+- ファイル名・エンコード率をリアルタイム表示するエクスポート進捗バー
+- キーボード操作対応のフルスクリーンプレビューモーダル（←/→/Esc）
+- 日本語 / 英語 UI 切替
+- すべての設定を `localStorage` に自動保存
+- レスポンシブ対応（デスクトップ・モバイル）
+
+---
+
+## 使い方
+
+1. `docs/index.html` をブラウザで開く  
+   *（または [GitHub Pages](https://lingmulongtai.github.io/InstaFrame/) からアクセス）*
+2. 写真・動画をドロップエリアにドラッグ＆ドロップ、またはクリックして選択  
+   対応形式: JPEG · PNG · HEIC · WebP · MP4 · MOV · WebM
+3. フレーム設定・タイポグラフィを調整 — ライブプレビューがリアルタイムで更新されます
+4. **すべて生成** をクリック（進捗バーにエンコード状況を表示）
+5. サムネイルをクリックしてフルスクリーンプレビュー
+6. 個別またはZIPでまとめてダウンロード
+
+---
+
+## ファイル構成
+
+```
+docs/
+├── index.html          メインページ
+├── css/
+│   └── style.css       レイアウト・コンポーネントスタイル
+└── js/
+    ├── i18n.js         日英翻訳
+    ├── frame-engine.js Canvas描画 — EXIFテキスト、フォント、アスペクト比、動画パイプライン
+    └── app.js          アプリロジック — 状態管理、設定、プレビュー、モーダル、エクスポート
+```
+
+---
+
+## 使用ライブラリ
+
+- [exifr](https://github.com/MikeKovarik/exifr) — EXIF / メタデータ抽出
+- [JSZip](https://stuk.github.io/jszip/) — クライアントサイド ZIP 生成
+- [Google Fonts](https://fonts.google.com/) — Inter, Montserrat, DM Sans, Lato, Playfair Display, Cormorant Garamond, EB Garamond
+- Canvas 2D API + MediaRecorder API — フレーム描画・動画エンコード
+
+ビルドステップなし。インストール不要。`docs/index.html` を開くだけで動作します。
+
+---
+
+## ライセンス
+
+MIT
