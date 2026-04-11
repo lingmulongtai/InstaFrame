@@ -1326,24 +1326,61 @@ function setupDropZone() {
     previewCanvas.classList.remove('dragging');
   });
 
-  // Touch support for pan
+  // Touch: single-finger pan + two-finger pinch-to-zoom
+  let _pinching  = false;
+  let _pinchDist = 0;
+  let _pinchZoom = 1.0;
+
+  function _touchDist(t) {
+    return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  }
+
   previewCanvas.addEventListener('touchstart', e => {
-    if (!zone.classList.contains('has-preview') || e.touches.length !== 1) return;
-    _panDragging = true;
-    _panStart    = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    _panOrigin   = { x: previewPan.x, y: previewPan.y };
-    e.preventDefault();
+    if (!zone.classList.contains('has-preview')) return;
+    if (e.touches.length === 2) {
+      // Two fingers → start pinch; cancel any ongoing pan
+      _panDragging = false;
+      _pinching    = true;
+      _pinchDist   = _touchDist(e.touches);
+      _pinchZoom   = previewZoom;
+      e.preventDefault();
+    } else if (e.touches.length === 1 && !_pinching) {
+      // One finger → pan
+      _panDragging = true;
+      _panStart    = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      _panOrigin   = { x: previewPan.x, y: previewPan.y };
+      e.preventDefault();
+    }
   }, { passive: false });
 
   previewCanvas.addEventListener('touchmove', e => {
-    if (!_panDragging || e.touches.length !== 1) return;
-    previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
-    previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
-    applyPreviewTransform();
-    e.preventDefault();
+    if (!zone.classList.contains('has-preview')) return;
+    if (e.touches.length === 2 && _pinching) {
+      const dist  = _touchDist(e.touches);
+      const scale = dist / _pinchDist;
+      setPreviewZoom(_pinchZoom * scale);
+      e.preventDefault();
+    } else if (e.touches.length === 1 && _panDragging) {
+      previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
+      previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
+      applyPreviewTransform();
+      e.preventDefault();
+    }
   }, { passive: false });
 
-  previewCanvas.addEventListener('touchend', () => { _panDragging = false; });
+  previewCanvas.addEventListener('touchend', e => {
+    if (e.touches.length === 0) {
+      if (_pinching) scheduleLivePreview(); // re-render at new zoom level
+      _panDragging = false;
+      _pinching    = false;
+    } else if (e.touches.length === 1 && _pinching) {
+      // Lifted one finger mid-pinch → switch to pan
+      _pinching  = false;
+      _panDragging = true;
+      _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      _panOrigin = { x: previewPan.x, y: previewPan.y };
+    }
+  });
 
   // "Add more files" button (visible in section header when files are loaded)
   const addMoreBtn = document.getElementById('addMoreBtn');
@@ -1695,16 +1732,19 @@ function setupMobileSidebar() {
   if (!toggleBtn || !overlay || !sidebar) return;
 
   function openSidebar() {
-    sidebar.classList.add('mobile-open');
-    overlay.classList.add('visible');
-    toggleBtn.classList.add('active');
-    document.body.style.overflow = 'hidden';
+    overlay.style.display = 'block';          // make it part of the stacking context
+    requestAnimationFrame(() => {             // next frame so transition fires
+      sidebar.classList.add('mobile-open');
+      overlay.classList.add('visible');
+      toggleBtn.classList.add('active');
+    });
   }
   function closeSidebar() {
     sidebar.classList.remove('mobile-open');
     overlay.classList.remove('visible');
     toggleBtn.classList.remove('active');
-    document.body.style.overflow = '';
+    // hide overlay after fade-out transition (250ms)
+    setTimeout(() => { if (!overlay.classList.contains('visible')) overlay.style.display = 'none'; }, 280);
   }
   function isMobile() { return window.innerWidth <= 768; }
 
