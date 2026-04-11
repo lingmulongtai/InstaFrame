@@ -393,6 +393,149 @@ const FrameEngine = (() => {
   }
 
   /**
+   * WebCodecs fast-path: VideoEncoder + WebMMuxer + requestVideoFrameCallback at 16× speed.
+   * Falls back to _renderVideoMediaRecorder on any error.
+   */
+  async function _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond = 10_000_000 } = {}) {
+    // Font pre-load
+    const family = settings.fontFamily || 'Inter';
+    if (document.fonts) {
+      const fam   = `'${family}'`;
+      const specs = ['300','400','500','700'].flatMap(w => [`${w} 16px ${fam}`, `italic ${w} 16px ${fam}`]);
+      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
+    }
+
+    return new Promise((resolve, reject) => {
+      const url   = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted   = true;
+      video.preload = 'auto';
+
+      video.onloadedmetadata = () => {
+        const W = video.videoWidth, H = video.videoHeight;
+        if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
+
+        const isPortrait    = H > W;
+        const ts            = settings.thicknessScale || 1;
+        const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
+        const sideBorder    = baseBorder * 0.5;
+        const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
+        const locationExtra = showLoc ? H * 0.038 * ts : 0;
+        const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
+        const pf  = isPortrait ? 0.75 : 1.0;
+        const sB  = sideBorder   * pf;
+        const tB  = sideBorder   * pf;
+        const bB  = bottomBorder * pf;
+        const canvasW = Math.round(W + sB * 2);
+        const canvasH = Math.round(H + tB + bB);
+
+        const layout = {
+          canvasW, canvasH,
+          imageBottom: tB + H,
+          bottomAreaHeight: bB,
+          isPortrait,
+          frameColor: settings.frameColor || '#F0F0F0',
+        };
+        const frameColor = settings.frameColor || '#F0F0F0';
+        const duration   = video.duration || 0;
+        const fps        = 30;
+        const frameDurUs = Math.round(1_000_000 / fps);
+
+        // Check WebMMuxer availability (loaded from CDN)
+        const MuxerCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.Muxer)
+          ? WebMMuxer.Muxer : (typeof Muxer !== 'undefined' ? Muxer : null);
+        const TargetCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.ArrayBufferTarget)
+          ? WebMMuxer.ArrayBufferTarget : (typeof ArrayBufferTarget !== 'undefined' ? ArrayBufferTarget : null);
+
+        if (!MuxerCls || !TargetCls) {
+          URL.revokeObjectURL(url);
+          reject(new Error('WebMMuxer not available'));
+          return;
+        }
+
+        const muxTarget = new TargetCls();
+        const muxer = new MuxerCls({
+          target: muxTarget,
+          video: { codec: 'V_VP9', width: canvasW, height: canvasH, frameRate: fps },
+          firstTimestampBehavior: 'permissive',
+        });
+
+        const encoder = new VideoEncoder({
+          output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch (_) {} },
+          error: err => { URL.revokeObjectURL(url); reject(err); },
+        });
+        try {
+          encoder.configure({ codec: 'vp09.00.10.08', width: canvasW, height: canvasH, bitrate: videoBitsPerSecond, latencyMode: 'quality' });
+        } catch (cfgErr) {
+          URL.revokeObjectURL(url);
+          reject(cfgErr);
+          return;
+        }
+
+        // Use regular Canvas (OffscreenCanvas not supported in all contexts with drawImage(video))
+        const canvas = document.createElement('canvas');
+        canvas.width  = canvasW;
+        canvas.height = canvasH;
+        const ctx = canvas.getContext('2d');
+
+        let frameIndex = 0;
+        let finalized  = false;
+
+        async function finalize() {
+          if (finalized) return;
+          finalized = true;
+          try {
+            await encoder.flush();
+            muxer.finalize();
+            const { buffer } = muxTarget;
+            URL.revokeObjectURL(url);
+            if (onProgress) onProgress(1);
+            resolve(new Blob([buffer], { type: 'video/webm' }));
+          } catch (e) {
+            URL.revokeObjectURL(url);
+            reject(e);
+          }
+        }
+
+        function onFrame(now, metadata) {
+          if (finalized) return;
+          const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
+
+          ctx.fillStyle = frameColor;
+          ctx.fillRect(0, 0, canvasW, canvasH);
+          ctx.drawImage(video, sB, tB, W, H);
+          drawInnerShadow(ctx, sB, tB, W, H);
+          drawExifText(ctx, exif, settings, layout);
+
+          try {
+            const vf = new VideoFrame(canvas, { timestamp, duration: frameDurUs });
+            encoder.encode(vf, { keyFrame: frameIndex % 60 === 0 });
+            vf.close();
+          } catch (_) { /* skip problematic frames */ }
+          frameIndex++;
+
+          if (onProgress && duration > 0) onProgress(Math.min((metadata.mediaTime || 0) / duration, 0.99));
+
+          if (!video.ended && !video.paused) {
+            video.requestVideoFrameCallback(onFrame);
+          } else {
+            finalize();
+          }
+        }
+
+        video.addEventListener('ended', finalize, { once: true });
+        video.playbackRate = 16;
+        video.requestVideoFrameCallback(onFrame);
+        video.play().catch(err => { URL.revokeObjectURL(url); reject(err); });
+      };
+
+      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.src  = url;
+      video.load();
+    });
+  }
+
+  /**
    * Render a video with EXIF frame borders using the Canvas + MediaRecorder pipeline.
    * Resolves with a Blob (video/webm) that includes the original audio track.
    * @param {File}     file
@@ -402,6 +545,21 @@ const FrameEngine = (() => {
    * @param {function} [opts.onProgress]  called with 0..1 during encoding
    */
   async function renderVideoFrameWhenReady(file, exif, settings, { onProgress, preferredMime, videoBitsPerSecond = 10_000_000 } = {}) {
+    // Try WebCodecs fast path first (Chrome 94+, Firefox 130+)
+    // Requires: VideoEncoder, VideoFrame, requestVideoFrameCallback, WebMMuxer CDN library
+    const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
+      && typeof VideoFrame !== 'undefined'
+      && typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function'
+      && (typeof WebMMuxer !== 'undefined' || typeof Muxer !== 'undefined');
+    if (canUseWebCodecs) {
+      try {
+        return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond });
+      } catch (_) {
+        // Fall through to MediaRecorder path on any error
+      }
+    }
+
+    // ── MediaRecorder fallback (includes audio) ────────────────────────────────
     // Pre-load fonts (same as photo path)
     const family = settings.fontFamily || 'Inter';
     if (document.fonts) {
