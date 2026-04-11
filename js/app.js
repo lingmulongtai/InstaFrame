@@ -38,6 +38,7 @@ const state = {
 //   progress:  number 0..1   (encoding progress)
 
 let itemIdCounter = 0;
+let previewZoom = 1.0;
 
 // ImageItem schema:
 // {
@@ -516,6 +517,17 @@ function scheduleLivePreview() {
   _livePreviewTimer = setTimeout(renderLivePreview, 300);
 }
 
+// ─── Preview Zoom ─────────────────────────────────────────────────────────────
+function setPreviewZoom(zoom) {
+  previewZoom = Math.min(Math.max(zoom, 0.5), 3.0);
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (canvas) canvas.style.transform = `scale(${previewZoom})`;
+  const range = document.getElementById('zoomRange');
+  if (range) range.value = Math.round(previewZoom * 100);
+  const label = document.getElementById('zoomLabel');
+  if (label) label.textContent = Math.round(previewZoom * 100) + '%';
+}
+
 async function renderLivePreview() {
   const pane         = document.getElementById('dropZone');
   const previewCanvas = document.getElementById('livePreviewCanvas');
@@ -790,14 +802,19 @@ function updateUI() {
   const imageSection = document.getElementById('imageSection');
   if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
 
+  const emptyHint = document.getElementById('emptyHint');
+  if (emptyHint) emptyHint.style.display = hasItems ? 'none' : '';
+
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
     const dropZone = document.getElementById('dropZone');
     if (dropZone) dropZone.classList.remove('has-preview');
     const previewCanvas = document.getElementById('livePreviewCanvas');
-    if (previewCanvas) previewCanvas.style.display = 'none';
+    if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.transform = ''; }
     const emptyEl = document.getElementById('previewEmpty');
     if (emptyEl) emptyEl.style.display = '';
+    previewZoom = 1.0;
+    setPreviewZoom(1.0);
   }
 }
 
@@ -928,6 +945,27 @@ function setupDropZone() {
     addFiles(input.files);
     input.value = '';
   });
+
+  // Scroll-wheel zoom (only when preview is active)
+  zone.addEventListener('wheel', e => {
+    if (!zone.classList.contains('has-preview')) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.1 : -0.1;
+    setPreviewZoom(previewZoom + delta);
+  }, { passive: false });
+
+  // Zoom slider
+  const zoomRange = document.getElementById('zoomRange');
+  if (zoomRange) {
+    zoomRange.addEventListener('input', () => setPreviewZoom(parseInt(zoomRange.value, 10) / 100));
+  }
+
+  // Zoom ± buttons
+  document.getElementById('zoomOutBtn')?.addEventListener('click', () => setPreviewZoom(previewZoom - 0.1));
+  document.getElementById('zoomInBtn')?.addEventListener('click',  () => setPreviewZoom(previewZoom + 0.1));
+
+  // Click zoom label to reset to 100%
+  document.getElementById('zoomLabel')?.addEventListener('click', () => setPreviewZoom(1.0));
 
   // "Add more files" button (visible in section header when files are loaded)
   const addMoreBtn = document.getElementById('addMoreBtn');
