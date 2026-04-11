@@ -393,7 +393,6 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
-    ['cameraNameOnly',   saved.cameraNameOnly],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -455,7 +454,7 @@ function applySettings() {
   state.settings.showShotOn       = document.getElementById('showShotOn').checked;
   state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
-  state.settings.cameraNameOnly   = document.getElementById('cameraNameOnly').checked;
+  state.settings.cameraNameOnly   = false; // removed from UI; always false
   state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
@@ -1019,7 +1018,7 @@ function setupSettingsListeners() {
   if (fontFamilyEl) fontFamilyEl.addEventListener('change', applySettings);
 
   // Font style checkboxes (camera name + EXIF)
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'cameraNameOnly'].forEach(id => {
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
@@ -1070,7 +1069,90 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ─── Preferences (theme / layout) ────────────────────────────────────────────
+const PREFS_KEY = 'instaframe_prefs';
+function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
+function savePrefs(p)  { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme || 'light');
+}
+function applyLayout(layout) {
+  document.documentElement.setAttribute('data-layout', layout || 'left');
+}
+
+function rerenderCards() {
+  const grid = document.getElementById('imageGrid');
+  grid.innerHTML = '';
+  const saved = [...state.items];
+  state.items = [];
+  itemIdCounter = 0;
+  saved.forEach(item => {
+    const n = { ...item, id: ++itemIdCounter };
+    state.items.push(n);
+    renderItem(n);
+    if (n.status === 'done') { updateItemStatus(n); updateItemPreview(n); }
+  });
+  updateUI();
+}
+
+function setupCustomizePanel() {
+  const btn    = document.getElementById('customizeBtn');
+  const panel  = document.getElementById('customizePanel');
+  const scroll = document.getElementById('sidebarScroll');
+  if (!btn || !panel || !scroll) return;
+
+  // Toggle panel visibility
+  btn.addEventListener('click', () => {
+    const open = panel.style.display !== 'none';
+    panel.style.display = open ? 'none' : '';
+    scroll.style.display = open ? '' : 'none';
+    btn.classList.toggle('active', !open);
+  });
+
+  const prefs = loadPrefs();
+
+  // ── Theme ──────────────────────────────────────────────────────────────────
+  const savedTheme = prefs.theme || 'light';
+  applyTheme(savedTheme);
+  document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
+    if (r.value === savedTheme) r.checked = true;
+    r.addEventListener('change', () => {
+      applyTheme(r.value);
+      const p = loadPrefs(); p.theme = r.value; savePrefs(p);
+    });
+  });
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const savedLayout = prefs.layout || 'left';
+  applyLayout(savedLayout);
+  document.querySelectorAll('input[name="layoutChoice"]').forEach(r => {
+    if (r.value === savedLayout) r.checked = true;
+    r.addEventListener('change', () => {
+      applyLayout(r.value);
+      const p = loadPrefs(); p.layout = r.value; savePrefs(p);
+    });
+  });
+
+  // ── Language ───────────────────────────────────────────────────────────────
+  document.querySelectorAll('input[name="langChoice"]').forEach(r => {
+    if (r.value === currentLang) r.checked = true;
+    r.addEventListener('change', () => {
+      if (r.value === currentLang) return;
+      setLang(r.value);
+      rerenderCards();
+    });
+  });
+}
+
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
+// Apply theme & layout immediately (before paint) to avoid flash
+;(function() {
+  const p = loadPrefs();
+  applyTheme(p.theme || 'light');
+  applyLayout(p.layout || 'left');
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   restoreSettings();        // restore saved settings to DOM
@@ -1086,29 +1168,11 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDropZone();
   setupSettingsListeners();
   setupModal();
+  setupCustomizePanel();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
-  document.getElementById('langToggleBtn').addEventListener('click', () => {
-    toggleLang();
-    // Re-render all item cards with new language
-    const grid = document.getElementById('imageGrid');
-    grid.innerHTML = '';
-    const savedItems = [...state.items];
-    state.items = [];
-    itemIdCounter = 0;
-    savedItems.forEach(item => {
-      const newItem = { ...item, id: ++itemIdCounter };
-      state.items.push(newItem);
-      renderItem(newItem);
-      if (newItem.status === 'done') {
-        updateItemStatus(newItem);
-        updateItemPreview(newItem);
-      }
-    });
-    updateUI();
-  });
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';

@@ -27,18 +27,86 @@
   <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <div>
+      <div class="sidebar-brand">
         <span class="logo">InstaFrame</span>
         <span class="logo-sub" data-i18n="appSubtitle">EXIF Photo Frame Generator</span>
       </div>
-      <button id="langToggleBtn">日本語</button>
+      <button id="customizeBtn" class="icon-btn" data-i18n-attr="title" data-i18n="customize" title="Customize">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"/></svg>
+      </button>
     </div>
 
-    <div class="sidebar-scroll">
+    <!-- ── Customize panel ─────────────────────────────────────────────────── -->
+    <div class="customize-panel" id="customizePanel" style="display:none">
+
+      <div class="customize-section">
+        <div class="customize-label" data-i18n="appearance">Appearance</div>
+        <div class="customize-row">
+          <span class="customize-row-label" data-i18n="themeLabel">Theme</span>
+          <div class="pill-group">
+            <label class="pill-option">
+              <input type="radio" name="themeChoice" value="light" checked>
+              <span data-i18n="themeLight">Light</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="themeChoice" value="dark">
+              <span data-i18n="themeDark">Dark</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="themeChoice" value="system">
+              <span data-i18n="themeSystem">System</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="customize-sep"></div>
+
+      <div class="customize-section">
+        <div class="customize-label" data-i18n="layoutLabel">Layout</div>
+        <div class="customize-row">
+          <span class="customize-row-label" data-i18n="sidebarLabel">Sidebar</span>
+          <div class="pill-group">
+            <label class="pill-option">
+              <input type="radio" name="layoutChoice" value="left" checked>
+              <span data-i18n="layoutLeft">Left</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="layoutChoice" value="right">
+              <span data-i18n="layoutRight">Right</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="customize-sep"></div>
+
+      <div class="customize-section">
+        <div class="customize-label" data-i18n="languageLabel">Language</div>
+        <div class="customize-row">
+          <div class="pill-group">
+            <label class="pill-option">
+              <input type="radio" name="langChoice" value="en">
+              <span>English</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="langChoice" value="ja">
+              <span>日本語</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /customize-panel -->
+
+    <div class="sidebar-scroll" id="sidebarScroll">
 
       <!-- ── Frame ─────────────────────────────────────────────────────────── -->
       <div class="settings-section">
-        <div class="section-heading">Frame</div>
+        <div class="section-heading">
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><path d="M1.5 11 5 7.5l3 3 2.5-2.5L15 12.5"/><circle cx="5.5" cy="5" r="1.5" fill="currentColor" stroke="none"/></svg>
+          <span data-i18n="sectionFrame">Frame</span>
+        </div>
 
         <!-- Color -->
         <div class="setting-row">
@@ -118,7 +186,10 @@
 
       <!-- ── Typography ─────────────────────────────────────────────────────── -->
       <div class="settings-section">
-        <div class="section-heading">Typography</div>
+        <div class="section-heading">
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4V2.5h12V4M8 2.5v11M5.5 13.5h5"/></svg>
+          <span data-i18n="sectionTypography">Typography</span>
+        </div>
 
         <!-- Font Family -->
         <div class="setting-row">
@@ -206,25 +277,30 @@
 
       <!-- ── Elements ───────────────────────────────────────────────────────── -->
       <div class="settings-section">
-        <div class="section-heading" data-i18n="textVisibility">Elements</div>
+        <div class="section-heading">
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z"/><circle cx="8" cy="8" r="2.5"/></svg>
+          <span data-i18n="sectionElements">Elements</span>
+        </div>
         <div class="setting-row">
           <div class="setting-control">
             <div class="vis-toggles">
-              <label class="vis-toggle">
+              <label class="ios-toggle">
                 <input type="checkbox" id="showShotOn" checked>
-                <span data-i18n="showShotOn">Show "Shot on"</span>
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label" data-i18n="showShotOn">Show "Shot on"</span>
               </label>
-              <label class="vis-toggle">
+              <label class="ios-toggle">
                 <input type="checkbox" id="showDecoLine" checked>
-                <span data-i18n="showDecoLine">Decorative Line</span>
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label">
+                  <span data-i18n="showDecoLine">Decorative Line</span>
+                  <span class="tooltip-anchor">?<span class="tooltip-box" data-i18n="decoLineTooltip">A thin horizontal rule drawn between the photo and the text area</span></span>
+                </span>
               </label>
-              <label class="vis-toggle">
+              <label class="ios-toggle">
                 <input type="checkbox" id="showExifInfo" checked>
-                <span data-i18n="showExifInfo">EXIF Info</span>
-              </label>
-              <label class="vis-toggle vis-toggle-accent" title="Recommended for video — hides lens/aperture/shutter/ISO line">
-                <input type="checkbox" id="cameraNameOnly">
-                <span data-i18n="cameraNameOnly">Camera name only</span>
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label" data-i18n="showExifInfo">EXIF Info</span>
               </label>
             </div>
           </div>
@@ -235,11 +311,14 @@
 
       <!-- ── Export ────────────────────────────────────────────────────────── -->
       <div class="settings-section">
-        <div class="section-heading">Export</div>
+        <div class="section-heading">
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 8l3 3 3-3M2.5 12v1a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5v-1"/></svg>
+          <span data-i18n="sectionExport">Export</span>
+        </div>
 
         <!-- Photo format -->
         <div class="setting-row">
-          <div class="setting-label">Photo</div>
+          <div class="setting-label" data-i18n="exportPhotoLabel">Photo</div>
           <div class="setting-control">
             <div class="ratio-pills">
               <div class="ratio-pill">
@@ -260,7 +339,7 @@
 
         <!-- Photo quality (hidden when PNG) -->
         <div class="setting-row" id="photoQualityRow">
-          <div class="setting-label">Quality</div>
+          <div class="setting-label" data-i18n="exportQuality">Quality</div>
           <div class="setting-control">
             <div class="range-wrap">
               <input type="range" id="photoQualityRange" min="60" max="100" step="5" value="92">
@@ -271,7 +350,7 @@
 
         <!-- Video format (dynamically filled by JS) -->
         <div class="setting-row">
-          <div class="setting-label">Video</div>
+          <div class="setting-label" data-i18n="exportVideoLabel">Video</div>
           <div class="setting-control">
             <div class="ratio-pills" id="videoFormatPills"><!-- filled by JS --></div>
           </div>
@@ -279,7 +358,7 @@
 
         <!-- Video bitrate -->
         <div class="setting-row">
-          <div class="setting-label">Bitrate</div>
+          <div class="setting-label" data-i18n="exportBitrateLabel">Bitrate</div>
           <div class="setting-control">
             <div class="ratio-pills">
               <div class="ratio-pill">
