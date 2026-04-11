@@ -891,16 +891,25 @@ function showToast(msg, type = 'info') {
 
 // ─── Drag & Drop ──────────────────────────────────────────────────────────────
 function setupDropZone() {
-  const zone   = document.getElementById('dropZone');
-  const input  = document.getElementById('fileInput');
+  const zone  = document.getElementById('dropZone');
+  const input = document.getElementById('fileInput');
 
-  zone.addEventListener('click', () => input.click());
+  // The file input is an invisible overlay covering the entire zone.
+  // Clicking the zone clicks the input directly — no JS click trigger needed.
+  // A second input.click() call would close the already-open dialog.
+
+  // Keyboard accessibility (Enter / Space)
+  zone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
 
   zone.addEventListener('dragover', e => {
     e.preventDefault();
     zone.classList.add('drag-over');
   });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('dragleave', e => {
+    if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over');
+  });
   zone.addEventListener('drop', e => {
     e.preventDefault();
     zone.classList.remove('drag-over');
