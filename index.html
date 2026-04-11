@@ -20,6 +20,7 @@
   <!-- CDN Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webm-muxer@5/build/webm-muxer.js"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -33,7 +34,7 @@
         <span class="logo-sub" data-i18n="appSubtitle">EXIF Photo Frame Generator</span>
       </div>
       <button id="customizeBtn" class="icon-btn" data-i18n-attr="title" data-i18n="customize" title="Customize">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"/></svg>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 1.5h3l.4 1.6 1.4.8 1.5-.7 2.1 2.1-.7 1.5.8 1.4 1.6.4v3l-1.6.4-.8 1.4.7 1.5-2.1 2.1-1.5-.7-1.4.8-.4 1.6h-3l-.4-1.6-1.4-.8-1.5.7L1 12.3l.7-1.5-.8-1.4L.3 9v-3l1.6-.4.8-1.4L2 2.7l2.1-2.1 1.5.7 1.4-.8z"/><circle cx="8" cy="8" r="2.2"/></svg>
       </button>
     </div>
 
@@ -56,9 +57,22 @@
               <span data-i18n="themeDark">Dark</span>
             </label>
             <label class="pill-option">
+              <input type="radio" name="themeChoice" value="soft-white">
+              <span data-i18n="themeSoftWhite">Soft</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="themeChoice" value="blue-grey-dark">
+              <span data-i18n="themeBlueGrey">Blue</span>
+            </label>
+            <label class="pill-option">
               <input type="radio" name="themeChoice" value="system">
               <span data-i18n="themeSystem">System</span>
             </label>
+          </div>
+          <!-- Accent color picker -->
+          <div class="customize-row" style="margin-top:6px;">
+            <span class="customize-row-label" data-i18n="accentLabel">Accent</span>
+            <input type="color" id="accentColorPicker" value="#2563eb" title="Accent color">
           </div>
         </div>
       </div>
@@ -133,11 +147,11 @@
                 <input type="radio" name="frameColor" value="#1a1a1a">
                 <span class="color-swatch black"></span>
               </label>
-              <!-- Custom color: single rainbow button -->
+              <!-- Custom color: single rainbow button (picker inside = no artifact) -->
               <button type="button" id="customColorBtn" class="color-option-custom" title="Custom Color">
+                <input type="color" id="customColorPicker" value="#e8c49a">
                 <span class="rainbow-icon" id="customColorIcon"></span>
               </button>
-              <input type="color" id="customColorPicker" value="#e8c49a">
             </div>
           </div>
         </div>
@@ -420,10 +434,25 @@
       <input type="file" id="fileInput" multiple
              accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
       <canvas id="livePreviewCanvas"></canvas>
+      <video id="livePreviewVideo" playsinline style="display:none; max-width:100%; max-height:100%; object-fit:contain; border-radius:var(--r);"></video>
       <div class="preview-empty" id="previewEmpty">
         <div class="preview-empty-icon">📷</div>
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
         <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
+      </div>
+      <!-- Quality button (bottom-left, shown only when preview is active) -->
+      <div class="preview-quality-wrap" id="previewQualityWrap">
+        <button class="preview-quality-btn" id="previewQualityBtn" title="Preview quality">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 3.5V2.5M8 3.5V2.5M12 3.5V2.5"/><path d="M4 8.5h2M6 7l2 1.5L6 10"/></svg>
+          <span id="previewQualityLabel">Auto</span>
+        </button>
+        <div class="preview-quality-popup" id="previewQualityPopup">
+          <div class="pq-option active" data-q="auto">Auto (zoom-adaptive)</div>
+          <div class="pq-option" data-q="draft">Draft (600px)</div>
+          <div class="pq-option" data-q="normal">Normal (1200px)</div>
+          <div class="pq-option" data-q="high">High (1800px)</div>
+          <div class="pq-option" data-q="max">Max (2400px)</div>
+        </div>
       </div>
       <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
       <div class="preview-zoom-bar" id="previewZoomBar">
@@ -513,6 +542,7 @@
     <div class="modal-image-wrap">
       <canvas id="modalCanvas"></canvas>
       <img id="modalImg" alt="">
+      <video id="modalVideo" controls playsinline style="display:none; max-width:100%; max-height:100%; object-fit:contain;"></video>
     </div>
     <button class="modal-nav modal-next" id="modalNext" aria-label="Next photo">&#8250;</button>
     <div class="modal-footer">

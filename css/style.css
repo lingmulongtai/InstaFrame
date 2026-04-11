@@ -50,6 +50,36 @@
   }
 }
 
+/* ── Soft White theme ────────────────────────────────────────────────────────── */
+[data-theme="soft-white"] {
+  --bg:        #f8f6f1;
+  --surface:   #fffef9;
+  --surface-2: #f5f3ee;
+  --border:    #e0ddd6;
+  --text:      #2c2a25;
+  --text-2:    #6b6760;
+  --text-3:    #a09c94;
+  --accent:    #7c6ee0;
+  --accent-h:  #6b5dd4;
+  --shadow:    0 1px 4px rgba(0,0,0,0.06), 0 2px 10px rgba(0,0,0,0.04);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.10);
+}
+
+/* ── Blue-Grey Dark theme ─────────────────────────────────────────────────────── */
+[data-theme="blue-grey-dark"] {
+  --bg:        #1a2332;
+  --surface:   #1e2a3b;
+  --surface-2: #243044;
+  --border:    #2d3d55;
+  --text:      #d0d8e8;
+  --text-2:    #8899b0;
+  --text-3:    #4a5a70;
+  --accent:    #5b9bd5;
+  --accent-h:  #4a8ac4;
+  --shadow:    0 1px 4px rgba(0,0,0,0.4), 0 2px 10px rgba(0,0,0,0.25);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.55);
+}
+
 /* ── Sidebar-right layout ────────────────────────────────────────────────────── */
 [data-layout="right"] .app-shell { flex-direction: row-reverse; }
 [data-layout="right"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
@@ -200,6 +230,16 @@ html, body {
   white-space: nowrap;
 }
 .customize-sep { height: 1px; background: var(--border); margin: 8px 0; }
+
+#accentColorPicker {
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  padding: 1px;
+  cursor: pointer;
+}
 
 .pill-group { display: flex; gap: 4px; flex-wrap: wrap; }
 .pill-option { position: relative; }
@@ -360,6 +400,8 @@ html, body {
   color: var(--text-2);
   flex: 0 0 76px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .setting-control { flex: 1; min-width: 0; }
@@ -462,13 +504,16 @@ input[type="range"]::-moz-range-thumb {
   );
 }
 
-/* Hide the actual color input (triggered programmatically) */
-#customColorPicker {
+/* Color picker sits inside the button, fills it, invisible — click bubbles up natively */
+.color-option-custom input[type="color"] {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
 /* Font select */
@@ -679,6 +724,60 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   writing-mode: horizontal-tb;
 }
 
+/* ── Preview Quality Button ───────────────────────────────────────────────────── */
+.preview-quality-wrap {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.preview-area.has-preview .preview-quality-wrap {
+  opacity: 1;
+  pointer-events: all;
+}
+.preview-quality-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: rgba(255,255,255,0.85);
+  border: none;
+  border-radius: 100px;
+  padding: 5px 10px 5px 7px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.preview-quality-btn:hover { background: rgba(0,0,0,0.72); }
+.preview-quality-popup {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  min-width: 170px;
+  overflow: hidden;
+  display: none;
+}
+.preview-quality-popup.open { display: block; }
+.pq-option {
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.pq-option:hover { background: var(--surface-2); }
+.pq-option.active { color: var(--accent); font-weight: 500; }
+
 /* ── Empty hint ───────────────────────────────────────────────────────────────── */
 .empty-hint {
   flex: 1;
@@ -827,6 +926,8 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   transition: box-shadow 0.15s, transform 0.15s;
 }
 .image-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+.image-card.selected-preview { box-shadow: 0 0 0 2.5px var(--accent), var(--shadow-lg); transform: translateY(-1px); }
+.image-card.selected-preview:hover { box-shadow: 0 0 0 2.5px var(--accent), var(--shadow-lg); }
 
 .card-preview {
   position: relative;

@@ -89,6 +89,9 @@ const I18N = {
     layoutLeft: 'Left',
     layoutRight: 'Right',
     languageLabel: 'Language',
+    themeSoftWhite: 'Soft White',
+    themeBlueGrey: 'Blue Grey',
+    accentLabel: 'Accent',
   },
   ja: {
     appTitle: 'InstaFrame',
@@ -177,6 +180,9 @@ const I18N = {
     layoutLeft: '左',
     layoutRight: '右',
     languageLabel: '言語',
+    themeSoftWhite: 'ソフトホワイト',
+    themeBlueGrey: 'ブルーグレー',
+    accentLabel: 'アクセント',
   },
 };
 
