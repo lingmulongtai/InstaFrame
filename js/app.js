@@ -35,6 +35,8 @@ const state = {
   // Custom color state
   isCustomColor: false,
   customColorValue: '#e8c49a',
+  // Which item is shown in live preview (null = always first)
+  selectedItemId: null,
 };
 
 // ImageItem extra fields for video:
@@ -243,6 +245,8 @@ async function addFiles(files) {
     };
     state.items.push(item);
     renderItem(item);
+    // Auto-select first item added for live preview
+    if (state.items.length === 1) selectItem(item.id);
 
     // Generate thumbnail for video cards asynchronously
     if (video) {
@@ -266,6 +270,11 @@ function removeItem(id) {
   if (idx !== -1) state.items.splice(idx, 1);
   const el = document.getElementById(`item-${id}`);
   if (el) el.remove();
+  // If removed item was selected, select the new first item
+  if (state.selectedItemId === id) {
+    state.selectedItemId = null;
+    if (state.items.length > 0) selectItem(state.items[0].id);
+  }
   updateUI();
   scheduleLivePreview();
 }
@@ -761,6 +770,15 @@ function resetPreviewPan() {
   applyPreviewTransform();
 }
 
+// ─── Item Selection for Preview ───────────────────────────────────────────────
+function selectItem(id) {
+  state.selectedItemId = id;
+  document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected-preview'));
+  const el = document.getElementById(`item-${id}`);
+  if (el) el.classList.add('selected-preview');
+  scheduleLivePreview();
+}
+
 async function renderLivePreview() {
   const pane         = document.getElementById('dropZone');
   const previewCanvas = document.getElementById('livePreviewCanvas');
@@ -774,14 +792,39 @@ async function renderLivePreview() {
     return;
   }
 
-  const item = state.items[0];
+  // Use selected item (set by card click) or fall back to first
+  const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
+    || state.items[0];
+
+  // For video items, show native video element instead of canvas
+  const liveVideo = document.getElementById('livePreviewVideo');
+  if (item.isVideo && liveVideo) {
+    previewCanvas.style.display = 'none';
+    if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
+      if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
+      liveVideo._objUrl = URL.createObjectURL(item.file);
+      liveVideo._srcId  = item.id;
+      liveVideo.src     = liveVideo._objUrl;
+    }
+    liveVideo.style.display = 'block';
+    if (emptyEl) emptyEl.style.display = 'none';
+    pane.classList.add('has-preview');
+    applyPreviewTransform();
+    return;
+  }
+  if (liveVideo) liveVideo.style.display = 'none';
+
+  // Compute maxPreviewPx from quality preference
+  const pq = loadPrefs().previewQuality || 'auto';
+  const maxPreviewPx = pq === 'draft'  ? 600
+    : pq === 'normal' ? 1200
+    : pq === 'high'   ? 1800
+    : pq === 'max'    ? 2400
+    : Math.min(2400, Math.round(1200 * previewZoom)); // 'auto': zoom-adaptive
+
   try {
-    // For video items, capture a frame first
-    const img = item.isVideo
-      ? await FrameEngine.captureVideoFrame(item.file)
-      : await FrameEngine.loadImage(item.file);
-    // maxPreviewPx:1800 scales down huge originals while keeping good quality
-    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx: 1800 });
+    const img = await FrameEngine.loadImage(item.file);
+    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx });
 
     const dpr      = window.devicePixelRatio || 1;
     const areaW    = Math.max(pane.clientWidth  - 40, 80);
@@ -834,6 +877,9 @@ function openModal(itemId) {
 function closeModal() {
   document.getElementById('photoModal').classList.remove('open');
   document.body.style.overflow = '';
+  // Stop modal video if playing
+  const v = document.getElementById('modalVideo');
+  if (v) { v.pause(); v.src = ''; }
   // Revoke any object URL we created
   if (_lastModalObjUrl) {
     URL.revokeObjectURL(_lastModalObjUrl);
@@ -847,6 +893,7 @@ function _renderModal() {
 
   const canvasEl  = document.getElementById('modalCanvas');
   const imgEl     = document.getElementById('modalImg');
+  const vidEl     = document.getElementById('modalVideo');
   const filename  = document.getElementById('modalFilename');
   const dlBtn     = document.getElementById('modalDownload');
   const prevBtn   = document.getElementById('modalPrev');
@@ -856,13 +903,28 @@ function _renderModal() {
   prevBtn.disabled       = _modalIndex === 0;
   nextBtn.disabled       = _modalIndex === state.items.length - 1;
 
-  if (item.canvas) {
+  // Stop any previous video
+  if (vidEl) { vidEl.pause(); }
+
+  if (item.isVideo) {
+    // Show framed video if available, otherwise the original
+    if (_lastModalObjUrl) URL.revokeObjectURL(_lastModalObjUrl);
+    _lastModalObjUrl = URL.createObjectURL(item.videoBlob || item.file);
+    if (vidEl) {
+      vidEl.src           = _lastModalObjUrl;
+      vidEl.style.display = 'block';
+    }
+    canvasEl.style.display = 'none';
+    imgEl.style.display    = 'none';
+    dlBtn.disabled         = !item.videoBlob;
+  } else if (item.canvas) {
     // Show full-resolution framed canvas
     canvasEl.width  = item.canvas.width;
     canvasEl.height = item.canvas.height;
     canvasEl.getContext('2d').drawImage(item.canvas, 0, 0);
     canvasEl.style.display = 'block';
     imgEl.style.display    = 'none';
+    if (vidEl) vidEl.style.display = 'none';
     dlBtn.disabled         = false;
   } else {
     // Show original image
@@ -871,6 +933,7 @@ function _renderModal() {
     imgEl.src           = _lastModalObjUrl;
     imgEl.style.display = 'block';
     canvasEl.style.display = 'none';
+    if (vidEl) vidEl.style.display = 'none';
     dlBtn.disabled         = true;
   }
 }
@@ -973,8 +1036,17 @@ function renderItem(item) {
     </div>
   `;
 
-  // Click preview to open modal
-  card.querySelector('.card-preview').addEventListener('click', () => openModal(item.id));
+  // Click preview image/video → open modal AND select for live preview
+  card.querySelector('.card-preview').addEventListener('click', () => {
+    selectItem(item.id);
+    openModal(item.id);
+  });
+
+  // Click card body (not buttons/EXIF panel) → select for live preview
+  card.addEventListener('click', e => {
+    if (e.target.closest('button') || e.target.closest('.exif-panel') || e.target.closest('.card-preview')) return;
+    selectItem(item.id);
+  });
 
   grid.appendChild(card);
 }
@@ -1309,9 +1381,6 @@ function setupSettingsListeners() {
   const customBtn = document.getElementById('customColorBtn');
 
   if (customBtn && picker) {
-    customBtn.addEventListener('click', () => {
-      picker.click();
-    });
     picker.addEventListener('input', () => {
       state.isCustomColor    = true;
       state.customColorValue = picker.value;
@@ -1417,6 +1486,48 @@ function updateCustomColorBtn(color) {
   btn.classList.add('active');
   icon.style.background = color;
   icon.style.borderRadius = '50%';
+}
+
+// ─── Preview Quality Popup ────────────────────────────────────────────────────
+const QUALITY_LABELS = { auto: 'Auto', draft: 'Draft', normal: 'Normal', high: 'High', max: 'Max' };
+
+function setupPreviewQuality() {
+  const btn   = document.getElementById('previewQualityBtn');
+  const popup = document.getElementById('previewQualityPopup');
+  const label = document.getElementById('previewQualityLabel');
+  if (!btn || !popup) return;
+
+  // Restore saved quality
+  const saved = loadPrefs().previewQuality || 'auto';
+  _applyQualitySelection(saved, popup, label);
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    popup.classList.toggle('open');
+  });
+
+  popup.querySelectorAll('.pq-option').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const q = opt.dataset.q;
+      const prefs = loadPrefs();
+      prefs.previewQuality = q;
+      savePrefs(prefs);
+      _applyQualitySelection(q, popup, label);
+      popup.classList.remove('open');
+      scheduleLivePreview();
+    });
+  });
+
+  document.addEventListener('click', e => {
+    if (!btn.contains(e.target) && !popup.contains(e.target)) {
+      popup.classList.remove('open');
+    }
+  });
+}
+
+function _applyQualitySelection(q, popup, label) {
+  popup.querySelectorAll('.pq-option').forEach(o => o.classList.toggle('active', o.dataset.q === q));
+  if (label) label.textContent = QUALITY_LABELS[q] || 'Auto';
 }
 
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────
@@ -1551,6 +1662,74 @@ function setupCustomizePanel() {
       rerenderCards();
     });
   });
+
+  // ── Accent color ───────────────────────────────────────────────────────────
+  const accentPicker = document.getElementById('accentColorPicker');
+  if (accentPicker) {
+    // Restore saved accent (not when a theme override is active — themes set their own accent)
+    const savedAccent = prefs.accentColor;
+    if (savedAccent) {
+      accentPicker.value = savedAccent;
+      _applyAccentColor(savedAccent);
+    }
+    accentPicker.addEventListener('input', () => {
+      _applyAccentColor(accentPicker.value);
+      const p = loadPrefs(); p.accentColor = accentPicker.value; savePrefs(p);
+    });
+  }
+
+  // Reset accent when theme changes
+  document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
+    r.addEventListener('change', () => {
+      // Theme defines its own --accent; remove the override
+      document.documentElement.style.removeProperty('--accent');
+      document.documentElement.style.removeProperty('--accent-h');
+      // Clear saved accent so theme accent is used
+      const p = loadPrefs(); delete p.accentColor; savePrefs(p);
+      if (accentPicker) accentPicker.value = '#2563eb';
+    });
+  });
+}
+
+// ─── Accent Color ─────────────────────────────────────────────────────────────
+function _darkenHex(hex, pct) {
+  // Convert hex to HSL, darken by pct%, return hex
+  const r = parseInt(hex.slice(1,3), 16) / 255;
+  const g = parseInt(hex.slice(3,5), 16) / 255;
+  const b = parseInt(hex.slice(5,7), 16) / 255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      default: h = ((r - g) / d + 4) / 6;
+    }
+  }
+  l = Math.max(0, l - pct / 100);
+  // HSL to RGB
+  function hue2rgb(p, q, t) {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q-p)*6*t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q-p)*(2/3-t)*6;
+    return p;
+  }
+  let rr, gg, bb;
+  if (s === 0) { rr = gg = bb = l; } else {
+    const q2 = l < 0.5 ? l*(1+s) : l+s-l*s;
+    const p2  = 2*l - q2;
+    rr = hue2rgb(p2,q2,h+1/3); gg = hue2rgb(p2,q2,h); bb = hue2rgb(p2,q2,h-1/3);
+  }
+  return '#' + [rr,gg,bb].map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
+}
+
+function _applyAccentColor(hex) {
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+  document.documentElement.style.setProperty('--accent',   hex);
+  document.documentElement.style.setProperty('--accent-h', _darkenHex(hex, 12));
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
@@ -1559,6 +1738,7 @@ function setupCustomizePanel() {
   const p = loadPrefs();
   applyTheme(p.theme || 'light');
   applyLayout(p.layout || 'left');
+  if (p.accentColor) _applyAccentColor(p.accentColor);
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1582,6 +1762,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupSidebarResize();
   setupModal();
   setupCustomizePanel();
+  setupPreviewQuality();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
