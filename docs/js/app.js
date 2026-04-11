@@ -7,22 +7,28 @@
 const state = {
   items: [],       // Array of ImageItem objects
   settings: {
-    frameColor:       '#F0F0F0',
-    thicknessScale:   1.0,
-    fontFamily:       'Inter',
-    shotOnFontScale:  1.0,
-    exifFontScale:    1.0,
-    lineGapScale:     1.0,
-    textOffsetY:      0,
-    cameraNameBold:   false,
-    cameraNameItalic: false,
-    exifItalic:       false,
-    showShotOn:       true,
-    showDecoLine:     true,
-    showExifInfo:     true,
-    cameraNameOnly:   false,
-    outerPadding:     0,
-    aspectRatio:      'original',
+    // ── Frame rendering ──────────────────────────────────────────
+    frameColor:          '#F0F0F0',
+    thicknessScale:      1.0,
+    fontFamily:          'Inter',
+    shotOnFontScale:     1.0,
+    exifFontScale:       1.0,
+    lineGapScale:        1.0,
+    textOffsetY:         0,
+    cameraNameBold:      false,
+    cameraNameItalic:    false,
+    exifItalic:          false,
+    showShotOn:          true,
+    showDecoLine:        true,
+    showExifInfo:        true,
+    cameraNameOnly:      false,
+    outerPadding:        0,
+    aspectRatio:         'original',
+    // ── Export (applied at download time) ────────────────────────
+    exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
+    exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
+    exportVideoFormat:   '',       // resolved dynamically from supported MIME types
+    exportVideoBitrate:  8,        // Mbps
   },
 };
 
@@ -156,31 +162,39 @@ function removeItem(id) {
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
-async function generateItem(item) {
+// onExternalProgress: optional (pct: 0..1) => void — for batch progress tracking
+async function generateItem(item, onExternalProgress = null) {
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
 
   try {
     if (item.isVideo) {
+      const mime    = resolveVideoMime(state.settings.exportVideoFormat);
+      const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
       item.videoBlob = await FrameEngine.renderVideoFrameWhenReady(
         item.file, item.exif, state.settings,
         {
+          preferredMime:     mime,
+          videoBitsPerSecond: bitrate,
           onProgress: p => {
             item.progress = p;
             updateItemStatus(item);
+            if (onExternalProgress) onExternalProgress(p);
           },
         }
       );
     } else {
-      const img  = await FrameEngine.loadImage(item.file);
+      const img   = await FrameEngine.loadImage(item.file);
       item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
+      if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
     item.errorMsg = null;
   } catch (e) {
     item.status   = 'error';
     item.errorMsg = e.message;
+    if (onExternalProgress) onExternalProgress(1);
   }
 
   updateItemStatus(item);
@@ -199,13 +213,27 @@ async function generateAll() {
     return;
   }
 
-  showToast(t('msgGenerating'), 'info');
   setGlobalBusy(true);
+  const total = pending.length;
 
-  for (const item of pending) {
-    await generateItem(item);
+  for (let idx = 0; idx < total; idx++) {
+    const item     = pending[idx];
+    const basePct  = idx / total;
+    const itemSlot = 1 / total;
+    const prefix   = `${idx + 1} / ${total}`;
+
+    showProgress(
+      `${prefix}  —  ${item.isVideo ? '▶ ' : ''}${item.file.name}`,
+      basePct
+    );
+
+    await generateItem(item, p => {
+      const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
+      showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
+    });
   }
 
+  hideProgress();
   setGlobalBusy(false);
   showToast(t('msgDone'), 'success');
 }
@@ -213,45 +241,82 @@ async function generateAll() {
 async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
-  item.status = 'pending';
-  await generateItem(item);
+  item.status    = 'pending';
+  item.videoBlob = null;
+  item.canvas    = null;
+  showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
+  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
+  hideProgress();
 }
 
 // ─── Download ─────────────────────────────────────────────────────────────────
+function _photoExportOpts() {
+  const fmt  = state.settings.exportPhotoFormat  || 'jpeg';
+  const qual = (state.settings.exportPhotoQuality || 92) / 100;
+  return { format: fmt, quality: qual };
+}
+
+function _photoExt(fmt) {
+  return fmt === 'png' ? 'png' : fmt === 'webp' ? 'webp' : 'jpg';
+}
+
+function _videoExt(blob) {
+  return blob.type.includes('mp4') ? 'mp4' : 'webm';
+}
+
 async function downloadSingle(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
 
   if (item.isVideo && item.videoBlob) {
-    const ext  = item.videoBlob.type.includes('webm') ? 'webm' : 'mp4';
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + ext;
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
     triggerDownload(item.videoBlob, name);
   } else if (item.canvas) {
-    const blob = await FrameEngine.canvasToBlob(item.canvas);
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.jpg';
+    const opts = _photoExportOpts();
+    const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
     triggerDownload(blob, name);
   }
 }
 
 async function downloadAll() {
-  const done = state.items.filter(i => i.status === 'done' && i.canvas);
+  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
   if (!done.length) {
     showToast(t('msgNoImages'), 'warn');
     return;
   }
 
-  showToast(t('msgDownloading'), 'info');
   setGlobalBusy(true);
+  showProgress('Preparing files…', 0);
 
-  const zip = new JSZip();
-  for (const item of done) {
-    const blob = await FrameEngine.canvasToBlob(item.canvas);
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.jpg';
-    zip.file(name, blob);
+  const zip   = new JSZip();
+  const opts  = _photoExportOpts();
+  const total = done.length;
+
+  for (let i = 0; i < total; i++) {
+    const item = done[i];
+    showProgress(`Packing ${i + 1} / ${total}  —  ${item.file.name}`, (i / total) * 0.7);
+
+    if (item.isVideo && item.videoBlob) {
+      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
+      zip.file(name, item.videoBlob);
+    } else if (item.canvas) {
+      const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
+      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
+      zip.file(name, blob);
+    }
   }
 
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const zipBlob = await zip.generateAsync(
+    { type: 'blob' },
+    meta => showProgress(
+      `Creating ZIP…`,
+      0.7 + 0.3 * (meta.percent / 100)
+    )
+  );
+
   triggerDownload(zipBlob, 'instaframe_export.zip');
+  hideProgress();
   setGlobalBusy(false);
 }
 
@@ -339,6 +404,32 @@ function restoreSettings() {
     const r = document.querySelector(`input[name="aspectRatio"][value="${saved.aspectRatio}"]`);
     if (r) r.checked = true;
   }
+
+  // ── Export settings ──────────────────────────────────────────────────────
+  // Photo format
+  if (saved.exportPhotoFormat) {
+    const r = document.querySelector(`input[name="exportPhotoFormat"][value="${saved.exportPhotoFormat}"]`);
+    if (r) {
+      r.checked = true;
+      // Show/hide quality row
+      const qRow = document.getElementById('photoQualityRow');
+      if (qRow) qRow.style.display = saved.exportPhotoFormat === 'png' ? 'none' : '';
+    }
+  }
+  // Photo quality
+  if (saved.exportPhotoQuality != null) {
+    const el = document.getElementById('photoQualityRange');
+    if (el) { el.value = saved.exportPhotoQuality; }
+    const valEl = document.getElementById('photoQualityRangeVal');
+    if (valEl) valEl.textContent = saved.exportPhotoQuality + '%';
+  }
+  // Video format: defer to after initVideoFormatOptions runs (handled there)
+  state.settings.exportVideoFormat = saved.exportVideoFormat || '';
+  // Video bitrate
+  if (saved.exportVideoBitrate != null) {
+    const r = document.querySelector(`input[name="exportVideoBitrate"][value="${saved.exportVideoBitrate}"]`);
+    if (r) r.checked = true;
+  }
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -369,7 +460,13 @@ function applySettings() {
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
 
-  // Mark all done items as pending (need re-render)
+  // Export settings (photo only — video is handled separately)
+  const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
+  state.settings.exportPhotoFormat  = pFmt ? pFmt.value : 'jpeg';
+  state.settings.exportPhotoQuality = parseInt(document.getElementById('photoQualityRange')?.value || '92', 10);
+  // (video export settings read via onVideoExportSettingChange)
+
+  // Mark all done items as pending (frame settings changed → need re-render)
   state.items.forEach(i => {
     if (i.status === 'done') {
       i.status = 'pending';
@@ -697,6 +794,87 @@ function setGlobalBusy(busy) {
   document.getElementById('downloadAllBtn').disabled = busy;
 }
 
+// ─── Export progress bar ──────────────────────────────────────────────────────
+function showProgress(label, pct) {
+  const wrap  = document.getElementById('exportProgress');
+  const fill  = document.getElementById('exportProgressFill');
+  const lbl   = document.getElementById('exportProgressLabel');
+  const pctEl = document.getElementById('exportProgressPct');
+  if (!wrap) return;
+  wrap.style.display = '';
+  const p = Math.max(0, Math.min(1, pct));
+  fill.style.width   = Math.round(p * 100) + '%';
+  lbl.textContent    = label;
+  if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
+}
+
+function hideProgress() {
+  const wrap = document.getElementById('exportProgress');
+  if (wrap) wrap.style.display = 'none';
+}
+
+// ─── Video format helpers ─────────────────────────────────────────────────────
+const VIDEO_FORMAT_MAP = {
+  'vp9':  'video/webm;codecs=vp9,opus',
+  'vp8':  'video/webm;codecs=vp8,opus',
+  'mp4':  'video/mp4',
+  'webm': 'video/webm',
+};
+
+function resolveVideoMime(formatKey) {
+  if (!formatKey) {
+    // Auto: pick best supported
+    return ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      .find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
+  }
+  const mime = VIDEO_FORMAT_MAP[formatKey] || formatKey;
+  return MediaRecorder.isTypeSupported(mime) ? mime : resolveVideoMime('');
+}
+
+function initVideoFormatOptions() {
+  const container = document.getElementById('videoFormatPills');
+  if (!container) return;
+
+  const candidates = [
+    { label: 'VP9',  value: 'vp9',  mime: 'video/webm;codecs=vp9,opus' },
+    { label: 'VP8',  value: 'vp8',  mime: 'video/webm;codecs=vp8,opus' },
+    { label: 'MP4',  value: 'mp4',  mime: 'video/mp4' },
+  ].filter(f => { try { return MediaRecorder.isTypeSupported(f.mime); } catch { return false; } });
+
+  if (!candidates.length) candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
+
+  container.innerHTML = candidates.map((f, i) => `
+    <div class="ratio-pill">
+      <input type="radio" name="exportVideoFormat" id="vfmt-${f.value}" value="${f.value}" ${i === 0 ? 'checked' : ''}>
+      <label for="vfmt-${f.value}">${f.label}</label>
+    </div>`).join('');
+
+  // Set default in state
+  state.settings.exportVideoFormat = candidates[0].value;
+
+  // Wire listeners (called after DOM is created)
+  document.querySelectorAll('input[name="exportVideoFormat"]').forEach(r =>
+    r.addEventListener('change', onVideoExportSettingChange)
+  );
+}
+
+function onVideoExportSettingChange() {
+  const r = document.querySelector('input[name="exportVideoFormat"]:checked');
+  state.settings.exportVideoFormat = r ? r.value : '';
+  const vbr = document.querySelector('input[name="exportVideoBitrate"]:checked');
+  state.settings.exportVideoBitrate = vbr ? parseInt(vbr.value, 10) : 8;
+  saveSettings();
+  // Video format change requires re-encoding → mark video items as pending
+  state.items.forEach(i => {
+    if (i.isVideo && i.status === 'done') {
+      i.status    = 'pending';
+      i.videoBlob = null;
+      updateItemStatus(i);
+    }
+  });
+  updateUI();
+}
+
 // ─── Toast Notifications ──────────────────────────────────────────────────────
 function showToast(msg, type = 'info') {
   let toast = document.getElementById('toast');
@@ -789,6 +967,33 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="aspectRatio"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
   });
+
+  // ── Export: photo format + quality ───────────────────────────────────────
+  document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const qRow = document.getElementById('photoQualityRow');
+      if (qRow) qRow.style.display = r.value === 'png' ? 'none' : '';
+      // Photo format doesn't need re-generation (applied at download time) — just save
+      const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
+      state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
+      saveSettings();
+    });
+  });
+
+  const pqEl = document.getElementById('photoQualityRange');
+  if (pqEl) {
+    pqEl.addEventListener('input', () => {
+      const valEl = document.getElementById('photoQualityRangeVal');
+      if (valEl) valEl.textContent = pqEl.value + '%';
+      state.settings.exportPhotoQuality = parseInt(pqEl.value, 10);
+      saveSettings();
+    });
+  }
+
+  // ── Export: video bitrate (format wired in initVideoFormatOptions) ────────
+  document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(r => {
+    r.addEventListener('change', onVideoExportSettingChange);
+  });
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -807,8 +1012,16 @@ function capitalize(s) {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
-  restoreSettings();   // ← restore saved settings before wiring listeners
-  applySettings();     // ← sync state.settings from restored DOM values
+  restoreSettings();        // restore saved settings to DOM
+  initVideoFormatOptions(); // build video format pills (needs MediaRecorder)
+
+  // After video pills exist, restore saved video format selection
+  if (state.settings.exportVideoFormat) {
+    const r = document.querySelector(`input[name="exportVideoFormat"][value="${state.settings.exportVideoFormat}"]`);
+    if (r) r.checked = true;
+  }
+
+  applySettings();          // sync state.settings from restored DOM values
   setupDropZone();
   setupSettingsListeners();
   setupModal();
