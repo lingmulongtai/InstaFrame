@@ -38,6 +38,7 @@ const state = {
 //   progress:  number 0..1   (encoding progress)
 
 let itemIdCounter = 0;
+let previewZoom = 1.0;
 
 // ImageItem schema:
 // {
@@ -392,7 +393,6 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
-    ['cameraNameOnly',   saved.cameraNameOnly],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -413,7 +413,7 @@ function restoreSettings() {
       r.checked = true;
       // Show/hide quality row
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.style.display = saved.exportPhotoFormat === 'png' ? 'none' : '';
+      if (qRow) qRow.classList.toggle('row-hidden', saved.exportPhotoFormat === 'png');
     }
   }
   // Photo quality
@@ -454,7 +454,7 @@ function applySettings() {
   state.settings.showShotOn       = document.getElementById('showShotOn').checked;
   state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
-  state.settings.cameraNameOnly   = document.getElementById('cameraNameOnly').checked;
+  state.settings.cameraNameOnly   = false; // removed from UI; always false
   state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
@@ -516,6 +516,17 @@ function scheduleLivePreview() {
   _livePreviewTimer = setTimeout(renderLivePreview, 300);
 }
 
+// ─── Preview Zoom ─────────────────────────────────────────────────────────────
+function setPreviewZoom(zoom) {
+  previewZoom = Math.min(Math.max(zoom, 0.5), 3.0);
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (canvas) canvas.style.transform = `scale(${previewZoom})`;
+  const range = document.getElementById('zoomRange');
+  if (range) range.value = Math.round(previewZoom * 100);
+  const label = document.getElementById('zoomLabel');
+  if (label) label.textContent = Math.round(previewZoom * 100) + '%';
+}
+
 async function renderLivePreview() {
   const pane         = document.getElementById('dropZone');
   const previewCanvas = document.getElementById('livePreviewCanvas');
@@ -555,9 +566,17 @@ async function renderLivePreview() {
     previewCanvas.height = Math.round(displayH * dpr);
     previewCanvas.style.width  = displayW + 'px';
     previewCanvas.style.height = displayH + 'px';
-    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
-
+    // Fade in: start transparent, draw, then reveal
+    const isFirstRender = previewCanvas.style.display === 'none' || previewCanvas.style.display === '';
+    if (isFirstRender) previewCanvas.style.opacity = '0';
     previewCanvas.style.display = 'block';
+    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    if (isFirstRender) {
+      void previewCanvas.offsetWidth;
+      previewCanvas.style.opacity = '1';
+    } else {
+      previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    }
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
   } catch (e) {
@@ -787,17 +806,19 @@ function updateUI() {
   if (dlBtn)   dlBtn.disabled   = !hasDone;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
-  const imageSection = document.getElementById('imageSection');
-  if (imageSection) imageSection.style.display = hasItems ? '' : 'none';
+  setVisible(document.getElementById('imageSection'), hasItems, 'flex');
+  setVisible(document.getElementById('emptyHint'),    !hasItems);
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
     const dropZone = document.getElementById('dropZone');
     if (dropZone) dropZone.classList.remove('has-preview');
     const previewCanvas = document.getElementById('livePreviewCanvas');
-    if (previewCanvas) previewCanvas.style.display = 'none';
+    if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.opacity = ''; previewCanvas.style.transform = ''; }
     const emptyEl = document.getElementById('previewEmpty');
     if (emptyEl) emptyEl.style.display = '';
+    previewZoom = 1.0;
+    setPreviewZoom(1.0);
   }
 }
 
@@ -813,7 +834,7 @@ function showProgress(label, pct) {
   const lbl   = document.getElementById('exportProgressLabel');
   const pctEl = document.getElementById('exportProgressPct');
   if (!wrap) return;
-  wrap.style.display = '';
+  setVisible(wrap, true);
   const p = Math.max(0, Math.min(1, pct));
   fill.style.width   = Math.round(p * 100) + '%';
   lbl.textContent    = label;
@@ -821,8 +842,7 @@ function showProgress(label, pct) {
 }
 
 function hideProgress() {
-  const wrap = document.getElementById('exportProgress');
-  if (wrap) wrap.style.display = 'none';
+  setVisible(document.getElementById('exportProgress'), false);
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────
@@ -929,6 +949,27 @@ function setupDropZone() {
     input.value = '';
   });
 
+  // Scroll-wheel zoom (only when preview is active)
+  zone.addEventListener('wheel', e => {
+    if (!zone.classList.contains('has-preview')) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.1 : -0.1;
+    setPreviewZoom(previewZoom + delta);
+  }, { passive: false });
+
+  // Zoom slider
+  const zoomRange = document.getElementById('zoomRange');
+  if (zoomRange) {
+    zoomRange.addEventListener('input', () => setPreviewZoom(parseInt(zoomRange.value, 10) / 100));
+  }
+
+  // Zoom ± buttons
+  document.getElementById('zoomOutBtn')?.addEventListener('click', () => setPreviewZoom(previewZoom - 0.1));
+  document.getElementById('zoomInBtn')?.addEventListener('click',  () => setPreviewZoom(previewZoom + 0.1));
+
+  // Click zoom label to reset to 100%
+  document.getElementById('zoomLabel')?.addEventListener('click', () => setPreviewZoom(1.0));
+
   // "Add more files" button (visible in section header when files are loaded)
   const addMoreBtn = document.getElementById('addMoreBtn');
   if (addMoreBtn) {
@@ -981,7 +1022,7 @@ function setupSettingsListeners() {
   if (fontFamilyEl) fontFamilyEl.addEventListener('change', applySettings);
 
   // Font style checkboxes (camera name + EXIF)
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'cameraNameOnly'].forEach(id => {
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
@@ -995,7 +1036,7 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.style.display = r.value === 'png' ? 'none' : '';
+      if (qRow) qRow.classList.toggle('row-hidden', r.value === 'png');
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
@@ -1019,6 +1060,32 @@ function setupSettingsListeners() {
   });
 }
 
+// ─── Animation helpers ────────────────────────────────────────────────────────
+/**
+ * Fade an element in or out without layout jank.
+ * - show=true:  set display, force reflow, then fade opacity to 1
+ * - show=false: fade opacity to 0, then set display:none after transition
+ */
+function setVisible(el, show, displayVal = '') {
+  if (!el) return;
+  if (el._fadeTimer) { clearTimeout(el._fadeTimer); el._fadeTimer = null; }
+
+  if (show) {
+    if (el.style.display === 'none') {
+      el.style.opacity = '0';
+      el.style.display = displayVal || '';
+      void el.offsetWidth; // force reflow so transition fires
+    }
+    el.style.opacity = '1';
+  } else {
+    el.style.opacity = '0';
+    el._fadeTimer = setTimeout(() => {
+      el.style.display = 'none';
+      el._fadeTimer = null;
+    }, 190);
+  }
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 function escHtml(s) {
   return String(s)
@@ -1032,7 +1099,90 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ─── Preferences (theme / layout) ────────────────────────────────────────────
+const PREFS_KEY = 'instaframe_prefs';
+function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
+function savePrefs(p)  { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme || 'light');
+}
+function applyLayout(layout) {
+  document.documentElement.setAttribute('data-layout', layout || 'left');
+}
+
+function rerenderCards() {
+  const grid = document.getElementById('imageGrid');
+  grid.innerHTML = '';
+  const saved = [...state.items];
+  state.items = [];
+  itemIdCounter = 0;
+  saved.forEach(item => {
+    const n = { ...item, id: ++itemIdCounter };
+    state.items.push(n);
+    renderItem(n);
+    if (n.status === 'done') { updateItemStatus(n); updateItemPreview(n); }
+  });
+  updateUI();
+}
+
+function setupCustomizePanel() {
+  const btn    = document.getElementById('customizeBtn');
+  const panel  = document.getElementById('customizePanel');
+  const scroll = document.getElementById('sidebarScroll');
+  if (!btn || !panel || !scroll) return;
+
+  // Toggle panel visibility — class-based so CSS transitions run
+  btn.addEventListener('click', () => {
+    const open = panel.classList.contains('panel-open');
+    panel.classList.toggle('panel-open', !open);
+    scroll.classList.toggle('panel-open', !open);
+    btn.classList.toggle('active', !open);
+  });
+
+  const prefs = loadPrefs();
+
+  // ── Theme ──────────────────────────────────────────────────────────────────
+  const savedTheme = prefs.theme || 'light';
+  applyTheme(savedTheme);
+  document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
+    if (r.value === savedTheme) r.checked = true;
+    r.addEventListener('change', () => {
+      applyTheme(r.value);
+      const p = loadPrefs(); p.theme = r.value; savePrefs(p);
+    });
+  });
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const savedLayout = prefs.layout || 'left';
+  applyLayout(savedLayout);
+  document.querySelectorAll('input[name="layoutChoice"]').forEach(r => {
+    if (r.value === savedLayout) r.checked = true;
+    r.addEventListener('change', () => {
+      applyLayout(r.value);
+      const p = loadPrefs(); p.layout = r.value; savePrefs(p);
+    });
+  });
+
+  // ── Language ───────────────────────────────────────────────────────────────
+  document.querySelectorAll('input[name="langChoice"]').forEach(r => {
+    if (r.value === currentLang) r.checked = true;
+    r.addEventListener('change', () => {
+      if (r.value === currentLang) return;
+      setLang(r.value);
+      rerenderCards();
+    });
+  });
+}
+
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
+// Apply theme & layout immediately (before paint) to avoid flash
+;(function() {
+  const p = loadPrefs();
+  applyTheme(p.theme || 'light');
+  applyLayout(p.layout || 'left');
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   restoreSettings();        // restore saved settings to DOM
@@ -1048,29 +1198,11 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDropZone();
   setupSettingsListeners();
   setupModal();
+  setupCustomizePanel();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
-  document.getElementById('langToggleBtn').addEventListener('click', () => {
-    toggleLang();
-    // Re-render all item cards with new language
-    const grid = document.getElementById('imageGrid');
-    grid.innerHTML = '';
-    const savedItems = [...state.items];
-    state.items = [];
-    itemIdCounter = 0;
-    savedItems.forEach(item => {
-      const newItem = { ...item, id: ++itemIdCounter };
-      state.items.push(newItem);
-      renderItem(newItem);
-      if (newItem.status === 'done') {
-        updateItemStatus(newItem);
-        updateItemPreview(newItem);
-      }
-    });
-    updateUI();
-  });
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
