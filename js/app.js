@@ -843,16 +843,23 @@ async function renderLivePreview() {
     previewCanvas.height = Math.round(displayH * dpr);
     previewCanvas.style.width  = displayW + 'px';
     previewCanvas.style.height = displayH + 'px';
+
+    // Draw with high-quality downscaling so larger render canvases look sharper
+    function drawToPreview() {
+      const ctx2 = previewCanvas.getContext('2d');
+      ctx2.imageSmoothingEnabled = true;
+      ctx2.imageSmoothingQuality = 'high';
+      ctx2.drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    }
+
     // Fade in: start transparent, draw, then reveal
     const isFirstRender = previewCanvas.style.display === 'none' || previewCanvas.style.display === '';
     if (isFirstRender) previewCanvas.style.opacity = '0';
     previewCanvas.style.display = 'block';
-    previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    drawToPreview();
     if (isFirstRender) {
       void previewCanvas.offsetWidth;
       previewCanvas.style.opacity = '1';
-    } else {
-      previewCanvas.getContext('2d').drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
     }
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
@@ -1678,16 +1685,48 @@ function setupCustomizePanel() {
     });
   }
 
-  // Reset accent when theme changes
-  document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
-    r.addEventListener('change', () => {
-      // Theme defines its own --accent; remove the override
-      document.documentElement.style.removeProperty('--accent');
-      document.documentElement.style.removeProperty('--accent-h');
-      // Clear saved accent so theme accent is used
-      const p = loadPrefs(); delete p.accentColor; savePrefs(p);
-      if (accentPicker) accentPicker.value = '#2563eb';
-    });
+}
+
+// ─── Mobile Sidebar ───────────────────────────────────────────────────────────
+function setupMobileSidebar() {
+  const toggleBtn = document.getElementById('mobileSidebarToggle');
+  const overlay   = document.getElementById('mobileSidebarOverlay');
+  const sidebar   = document.querySelector('.sidebar');
+  if (!toggleBtn || !overlay || !sidebar) return;
+
+  function openSidebar() {
+    sidebar.classList.add('mobile-open');
+    overlay.classList.add('visible');
+    toggleBtn.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeSidebar() {
+    sidebar.classList.remove('mobile-open');
+    overlay.classList.remove('visible');
+    toggleBtn.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+  function isMobile() { return window.innerWidth <= 768; }
+
+  toggleBtn.addEventListener('click', () => {
+    if (sidebar.classList.contains('mobile-open')) closeSidebar();
+    else openSidebar();
+  });
+
+  // Close on backdrop click
+  overlay.addEventListener('click', closeSidebar);
+
+  // Swipe-down to close (touch)
+  let touchStartY = 0;
+  sidebar.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+  sidebar.addEventListener('touchmove', e => {
+    const delta = e.touches[0].clientY - touchStartY;
+    if (delta > 60) closeSidebar();
+  }, { passive: true });
+
+  // Auto-close when resizing above mobile breakpoint
+  window.addEventListener('resize', () => {
+    if (!isMobile()) closeSidebar();
   });
 }
 
@@ -1763,6 +1802,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModal();
   setupCustomizePanel();
   setupPreviewQuality();
+  setupMobileSidebar();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
