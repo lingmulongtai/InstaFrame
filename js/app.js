@@ -22,6 +22,8 @@ const state = {
     showDecoLine:        true,
     showExifInfo:        true,
     cameraNameOnly:      false,
+    showLocation:        false,
+    locationPosition:    'below-exif',
     outerPadding:        0,
     aspectRatio:         'original',
     // ── Export (applied at download time) ────────────────────────
@@ -30,6 +32,9 @@ const state = {
     exportVideoFormat:   '',       // resolved dynamically from supported MIME types
     exportVideoBitrate:  8,        // Mbps
   },
+  // Custom color state
+  isCustomColor: false,
+  customColorValue: '#e8c49a',
 };
 
 // ImageItem extra fields for video:
@@ -38,7 +43,8 @@ const state = {
 //   progress:  number 0..1   (encoding progress)
 
 let itemIdCounter = 0;
-let previewZoom = 1.0;
+let previewZoom   = 1.0;
+let previewPan    = { x: 0, y: 0 };
 
 // ImageItem schema:
 // {
@@ -49,6 +55,63 @@ let previewZoom = 1.0;
 //   status: 'pending' | 'processing' | 'done' | 'error',
 //   errorMsg: string | null,
 // }
+
+// ─── Font popularity ──────────────────────────────────────────────────────────
+const FONT_USAGE_KEY = 'instaframe_font_usage';
+const ALL_FONTS = [
+  'Inter', 'Montserrat', 'DM Sans', 'Lato', 'Poppins', 'Raleway', 'Nunito',
+  'Josefin Sans', 'Oswald', 'Work Sans',
+  'Playfair Display', 'Cormorant Garamond', 'EB Garamond',
+  'Libre Baskerville', 'Cinzel', 'Source Serif 4',
+];
+
+function loadFontUsage() {
+  try { return JSON.parse(localStorage.getItem(FONT_USAGE_KEY)) || {}; } catch { return {}; }
+}
+function saveFontUsage(usage) {
+  try { localStorage.setItem(FONT_USAGE_KEY, JSON.stringify(usage)); } catch {}
+}
+function recordFontUsage(family) {
+  const usage = loadFontUsage();
+  usage[family] = (usage[family] || 0) + 1;
+  saveFontUsage(usage);
+}
+
+function buildFontSelect() {
+  const sel = document.getElementById('fontFamily');
+  if (!sel) return;
+  const usage   = loadFontUsage();
+  const sorted  = [...ALL_FONTS].sort((a, b) => (usage[b] || 0) - (usage[a] || 0));
+  const popular = sorted.slice(0, 5);
+  const rest    = ALL_FONTS.filter(f => !popular.includes(f)).sort();
+  // Preserve current selection (sel.value if already set, else fall back to state)
+  const current = (sel.value && ALL_FONTS.includes(sel.value))
+    ? sel.value
+    : (state.settings.fontFamily || 'Inter');
+
+  sel.innerHTML = '';
+
+  const makeOpt = (f) => {
+    const o = document.createElement('option');
+    o.value = f;
+    o.textContent = f;
+    if (f === current) o.selected = true;
+    return o;
+  };
+
+  if (popular.length) {
+    const g1 = document.createElement('optgroup');
+    g1.label = '⭐ Popular';
+    popular.forEach(f => g1.appendChild(makeOpt(f)));
+    sel.appendChild(g1);
+  }
+  if (rest.length) {
+    const g2 = document.createElement('optgroup');
+    g2.label = 'More';
+    rest.forEach(f => g2.appendChild(makeOpt(f)));
+    sel.appendChild(g2);
+  }
+}
 
 // ─── EXIF / Metadata Reading ──────────────────────────────────────────────────
 function isVideoFile(file) {
@@ -71,6 +134,7 @@ async function readVideoMetadata(file) {
         fNumber:      '',
         exposureTime: '',
         iso:          '',
+        location:     '',
       };
     }
   } catch (_) {}
@@ -81,9 +145,24 @@ async function readExif(file) {
   try {
     const raw = await exifr.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
-             'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings'],
+             'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings',
+             'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef'],
     });
     if (!raw) return emptyExif();
+
+    // Parse GPS coordinates if present
+    let location = '';
+    if (raw.GPSLatitude && raw.GPSLongitude) {
+      const lat = gpsToDecimal(raw.GPSLatitude, raw.GPSLatitudeRef);
+      const lon = gpsToDecimal(raw.GPSLongitude, raw.GPSLongitudeRef);
+      if (lat != null && lon != null) {
+        // Kick off reverse geocoding asynchronously; returns raw coords initially
+        location = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+        // Store coords for later reverse-geocoding
+        reverseGeocode(lat, lon).then(name => { if (name) location = name; }).catch(() => {});
+      }
+    }
+
     return {
       make:         cleanStr(raw.Make || ''),
       model:        cleanStr(raw.Model || ''),
@@ -92,6 +171,7 @@ async function readExif(file) {
       fNumber:      raw.FNumber     ? formatFNumber(raw.FNumber) : '',
       exposureTime: raw.ExposureTime ? String(raw.ExposureTime) : '',
       iso:          raw.ISO || raw.ISOSpeedRatings || '',
+      location,
     };
   } catch (e) {
     return emptyExif();
@@ -99,7 +179,35 @@ async function readExif(file) {
 }
 
 function emptyExif() {
-  return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'' };
+  return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'' };
+}
+
+function gpsToDecimal(dms, ref) {
+  if (!Array.isArray(dms) || dms.length < 3) return null;
+  const [d, m, s] = dms;
+  const decimal = d + m / 60 + s / 3600;
+  return (ref === 'S' || ref === 'W') ? -decimal : decimal;
+}
+
+const _geocodeCache = {};
+async function reverseGeocode(lat, lon) {
+  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  if (_geocodeCache[key]) return _geocodeCache[key];
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    const data = await res.json();
+    const a = data.address || {};
+    const city    = a.city || a.town || a.village || a.county || '';
+    const country = a.country || '';
+    const name    = [city, country].filter(Boolean).join(', ');
+    if (name) _geocodeCache[key] = name;
+    return name || null;
+  } catch {
+    return null;
+  }
 }
 
 function cleanStr(s) {
@@ -250,6 +358,56 @@ async function regenerateItem(id) {
   hideProgress();
 }
 
+// Apply frame (if needed) then download — used by per-item Download button
+async function applyAndDownloadSingle(id) {
+  const item = state.items.find(i => i.id === id);
+  if (!item) return;
+
+  if (item.status !== 'done') {
+    // Generate first
+    setGlobalBusy(true);
+    item.status    = 'pending';
+    item.videoBlob = null;
+    item.canvas    = null;
+    showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
+    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
+    hideProgress();
+    setGlobalBusy(false);
+  }
+
+  if (item.status === 'done') {
+    await downloadSingle(id);
+  }
+}
+
+// Get GPS location from the device and populate the location field
+async function getDeviceLocation(id) {
+  if (!navigator.geolocation) {
+    showToast('Geolocation not supported', 'warn');
+    return;
+  }
+  const input = document.getElementById(`exif-location-${id}`);
+  if (!input) return;
+  const original = input.value;
+  input.value = 'Getting location…';
+  input.disabled = true;
+
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const name = await reverseGeocode(latitude, longitude);
+      input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
+      input.disabled = false;
+    },
+    () => {
+      input.value = original;
+      input.disabled = false;
+      showToast('Could not get location', 'warn');
+    },
+    { timeout: 10000 }
+  );
+}
+
 // ─── Download ─────────────────────────────────────────────────────────────────
 function _photoExportOpts() {
   const fmt  = state.settings.exportPhotoFormat  || 'jpeg';
@@ -281,13 +439,38 @@ async function downloadSingle(id) {
 }
 
 async function downloadAll() {
-  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
-  if (!done.length) {
+  if (!state.items.length) {
     showToast(t('msgNoImages'), 'warn');
     return;
   }
 
   setGlobalBusy(true);
+
+  // Auto-generate any pending items first
+  const pending = state.items.filter(i => i.status === 'pending');
+  if (pending.length) {
+    const total = pending.length;
+    for (let idx = 0; idx < total; idx++) {
+      const item    = pending[idx];
+      const basePct = idx / total;
+      const slot    = 1 / total;
+      const prefix  = `${idx + 1} / ${total}`;
+      showProgress(`${prefix}  —  ${item.file.name}`, basePct);
+      await generateItem(item, p => {
+        const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
+        showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
+      });
+    }
+  }
+
+  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
+  if (!done.length) {
+    hideProgress();
+    setGlobalBusy(false);
+    showToast(t('msgNoImages'), 'warn');
+    return;
+  }
+
   showProgress('Preparing files…', 0);
 
   const zip   = new JSZip();
@@ -336,7 +519,13 @@ function triggerDownload(blob, filename) {
 const SETTINGS_KEY = 'instaframe_settings';
 
 function saveSettings() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) {}
+  try {
+    const toSave = Object.assign({}, state.settings, {
+      isCustomColor:    state.isCustomColor,
+      customColorValue: state.customColorValue,
+    });
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(toSave));
+  } catch (e) {}
 }
 
 function restoreSettings() {
@@ -347,19 +536,25 @@ function restoreSettings() {
     saved = JSON.parse(raw);
   } catch (e) { return; }
 
+  // Custom color state
+  if (saved.isCustomColor != null) state.isCustomColor = saved.isCustomColor;
+  if (saved.customColorValue) {
+    state.customColorValue = saved.customColorValue;
+    const picker = document.getElementById('customColorPicker');
+    if (picker) picker.value = saved.customColorValue;
+  }
+
   // Frame color
   if (saved.frameColor != null) {
-    const standardColors = ['#ffffff', '#F0F0F0', '#1a1a1a'];
-    if (standardColors.includes(saved.frameColor)) {
-      const r = document.querySelector(`input[name="frameColor"][value="${saved.frameColor}"]`);
-      if (r) r.checked = true;
+    if (saved.isCustomColor) {
+      // Restore custom color button state
+      updateCustomColorBtn(saved.customColorValue || saved.frameColor);
     } else {
-      const r = document.querySelector('input[name="frameColor"][value="custom"]');
-      if (r) r.checked = true;
-      const picker = document.getElementById('customColorPicker');
-      if (picker) picker.value = saved.frameColor;
-      const swatch = document.getElementById('customColorSwatch');
-      if (swatch) swatch.style.background = saved.frameColor;
+      const standardColors = ['#ffffff', '#F0F0F0', '#9E9E9E', '#1a1a1a'];
+      if (standardColors.includes(saved.frameColor)) {
+        const r = document.querySelector(`input[name="frameColor"][value="${saved.frameColor}"]`);
+        if (r) r.checked = true;
+      }
     }
   }
 
@@ -393,11 +588,21 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
+    ['showLocation',     saved.showLocation],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
     if (el) el.checked = val;
   });
+
+  // Location position
+  if (saved.locationPosition) {
+    const r = document.querySelector(`input[name="locationPos"][value="${saved.locationPosition}"]`);
+    if (r) r.checked = true;
+  }
+  // Show/hide location position row
+  const locPosRow = document.getElementById('locationPositionRow');
+  if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
 
   // Aspect ratio
   if (saved.aspectRatio) {
@@ -434,12 +639,19 @@ function restoreSettings() {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function applySettings() {
-  // Frame color (support custom color picker)
-  const colorRadio = document.querySelector('input[name="frameColor"]:checked');
-  if (colorRadio && colorRadio.value === 'custom') {
-    state.settings.frameColor = document.getElementById('customColorPicker').value;
+  // Frame color (custom color button or radio swatches)
+  if (state.isCustomColor) {
+    state.settings.frameColor = state.customColorValue;
   } else {
+    const colorRadio = document.querySelector('input[name="frameColor"]:checked');
     state.settings.frameColor = colorRadio ? colorRadio.value : '#F0F0F0';
+  }
+
+  // Update dark-frame outline on preview canvas
+  const previewCanvas = document.getElementById('livePreviewCanvas');
+  if (previewCanvas) {
+    const isDark = FrameEngine.isColorDark(state.settings.frameColor);
+    previewCanvas.classList.toggle('frame-dark', isDark);
   }
 
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
@@ -455,7 +667,15 @@ function applySettings() {
   state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
   state.settings.cameraNameOnly   = false; // removed from UI; always false
+  state.settings.showLocation     = document.getElementById('showLocation')?.checked ?? false;
   state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
+
+  const locPosRadio = document.querySelector('input[name="locationPos"]:checked');
+  state.settings.locationPosition = locPosRadio ? locPosRadio.value : 'below-exif';
+
+  // Show/hide location position row
+  const locPosRow = document.getElementById('locationPositionRow');
+  if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -498,6 +718,7 @@ function applyExifEdit(id) {
   item.exif.fNumber      = document.getElementById(`exif-fn-${id}`).value.trim();
   item.exif.exposureTime = document.getElementById(`exif-et-${id}`).value.trim();
   item.exif.iso          = document.getElementById(`exif-iso-${id}`).value.trim();
+  item.exif.location     = document.getElementById(`exif-location-${id}`)?.value.trim() || '';
 
   item.status = 'pending';
   item.canvas = null;
@@ -516,15 +737,28 @@ function scheduleLivePreview() {
   _livePreviewTimer = setTimeout(renderLivePreview, 300);
 }
 
-// ─── Preview Zoom ─────────────────────────────────────────────────────────────
+// ─── Preview Zoom & Pan ───────────────────────────────────────────────────────
+function applyPreviewTransform() {
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (!canvas) return;
+  canvas.style.transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
+  // Dark frame outline
+  const isDark = FrameEngine.isColorDark(state.settings.frameColor);
+  canvas.classList.toggle('frame-dark', isDark);
+}
+
 function setPreviewZoom(zoom) {
   previewZoom = Math.min(Math.max(zoom, 0.5), 3.0);
-  const canvas = document.getElementById('livePreviewCanvas');
-  if (canvas) canvas.style.transform = `scale(${previewZoom})`;
+  applyPreviewTransform();
   const range = document.getElementById('zoomRange');
   if (range) range.value = Math.round(previewZoom * 100);
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = Math.round(previewZoom * 100) + '%';
+}
+
+function resetPreviewPan() {
+  previewPan = { x: 0, y: 0 };
+  applyPreviewTransform();
 }
 
 async function renderLivePreview() {
@@ -546,8 +780,8 @@ async function renderLivePreview() {
     const img = item.isVideo
       ? await FrameEngine.captureVideoFrame(item.file)
       : await FrameEngine.loadImage(item.file);
-    // maxPreviewPx:1200 scales down huge originals so font-load + render is fast
-    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx: 1200 });
+    // maxPreviewPx:1800 scales down huge originals while keeping good quality
+    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx: 1800 });
 
     const dpr      = window.devicePixelRatio || 1;
     const areaW    = Math.max(pane.clientWidth  - 40, 80);
@@ -701,10 +935,7 @@ function renderItem(item) {
         <button class="btn btn-sm btn-secondary" onclick="toggleExifEditor(${item.id})">
           <span data-i18n="editExif">${t('editExif')}</span>
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="regenerateItem(${item.id})">
-          <span data-i18n="regenerate">${t('regenerate')}</span>
-        </button>
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="downloadSingle(${item.id})" disabled>
+        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="applyAndDownloadSingle(${item.id})">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
         </button>
         <button class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">
@@ -728,6 +959,13 @@ function renderItem(item) {
         <input id="exif-et-${item.id}"    value="${escHtml(item.exif.exposureTime || '')}" placeholder="1/250">
         <label>${t('iso')}</label>
         <input id="exif-iso-${item.id}"   value="${escHtml(item.exif.iso || '')}" placeholder="400">
+        <label>${t('location')}</label>
+        <div class="exif-location-row">
+          <input id="exif-location-${item.id}" value="${escHtml(item.exif.location || '')}" placeholder="e.g. Tokyo, Japan" style="flex:1;">
+          <button class="btn btn-sm btn-secondary exif-geolocate-btn" onclick="getDeviceLocation(${item.id})" title="${t('getLocation')}">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/><path d="M8 13c0 0-5-4-5-6a5 5 0 0 1 10 0c0 2-5 6-5 6z" stroke="none" fill="currentColor" opacity=".18"/></svg>
+          </button>
+        </div>
       </div>
       <button class="btn btn-primary btn-full" onclick="applyExifEdit(${item.id})">
         <span data-i18n="applyExif">${t('applyExif')}</span>
@@ -790,7 +1028,8 @@ function updateItemPreview(item) {
     if (framedCanvas) framedCanvas.remove();
     const origThumb = previewDiv.querySelector('img.thumb-orig');
     if (origThumb) origThumb.style.display = '';
-    if (dlBtn) dlBtn.disabled = true;
+    // Download button stays enabled — clicking it will auto-generate then download
+    if (dlBtn) dlBtn.disabled = (item.status === 'processing');
   }
 }
 
@@ -818,8 +1057,15 @@ function updateUI() {
     const emptyEl = document.getElementById('previewEmpty');
     if (emptyEl) emptyEl.style.display = '';
     previewZoom = 1.0;
+    previewPan  = { x: 0, y: 0 };
     setPreviewZoom(1.0);
   }
+
+  // Per-item download buttons: always enabled (auto-generate on click)
+  state.items.forEach(item => {
+    const dlBtn = document.getElementById(`dl-btn-${item.id}`);
+    if (dlBtn) dlBtn.disabled = (item.status === 'processing');
+  });
 }
 
 function setGlobalBusy(busy) {
@@ -967,8 +1213,58 @@ function setupDropZone() {
   document.getElementById('zoomOutBtn')?.addEventListener('click', () => setPreviewZoom(previewZoom - 0.1));
   document.getElementById('zoomInBtn')?.addEventListener('click',  () => setPreviewZoom(previewZoom + 0.1));
 
-  // Click zoom label to reset to 100%
-  document.getElementById('zoomLabel')?.addEventListener('click', () => setPreviewZoom(1.0));
+  // Click zoom label to reset to 100% and reset pan
+  document.getElementById('zoomLabel')?.addEventListener('click', () => {
+    setPreviewZoom(1.0);
+    resetPreviewPan();
+  });
+
+  // ── Drag-to-pan on preview canvas ──────────────────────────────────────────
+  const previewCanvas = document.getElementById('livePreviewCanvas');
+  let _panDragging = false;
+  let _panStart    = { x: 0, y: 0 };
+  let _panOrigin   = { x: 0, y: 0 };
+
+  previewCanvas.addEventListener('mousedown', e => {
+    if (!zone.classList.contains('has-preview')) return;
+    _panDragging = true;
+    _panStart    = { x: e.clientX, y: e.clientY };
+    _panOrigin   = { x: previewPan.x, y: previewPan.y };
+    previewCanvas.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!_panDragging) return;
+    previewPan.x = _panOrigin.x + (e.clientX - _panStart.x);
+    previewPan.y = _panOrigin.y + (e.clientY - _panStart.y);
+    applyPreviewTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!_panDragging) return;
+    _panDragging = false;
+    previewCanvas.classList.remove('dragging');
+  });
+
+  // Touch support for pan
+  previewCanvas.addEventListener('touchstart', e => {
+    if (!zone.classList.contains('has-preview') || e.touches.length !== 1) return;
+    _panDragging = true;
+    _panStart    = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    _panOrigin   = { x: previewPan.x, y: previewPan.y };
+    e.preventDefault();
+  }, { passive: false });
+
+  previewCanvas.addEventListener('touchmove', e => {
+    if (!_panDragging || e.touches.length !== 1) return;
+    previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
+    previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
+    applyPreviewTransform();
+    e.preventDefault();
+  }, { passive: false });
+
+  previewCanvas.addEventListener('touchend', () => { _panDragging = false; });
 
   // "Add more files" button (visible in section header when files are loaded)
   const addMoreBtn = document.getElementById('addMoreBtn');
@@ -997,34 +1293,61 @@ function setupSettingsListeners() {
     });
   });
 
-  // Frame color radios
+  // Frame color radios (standard swatches)
   document.querySelectorAll('input[name="frameColor"]').forEach(radio => {
-    radio.addEventListener('change', applySettings);
-  });
-
-  // Custom color picker
-  const picker      = document.getElementById('customColorPicker');
-  const customSwatch = document.getElementById('customColorSwatch');
-  const customRadio = document.querySelector('input[name="frameColor"][value="custom"]');
-  if (picker) {
-    picker.addEventListener('input', () => {
-      if (customSwatch) customSwatch.style.background = picker.value;
-      if (customRadio) customRadio.checked = true;
+    radio.addEventListener('change', () => {
+      // Standard color selected — deactivate custom
+      state.isCustomColor = false;
+      const btn = document.getElementById('customColorBtn');
+      if (btn) btn.classList.remove('active');
       applySettings();
     });
-    picker.addEventListener('click', () => {
-      if (customRadio) customRadio.checked = true;
+  });
+
+  // Custom color — single rainbow button
+  const picker    = document.getElementById('customColorPicker');
+  const customBtn = document.getElementById('customColorBtn');
+
+  if (customBtn && picker) {
+    customBtn.addEventListener('click', () => {
+      picker.click();
+    });
+    picker.addEventListener('input', () => {
+      state.isCustomColor    = true;
+      state.customColorValue = picker.value;
+      updateCustomColorBtn(picker.value);
+      // Deselect standard radio
+      document.querySelectorAll('input[name="frameColor"]').forEach(r => r.checked = false);
+      applySettings();
+    });
+    picker.addEventListener('change', () => {
+      state.isCustomColor    = true;
+      state.customColorValue = picker.value;
+      updateCustomColorBtn(picker.value);
+      document.querySelectorAll('input[name="frameColor"]').forEach(r => r.checked = false);
+      applySettings();
     });
   }
 
-  // Font family selector
+  // Font family selector — track popularity + rebuild select
   const fontFamilyEl = document.getElementById('fontFamily');
-  if (fontFamilyEl) fontFamilyEl.addEventListener('change', applySettings);
+  if (fontFamilyEl) {
+    fontFamilyEl.addEventListener('change', () => {
+      recordFontUsage(fontFamilyEl.value);
+      buildFontSelect(); // Rebuild with updated popularity
+      applySettings();
+    });
+  }
 
   // Font style checkboxes (camera name + EXIF)
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo'].forEach(id => {
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'showLocation'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
+  });
+
+  // Location position radios
+  document.querySelectorAll('input[name="locationPos"]').forEach(r => {
+    r.addEventListener('change', applySettings);
   });
 
   // Aspect ratio radios
@@ -1084,6 +1407,61 @@ function setVisible(el, show, displayVal = '') {
       el._fadeTimer = null;
     }, 190);
   }
+}
+
+// ─── Custom Color Button ──────────────────────────────────────────────────────
+function updateCustomColorBtn(color) {
+  const btn  = document.getElementById('customColorBtn');
+  const icon = document.getElementById('customColorIcon');
+  if (!btn || !icon) return;
+  btn.classList.add('active');
+  icon.style.background = color;
+  icon.style.borderRadius = '50%';
+}
+
+// ─── Sidebar Resize ───────────────────────────────────────────────────────────
+function setupSidebarResize() {
+  const handle  = document.getElementById('sidebarResizeHandle');
+  const sidebar = document.querySelector('.sidebar');
+  if (!handle || !sidebar) return;
+
+  const prefs = loadPrefs();
+  if (prefs.sidebarWidth) {
+    const w = Math.min(Math.max(prefs.sidebarWidth, 220), 480);
+    document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+  }
+
+  let _resizing = false;
+  let _startX   = 0;
+  let _startW   = 0;
+  const isRight = () => document.documentElement.getAttribute('data-layout') === 'right';
+
+  handle.addEventListener('mousedown', e => {
+    _resizing = true;
+    _startX   = e.clientX;
+    _startW   = sidebar.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!_resizing) return;
+    const delta = isRight() ? _startX - e.clientX : e.clientX - _startX;
+    const w = Math.min(Math.max(_startW + delta, 220), 480);
+    document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!_resizing) return;
+    _resizing = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist width
+    const p = loadPrefs();
+    p.sidebarWidth = sidebar.offsetWidth;
+    savePrefs(p);
+  });
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1184,9 +1562,10 @@ function setupCustomizePanel() {
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
+  buildFontSelect();         // populate font select with popularity-ordered options
   applyTranslations();
-  restoreSettings();        // restore saved settings to DOM
-  initVideoFormatOptions(); // build video format pills (needs MediaRecorder)
+  restoreSettings();         // restore saved settings to DOM
+  initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
   // After video pills exist, restore saved video format selection
   if (state.settings.exportVideoFormat) {
@@ -1194,9 +1573,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (r) r.checked = true;
   }
 
-  applySettings();          // sync state.settings from restored DOM values
+  // Restore custom color button visual state
+  if (state.isCustomColor) updateCustomColorBtn(state.customColorValue);
+
+  applySettings();           // sync state.settings from restored DOM values
   setupDropZone();
   setupSettingsListeners();
+  setupSidebarResize();
   setupModal();
   setupCustomizePanel();
   updateUI();

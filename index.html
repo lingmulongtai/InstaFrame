@@ -13,7 +13,7 @@
   <!-- Google Fonts: frame text fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Montserrat:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=DM+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Lato:ital,wght@0,300;0,700;1,300;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Montserrat:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=DM+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Lato:ital,wght@0,300;0,700;1,300;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Raleway:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Nunito:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Josefin+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Oswald:wght@300;500;700&family=Work+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Cinzel:wght@400;700&family=Source+Serif+4:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&display=swap">
 
   <link rel="stylesheet" href="css/style.css">
 
@@ -26,6 +26,7 @@
 
   <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
   <aside class="sidebar">
+    <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
     <div class="sidebar-header">
       <div class="sidebar-brand">
         <span class="logo">InstaFrame</span>
@@ -120,7 +121,11 @@
                 <input type="radio" name="frameColor" value="#ffffff">
                 <span class="color-swatch white"></span>
               </label>
-              <label class="color-option" title="Light Gray">
+              <label class="color-option" title="Gray">
+                <input type="radio" name="frameColor" value="#9E9E9E">
+                <span class="color-swatch gray"></span>
+              </label>
+              <label class="color-option" title="Light (default)">
                 <input type="radio" name="frameColor" value="#F0F0F0" checked>
                 <span class="color-swatch lightgray"></span>
               </label>
@@ -128,11 +133,11 @@
                 <input type="radio" name="frameColor" value="#1a1a1a">
                 <span class="color-swatch black"></span>
               </label>
-              <label class="color-option" title="Custom">
-                <input type="radio" name="frameColor" value="custom">
-                <span class="color-swatch" id="customColorSwatch" style="background:#e8c49a;"></span>
-              </label>
-              <input type="color" id="customColorPicker" value="#e8c49a" title="Pick custom color">
+              <!-- Custom color: single rainbow button -->
+              <button type="button" id="customColorBtn" class="color-option-custom" title="Custom Color">
+                <span class="rainbow-icon" id="customColorIcon"></span>
+              </button>
+              <input type="color" id="customColorPicker" value="#e8c49a">
             </div>
           </div>
         </div>
@@ -194,19 +199,11 @@
           <span data-i18n="sectionTypography">Typography</span>
         </div>
 
-        <!-- Font Family -->
+        <!-- Font Family (options populated dynamically for popularity tracking) -->
         <div class="setting-row">
           <div class="setting-label" data-i18n="fontFamily">Font</div>
           <div class="setting-control">
-            <select id="fontFamily" class="font-select">
-              <option value="Inter">Inter</option>
-              <option value="Montserrat">Montserrat</option>
-              <option value="DM Sans">DM Sans</option>
-              <option value="Lato">Lato</option>
-              <option value="Playfair Display">Playfair Display</option>
-              <option value="Cormorant Garamond">Cormorant Garamond</option>
-              <option value="EB Garamond">EB Garamond</option>
-            </select>
+            <select id="fontFamily" class="font-select"><!-- filled by JS --></select>
           </div>
         </div>
 
@@ -305,6 +302,31 @@
                 <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
                 <span class="ios-toggle-label" data-i18n="showExifInfo">EXIF Info</span>
               </label>
+              <label class="ios-toggle">
+                <input type="checkbox" id="showLocation">
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label" data-i18n="showLocation">Location</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <!-- Location position (shown when showLocation is on) -->
+        <div class="setting-row location-pos-row" id="locationPositionRow" style="display:none;">
+          <div class="setting-label" data-i18n="locationPosition">Position</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="locationPos" id="locpos-below" value="below-exif" checked>
+                <label for="locpos-below" data-i18n="locPosBelow">Below EXIF</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="locationPos" id="locpos-right" value="cam-right">
+                <label for="locpos-right" data-i18n="locPosCamRight">Cam Right</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="locationPos" id="locpos-left" value="cam-left">
+                <label for="locpos-left" data-i18n="locPosCamLeft">Cam Left</label>
+              </div>
             </div>
           </div>
         </div>
@@ -403,12 +425,12 @@
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
         <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
       </div>
-      <!-- Zoom controls (shown only when preview is active) -->
+      <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
       <div class="preview-zoom-bar" id="previewZoomBar">
-        <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
-        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100">
-        <button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>
         <span class="zoom-label" id="zoomLabel">100%</span>
+        <button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>
+        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100" orient="vertical">
+        <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
       </div>
     </div>
 
@@ -463,11 +485,11 @@
       <div class="batch-bar">
         <button class="btn btn-primary btn-lg" id="generateAllBtn" disabled>
           <span>▶</span>
-          <span data-i18n="generateAll">Generate All</span>
+          <span data-i18n="generateAll">Apply to All</span>
         </button>
         <button class="btn btn-secondary btn-lg" id="downloadAllBtn" disabled>
           <span>⬇</span>
-          <span data-i18n="downloadAll">Download All (ZIP)</span>
+          <span data-i18n="downloadAll">Download All</span>
         </button>
       </div>
 
