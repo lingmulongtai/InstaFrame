@@ -50,20 +50,20 @@
           <span class="customize-row-label" data-i18n="themeLabel">Theme</span>
           <div class="pill-group">
             <label class="pill-option">
-              <input type="radio" name="themeChoice" value="light" checked>
+              <input type="radio" name="themeChoice" value="light">
               <span data-i18n="themeLight">Light</span>
             </label>
             <label class="pill-option">
-              <input type="radio" name="themeChoice" value="dark">
-              <span data-i18n="themeDark">Dark</span>
-            </label>
-            <label class="pill-option">
-              <input type="radio" name="themeChoice" value="soft-white">
+              <input type="radio" name="themeChoice" value="soft-white" checked>
               <span data-i18n="themeSoftWhite">Soft</span>
             </label>
             <label class="pill-option">
               <input type="radio" name="themeChoice" value="blue-grey-dark">
               <span data-i18n="themeBlueGrey">Blue</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="themeChoice" value="dark">
+              <span data-i18n="themeDark">Dark</span>
             </label>
             <label class="pill-option">
               <input type="radio" name="themeChoice" value="system">
@@ -74,15 +74,15 @@
           <div class="customize-row" style="margin-top:6px;">
             <span class="customize-row-label" data-i18n="accentLabel">Accent</span>
             <div class="accent-swatches" id="accentSwatches">
-              <button class="accent-swatch active" data-color="#2563eb" style="background:#2563eb" title="Blue"></button>
+              <button class="accent-swatch" data-color="#2563eb" style="background:#2563eb" title="Blue"></button>
               <button class="accent-swatch" data-color="#7c3aed" style="background:#7c3aed" title="Purple"></button>
               <button class="accent-swatch" data-color="#db2777" style="background:#db2777" title="Pink"></button>
               <button class="accent-swatch" data-color="#059669" style="background:#059669" title="Green"></button>
               <button class="accent-swatch" data-color="#d97706" style="background:#d97706" title="Amber"></button>
-              <button class="accent-swatch" data-color="#0891b2" style="background:#0891b2" title="Cyan"></button>
-              <button class="accent-swatch accent-custom" id="accentCustomBtn" title="Custom color">
-                <input type="color" id="accentColorPicker" value="#2563eb">
-                <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v6M5 8h6"/></svg>
+              <button class="accent-swatch active" data-color="#0891b2" style="background:#0891b2" title="Cyan"></button>
+              <button type="button" id="accentCustomBtn" class="color-option-custom" title="Custom color">
+                <input type="color" id="accentColorPicker" value="#0891b2">
+                <span class="rainbow-icon"></span>
               </button>
             </div>
           </div>
@@ -144,16 +144,12 @@
           <div class="setting-control">
             <div class="color-row">
               <label class="color-option" title="White">
-                <input type="radio" name="frameColor" value="#ffffff">
-                <span class="color-swatch white"></span>
+                <input type="radio" name="frameColor" value="#F0F0F0" checked>
+                <span class="color-swatch lightgray"></span>
               </label>
               <label class="color-option" title="Gray">
                 <input type="radio" name="frameColor" value="#9E9E9E">
                 <span class="color-swatch gray"></span>
-              </label>
-              <label class="color-option" title="Light (default)">
-                <input type="radio" name="frameColor" value="#F0F0F0" checked>
-                <span class="color-swatch lightgray"></span>
               </label>
               <label class="color-option" title="Black">
                 <input type="radio" name="frameColor" value="#1a1a1a">
@@ -483,6 +479,8 @@
       </div>
     </div>
 
+    <div class="main-resize-handle" id="mainResizeHandle"></div>
+
     <!-- Empty hint (shown when no files are loaded) -->
     <div class="empty-hint" id="emptyHint">
       <!-- Mobile-only add button (desktop uses the drop-zone overlay) -->
@@ -517,6 +515,12 @@
       <div class="section-header">
         <span class="section-title" data-i18n="imagesTitle">Images</span>
         <div class="section-header-right">
+          <div class="card-size-bar" id="cardSizeBar" title="Card size">
+            <svg viewBox="0 0 14 14" width="11" height="11" fill="currentColor" opacity=".5">
+              <rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="7" height="7" rx="1"/>
+            </svg>
+            <input type="range" id="cardSizeRange" min="120" max="320" step="20" value="200">
+          </div>
           <span class="section-counter" id="imageCounter"></span>
           <button class="btn btn-secondary btn-sm" id="addMoreBtn" data-i18n="addMore">+ Add</button>
         </div>
@@ -571,26 +575,6 @@
     <span data-i18n="tabSettings">Settings</span>
   </button>
 </nav>
-
-<!-- ─── Photo Preview Modal ─────────────────────────────────────────────────── -->
-<div id="photoModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Photo preview">
-  <div class="modal-inner">
-    <button class="modal-close" id="modalClose" aria-label="Close">&times;</button>
-    <button class="modal-nav modal-prev" id="modalPrev" aria-label="Previous photo">&#8249;</button>
-    <div class="modal-image-wrap">
-      <canvas id="modalCanvas"></canvas>
-      <img id="modalImg" alt="">
-      <video id="modalVideo" controls playsinline style="display:none; max-width:100%; max-height:100%; object-fit:contain;"></video>
-    </div>
-    <button class="modal-nav modal-next" id="modalNext" aria-label="Next photo">&#8250;</button>
-    <div class="modal-footer">
-      <span id="modalFilename" class="modal-filename"></span>
-      <button class="btn btn-primary btn-sm" id="modalDownload">
-        <span data-i18n="downloadSingle">Download</span>
-      </button>
-    </div>
-  </div>
-</div>
 
 <!-- Scripts -->
 <script src="js/i18n.js"></script>
