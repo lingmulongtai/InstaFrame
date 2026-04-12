@@ -47,6 +47,44 @@ const state = {
 let itemIdCounter = 0;
 let previewZoom   = 1.0;
 let previewPan    = { x: 0, y: 0 };
+const SETTINGS_HISTORY_LIMIT = 80;
+const _settingsUndoStack = [];
+const _settingsRedoStack = [];
+let _historyLocked = false;
+
+function _createSettingsSnapshot() {
+  return {
+    settings: { ...state.settings },
+    isCustomColor: !!state.isCustomColor,
+    customColorValue: state.customColorValue,
+  };
+}
+
+function _settingsSnapshotsEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function _isPreviewViewModified() {
+  const q = loadPrefs().previewQuality || 'auto';
+  return (
+    Math.abs(previewZoom - 1) > 0.001 ||
+    Math.abs(previewPan.x) > 0.5 ||
+    Math.abs(previewPan.y) > 0.5 ||
+    q !== 'auto'
+  );
+}
+
+function updatePreviewViewModifiedState() {
+  const zone = document.getElementById('dropZone');
+  if (zone) zone.classList.toggle('view-modified', _isPreviewViewModified());
+}
+
+function updateHistoryButtons() {
+  const undoBtn = document.getElementById('undoEditBtn');
+  const redoBtn = document.getElementById('redoEditBtn');
+  if (undoBtn) undoBtn.disabled = _settingsUndoStack.length === 0;
+  if (redoBtn) redoBtn.disabled = _settingsRedoStack.length === 0;
+}
 
 // ─── Preview caches ───────────────────────────────────────────────────────────
 const _imgCache   = new Map(); // item.id → { img: HTMLImageElement, objUrl: string }
@@ -274,7 +312,9 @@ async function addFiles(files) {
   scheduleLivePreview();
 }
 
-function removeItem(id) {
+function removeItem(id, options = {}) {
+  const { skipConfirm = false } = options;
+  if (!skipConfirm && !window.confirm(t('confirmDeleteItem'))) return;
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) state.items.splice(idx, 1);
@@ -287,6 +327,20 @@ function removeItem(id) {
   }
   updateUI();
   scheduleLivePreview();
+}
+
+function clearAllItems(skipConfirm = false) {
+  if (state.items.length === 0) return;
+  if (!skipConfirm && !window.confirm(t('confirmClearAll'))) return;
+  const ids = state.items.map(i => i.id);
+  ids.forEach(id => _invalidateItemCache(id));
+  state.items = [];
+  state.selectedItemId = null;
+  const grid = document.getElementById('imageGrid');
+  if (grid) grid.innerHTML = '';
+  updateUI();
+  scheduleLivePreview();
+  showToast(t('msgClearedAll'), 'info');
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -657,7 +711,19 @@ function restoreSettings() {
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
+function markDoneItemsPending() {
+  state.items.forEach(i => {
+    if (i.status === 'done') {
+      i.status = 'pending';
+      i.canvas = null;
+      updateItemStatus(i);
+      updateItemPreview(i);
+    }
+  });
+}
+
 function applySettings() {
+  const before = _createSettingsSnapshot();
   // Frame color (custom color button or radio swatches)
   if (state.isCustomColor) {
     state.settings.frameColor = state.customColorValue;
@@ -706,18 +772,125 @@ function applySettings() {
   // (video export settings read via onVideoExportSettingChange)
 
   // Mark all done items as pending (frame settings changed → need re-render)
-  state.items.forEach(i => {
-    if (i.status === 'done') {
-      i.status = 'pending';
-      i.canvas = null;
-      updateItemStatus(i);
-      updateItemPreview(i);
+  markDoneItemsPending();
+
+  if (!_historyLocked) {
+    const after = _createSettingsSnapshot();
+    if (!_settingsSnapshotsEqual(before, after)) {
+      _settingsUndoStack.push(before);
+      if (_settingsUndoStack.length > SETTINGS_HISTORY_LIMIT) _settingsUndoStack.shift();
+      _settingsRedoStack.length = 0;
+      updateHistoryButtons();
     }
-  });
+  }
 
   saveSettings();
   updateUI();
   scheduleLivePreview();
+}
+
+function _syncDomWithStateSettings() {
+  const s = state.settings;
+
+  if (state.isCustomColor) {
+    document.querySelectorAll('input[name="frameColor"]').forEach(r => { r.checked = false; });
+    const picker = document.getElementById('customColorPicker');
+    if (picker) picker.value = state.customColorValue || '#e8c49a';
+    updateCustomColorBtn(state.customColorValue || '#e8c49a');
+  } else {
+    const r = document.querySelector(`input[name="frameColor"][value="${s.frameColor}"]`);
+    if (r) r.checked = true;
+    const btn = document.getElementById('customColorBtn');
+    if (btn) btn.classList.remove('active');
+  }
+
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el != null && val != null) el.value = val;
+  };
+  const setChecked = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null) el.checked = !!val;
+  };
+
+  setVal('thicknessRange', s.thicknessScale);
+  setVal('shotOnFontRange', s.shotOnFontScale);
+  setVal('exifFontRange', s.exifFontScale);
+  setVal('lineGapRange', s.lineGapScale);
+  setVal('textOffsetRange', s.textOffsetY);
+  setVal('outerPaddingRange', s.outerPadding);
+  setVal('fontFamily', s.fontFamily);
+  setVal('photoQualityRange', s.exportPhotoQuality);
+
+  setChecked('cameraNameBold', s.cameraNameBold);
+  setChecked('cameraNameItalic', s.cameraNameItalic);
+  setChecked('exifItalic', s.exifItalic);
+  setChecked('showShotOn', s.showShotOn);
+  setChecked('showDecoLine', s.showDecoLine);
+  setChecked('showExifInfo', s.showExifInfo);
+  setChecked('showLocation', s.showLocation);
+
+  const locPos = document.querySelector(`input[name="locationPos"][value="${s.locationPosition}"]`);
+  if (locPos) locPos.checked = true;
+  const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
+  if (ratio) ratio.checked = true;
+  const photoFmt = document.querySelector(`input[name="exportPhotoFormat"][value="${s.exportPhotoFormat}"]`);
+  if (photoFmt) photoFmt.checked = true;
+  const videoFmt = document.querySelector(`input[name="exportVideoFormat"][value="${s.exportVideoFormat}"]`);
+  if (videoFmt) videoFmt.checked = true;
+  const bitrate = document.querySelector(`input[name="exportVideoBitrate"][value="${s.exportVideoBitrate}"]`);
+  if (bitrate) bitrate.checked = true;
+
+  const qRow = document.getElementById('photoQualityRow');
+  if (qRow) qRow.classList.toggle('row-hidden', s.exportPhotoFormat === 'png');
+
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  setText('thicknessRangeVal', parseFloat(s.thicknessScale).toFixed(1) + '×');
+  setText('shotOnFontRangeVal', parseFloat(s.shotOnFontScale).toFixed(1) + '×');
+  setText('exifFontRangeVal', parseFloat(s.exifFontScale).toFixed(1) + '×');
+  setText('lineGapRangeVal', parseFloat(s.lineGapScale).toFixed(1) + '×');
+  setText('textOffsetRangeVal', parseFloat(s.textOffsetY).toFixed(1));
+  setText('outerPaddingRangeVal', parseInt(s.outerPadding, 10) + '%');
+  setText('photoQualityRangeVal', parseInt(s.exportPhotoQuality, 10) + '%');
+
+  const locPosRow = document.getElementById('locationPositionRow');
+  if (locPosRow) locPosRow.style.display = s.showLocation ? '' : 'none';
+}
+
+function applySettingsSnapshot(snapshot) {
+  if (!snapshot) return;
+  _historyLocked = true;
+  state.settings = { ...snapshot.settings };
+  state.isCustomColor = !!snapshot.isCustomColor;
+  state.customColorValue = snapshot.customColorValue || state.customColorValue;
+  _syncDomWithStateSettings();
+  markDoneItemsPending();
+  saveSettings();
+  updateUI();
+  applyPreviewTransform();
+  scheduleLivePreview();
+  _historyLocked = false;
+}
+
+function undoSettings() {
+  if (_settingsUndoStack.length === 0) return;
+  const prev = _settingsUndoStack.pop();
+  _settingsRedoStack.push(_createSettingsSnapshot());
+  if (_settingsRedoStack.length > SETTINGS_HISTORY_LIMIT) _settingsRedoStack.shift();
+  applySettingsSnapshot(prev);
+  updateHistoryButtons();
+}
+
+function redoSettings() {
+  if (_settingsRedoStack.length === 0) return;
+  const next = _settingsRedoStack.pop();
+  _settingsUndoStack.push(_createSettingsSnapshot());
+  if (_settingsUndoStack.length > SETTINGS_HISTORY_LIMIT) _settingsUndoStack.shift();
+  applySettingsSnapshot(next);
+  updateHistoryButtons();
 }
 
 // ─── EXIF Editor ──────────────────────────────────────────────────────────────
@@ -776,11 +949,20 @@ function setPreviewZoom(zoom) {
   if (range) range.value = Math.round(previewZoom * 100);
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = Math.round(previewZoom * 100) + '%';
+  updatePreviewViewModifiedState();
 }
 
 function resetPreviewPan() {
   previewPan = { x: 0, y: 0 };
   applyPreviewTransform();
+  updatePreviewViewModifiedState();
+}
+
+function resetPreviewView() {
+  setPreviewZoom(1.0);
+  resetPreviewPan();
+  setPreviewQuality('auto');
+  scheduleLivePreview();
 }
 
 // ─── Item Selection for Preview ───────────────────────────────────────────────
@@ -1113,10 +1295,12 @@ function updateUI() {
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
+  const clrBtn  = document.getElementById('clearAllBtn');
   const counter = document.getElementById('imageCounter');
 
   if (genBtn)  genBtn.disabled  = !hasItems;
   if (dlBtn)   dlBtn.disabled   = !hasDone;
+  if (clrBtn)  clrBtn.disabled  = !hasItems;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
   setVisible(document.getElementById('imageSection'), hasItems, 'flex');
@@ -1137,6 +1321,7 @@ function updateUI() {
     previewZoom = 1.0;
     previewPan  = { x: 0, y: 0 };
     setPreviewZoom(1.0);
+    updatePreviewViewModifiedState();
   }
 
   // Per-item download buttons: always enabled (auto-generate on click)
@@ -1149,6 +1334,8 @@ function updateUI() {
 function setGlobalBusy(busy) {
   document.getElementById('generateAllBtn').disabled = busy;
   document.getElementById('downloadAllBtn').disabled = busy;
+  const clrBtn = document.getElementById('clearAllBtn');
+  if (clrBtn) clrBtn.disabled = busy || state.items.length === 0;
 }
 
 // ─── Export progress bar ──────────────────────────────────────────────────────
@@ -1293,8 +1480,10 @@ function setupDropZone() {
 
   // Click zoom label to reset to 100% and reset pan
   document.getElementById('zoomLabel')?.addEventListener('click', () => {
-    setPreviewZoom(1.0);
-    resetPreviewPan();
+    resetPreviewView();
+  });
+  document.getElementById('previewResetViewBtn')?.addEventListener('click', () => {
+    resetPreviewView();
   });
 
   // ── Drag-to-pan on preview canvas ──────────────────────────────────────────
@@ -1317,6 +1506,7 @@ function setupDropZone() {
     previewPan.x = _panOrigin.x + (e.clientX - _panStart.x);
     previewPan.y = _panOrigin.y + (e.clientY - _panStart.y);
     applyPreviewTransform();
+    updatePreviewViewModifiedState();
   });
 
   window.addEventListener('mouseup', () => {
@@ -1363,6 +1553,7 @@ function setupDropZone() {
       previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
       previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
       applyPreviewTransform();
+      updatePreviewViewModifiedState();
       e.preventDefault();
     }
   }, { passive: false });
@@ -1495,6 +1686,55 @@ function setupSettingsListeners() {
   });
 }
 
+function setupHistoryControls() {
+  document.getElementById('undoEditBtn')?.addEventListener('click', undoSettings);
+  document.getElementById('redoEditBtn')?.addEventListener('click', redoSettings);
+  updateHistoryButtons();
+}
+
+function _isTypingTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+function setupKeyboardShortcuts() {
+  window.addEventListener('keydown', e => {
+    if (_isTypingTarget(e.target)) return;
+
+    const key = (e.key || '').toLowerCase();
+    const withMod = e.metaKey || e.ctrlKey;
+
+    if (withMod && !e.altKey && key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undoSettings();
+      return;
+    }
+    if (withMod && !e.altKey && (key === 'y' || (key === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      redoSettings();
+      return;
+    }
+    if (withMod && !e.altKey && key === '0') {
+      e.preventDefault();
+      resetPreviewView();
+      return;
+    }
+    if (withMod && e.shiftKey && key === 'backspace') {
+      e.preventDefault();
+      clearAllItems();
+      return;
+    }
+    if (key === 'delete' || key === 'backspace') {
+      if (state.selectedItemId != null) {
+        e.preventDefault();
+        removeItem(state.selectedItemId);
+      }
+    }
+  });
+}
+
 // ─── Animation helpers ────────────────────────────────────────────────────────
 /**
  * Fade an element in or out without layout jank.
@@ -1542,7 +1782,7 @@ function setupPreviewQuality() {
 
   // Restore saved quality
   const saved = loadPrefs().previewQuality || 'auto';
-  _applyQualitySelection(saved, popup, label);
+  setPreviewQuality(saved, { schedule: false });
 
   btn.addEventListener('click', e => {
     e.stopPropagation();
@@ -1552,10 +1792,7 @@ function setupPreviewQuality() {
   popup.querySelectorAll('.pq-option').forEach(opt => {
     opt.addEventListener('click', () => {
       const q = opt.dataset.q;
-      const prefs = loadPrefs();
-      prefs.previewQuality = q;
-      savePrefs(prefs);
-      _applyQualitySelection(q, popup, label);
+      setPreviewQuality(q, { schedule: false });
       popup.classList.remove('open');
       scheduleLivePreview();
     });
@@ -1571,6 +1808,20 @@ function setupPreviewQuality() {
 function _applyQualitySelection(q, popup, label) {
   popup.querySelectorAll('.pq-option').forEach(o => o.classList.toggle('active', o.dataset.q === q));
   if (label) label.textContent = QUALITY_LABELS[q] || 'Auto';
+  updatePreviewViewModifiedState();
+}
+
+function setPreviewQuality(q, options = {}) {
+  const { schedule = false } = options;
+  const quality = QUALITY_LABELS[q] ? q : 'auto';
+  const prefs = loadPrefs();
+  prefs.previewQuality = quality;
+  savePrefs(prefs);
+  const popup = document.getElementById('previewQualityPopup');
+  const label = document.getElementById('previewQualityLabel');
+  if (popup) _applyQualitySelection(quality, popup, label);
+  else updatePreviewViewModifiedState();
+  if (schedule) scheduleLivePreview();
 }
 
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────
@@ -1908,7 +2159,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Restore custom color button visual state
   if (state.isCustomColor) updateCustomColorBtn(state.customColorValue);
 
+  _historyLocked = true;
   applySettings();           // sync state.settings from restored DOM values
+  _historyLocked = false;
 
   // Pre-load current font so the very first preview render skips the font-fetch delay
   if (document.fonts) {
@@ -1924,11 +2177,15 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCardSize();
   setupCustomizePanel();
   setupPreviewQuality();
+  setupHistoryControls();
+  setupKeyboardShortcuts();
   setupMobileTabs();
   updateUI();
+  updatePreviewViewModifiedState();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
+  document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
