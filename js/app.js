@@ -974,116 +974,6 @@ async function renderLivePreview() {
   }
 }
 
-// ─── Photo Preview Modal ──────────────────────────────────────────────────────
-let _modalIndex = 0;
-let _lastModalObjUrl = null;
-
-function openModal(itemId) {
-  const idx = state.items.findIndex(i => i.id === itemId);
-  if (idx === -1) return;
-  _modalIndex = idx;
-  _renderModal();
-  document.getElementById('photoModal').classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeModal() {
-  document.getElementById('photoModal').classList.remove('open');
-  document.body.style.overflow = '';
-  // Stop modal video if playing
-  const v = document.getElementById('modalVideo');
-  if (v) { v.pause(); v.src = ''; }
-  // Revoke any object URL we created
-  if (_lastModalObjUrl) {
-    URL.revokeObjectURL(_lastModalObjUrl);
-    _lastModalObjUrl = null;
-  }
-}
-
-function _renderModal() {
-  const item      = state.items[_modalIndex];
-  if (!item) return;
-
-  const canvasEl  = document.getElementById('modalCanvas');
-  const imgEl     = document.getElementById('modalImg');
-  const vidEl     = document.getElementById('modalVideo');
-  const filename  = document.getElementById('modalFilename');
-  const dlBtn     = document.getElementById('modalDownload');
-  const prevBtn   = document.getElementById('modalPrev');
-  const nextBtn   = document.getElementById('modalNext');
-
-  filename.textContent   = item.file.name;
-  prevBtn.disabled       = _modalIndex === 0;
-  nextBtn.disabled       = _modalIndex === state.items.length - 1;
-
-  // Stop any previous video
-  if (vidEl) { vidEl.pause(); }
-
-  if (item.isVideo) {
-    // Show framed video if available, otherwise the original
-    if (_lastModalObjUrl) URL.revokeObjectURL(_lastModalObjUrl);
-    _lastModalObjUrl = URL.createObjectURL(item.videoBlob || item.file);
-    if (vidEl) {
-      vidEl.src           = _lastModalObjUrl;
-      vidEl.style.display = 'block';
-    }
-    canvasEl.style.display = 'none';
-    imgEl.style.display    = 'none';
-    dlBtn.disabled         = !item.videoBlob;
-  } else if (item.canvas) {
-    // Show full-resolution framed canvas
-    canvasEl.width  = item.canvas.width;
-    canvasEl.height = item.canvas.height;
-    canvasEl.getContext('2d').drawImage(item.canvas, 0, 0);
-    canvasEl.style.display = 'block';
-    imgEl.style.display    = 'none';
-    if (vidEl) vidEl.style.display = 'none';
-    dlBtn.disabled         = false;
-  } else {
-    // Show original image
-    if (_lastModalObjUrl) URL.revokeObjectURL(_lastModalObjUrl);
-    _lastModalObjUrl    = URL.createObjectURL(item.file);
-    imgEl.src           = _lastModalObjUrl;
-    imgEl.style.display = 'block';
-    canvasEl.style.display = 'none';
-    if (vidEl) vidEl.style.display = 'none';
-    dlBtn.disabled         = true;
-  }
-}
-
-function setupModal() {
-  document.getElementById('modalClose').addEventListener('click', closeModal);
-
-  // Close on backdrop click
-  document.getElementById('photoModal').addEventListener('click', e => {
-    if (e.target === document.getElementById('photoModal')) closeModal();
-  });
-
-  document.getElementById('modalPrev').addEventListener('click', () => {
-    if (_modalIndex > 0) { _modalIndex--; _renderModal(); }
-  });
-  document.getElementById('modalNext').addEventListener('click', () => {
-    if (_modalIndex < state.items.length - 1) { _modalIndex++; _renderModal(); }
-  });
-  document.getElementById('modalDownload').addEventListener('click', () => {
-    const item = state.items[_modalIndex];
-    if (item) downloadSingle(item.id);
-  });
-
-  // Keyboard navigation
-  document.addEventListener('keydown', e => {
-    const modal = document.getElementById('photoModal');
-    if (!modal.classList.contains('open')) return;
-    if (e.key === 'Escape') { closeModal(); return; }
-    if (e.key === 'ArrowLeft'  && _modalIndex > 0) {
-      _modalIndex--; _renderModal();
-    }
-    if (e.key === 'ArrowRight' && _modalIndex < state.items.length - 1) {
-      _modalIndex++; _renderModal();
-    }
-  });
-}
-
 // ─── DOM Rendering ────────────────────────────────────────────────────────────
 function renderItem(item) {
   const grid = document.getElementById('imageGrid');
@@ -1149,10 +1039,9 @@ function renderItem(item) {
     </div>
   `;
 
-  // Click preview image/video → open modal AND select for live preview
+  // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
     selectItem(item.id);
-    openModal(item.id);
   });
 
   // Click card body (not buttons/EXIF panel) → select for live preview
@@ -1232,6 +1121,8 @@ function updateUI() {
 
   setVisible(document.getElementById('imageSection'), hasItems, 'flex');
   setVisible(document.getElementById('emptyHint'),    !hasItems);
+  const resizeHandle = document.getElementById('mainResizeHandle');
+  if (resizeHandle) resizeHandle.style.display = hasItems ? 'block' : 'none';
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
@@ -1301,9 +1192,9 @@ function initVideoFormatOptions() {
   if (!container) return;
 
   const candidates = [
+    { label: 'MP4',  value: 'mp4',  mime: 'video/mp4' },
     { label: 'VP9',  value: 'vp9',  mime: 'video/webm;codecs=vp9,opus' },
     { label: 'VP8',  value: 'vp8',  mime: 'video/webm;codecs=vp8,opus' },
-    { label: 'MP4',  value: 'mp4',  mime: 'video/mp4' },
   ].filter(f => { try { return MediaRecorder.isTypeSupported(f.mime); } catch { return false; } });
 
   if (!candidates.length) candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
@@ -1784,7 +1675,7 @@ function setupCustomizePanel() {
   const prefs = loadPrefs();
 
   // ── Theme ──────────────────────────────────────────────────────────────────
-  const savedTheme = prefs.theme || 'light';
+  const savedTheme = prefs.theme || 'soft-white';
   applyTheme(savedTheme);
   document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
     if (r.value === savedTheme) r.checked = true;
@@ -1826,13 +1717,13 @@ function setupCustomizePanel() {
     });
     // Also activate custom btn when no preset matches
     const customBtn = document.getElementById('accentCustomBtn');
-    const isPreset  = !!document.querySelector(`.accent-swatch[data-color="${color}"]:not(.accent-custom)`);
+    const isPreset  = !!document.querySelector(`.accent-swatch[data-color="${color}"]`);
     if (customBtn) customBtn.classList.toggle('active', !isPreset);
     if (accentPicker) accentPicker.value = color;
   }
 
   if (accentSwatches) {
-    accentSwatches.querySelectorAll('.accent-swatch:not(.accent-custom)').forEach(btn => {
+    accentSwatches.querySelectorAll('.accent-swatch').forEach(btn => {
       btn.addEventListener('click', () => {
         const color = btn.dataset.color;
         _applyAccentColor(color);
@@ -1848,11 +1739,10 @@ function setupCustomizePanel() {
       const p = loadPrefs(); p.accentColor = accentPicker.value; savePrefs(p);
     });
   }
-  // Restore saved accent
-  if (savedAccent) {
-    _applyAccentColor(savedAccent);
-    _activateSwatch(savedAccent);
-  }
+  // Restore saved accent (default to cyan)
+  const effectiveAccent = savedAccent || '#0891b2';
+  _applyAccentColor(effectiveAccent);
+  _activateSwatch(effectiveAccent);
 
 }
 
@@ -1940,13 +1830,67 @@ function _applyAccentColor(hex) {
   document.documentElement.style.setProperty('--accent-h', _darkenHex(hex, 12));
 }
 
+// ─── Main area vertical resize (preview ↕ image pool) ────────────────────────
+function setupMainResize() {
+  const handle  = document.getElementById('mainResizeHandle');
+  const preview = document.querySelector('.preview-area');
+  if (!handle || !preview) return;
+
+  const prefs = loadPrefs();
+  if (prefs.previewHeight) preview.style.height = prefs.previewHeight;
+
+  let _resizing = false, _startY = 0, _startH = 0;
+
+  handle.addEventListener('mousedown', e => {
+    _resizing = true;
+    _startY   = e.clientY;
+    _startH   = preview.offsetHeight;
+    document.body.style.cursor     = 'row-resize';
+    document.body.style.userSelect = 'none';
+    handle.classList.add('resizing');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_resizing) return;
+    const h = Math.min(Math.max(_startH + (e.clientY - _startY), 120),
+                       window.innerHeight - 160);
+    preview.style.height = h + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!_resizing) return;
+    _resizing = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    handle.classList.remove('resizing');
+    const p = loadPrefs();
+    p.previewHeight = preview.offsetHeight + 'px';
+    savePrefs(p);
+    scheduleLivePreview();
+  });
+}
+
+// ─── Card size slider ─────────────────────────────────────────────────────────
+function setupCardSize() {
+  const range = document.getElementById('cardSizeRange');
+  if (!range) return;
+  const prefs = loadPrefs();
+  if (prefs.cardSize) {
+    range.value = prefs.cardSize;
+    document.documentElement.style.setProperty('--card-min-w', prefs.cardSize + 'px');
+  }
+  range.addEventListener('input', () => {
+    document.documentElement.style.setProperty('--card-min-w', range.value + 'px');
+    const p = loadPrefs(); p.cardSize = parseInt(range.value, 10); savePrefs(p);
+  });
+}
+
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 // Apply theme & layout immediately (before paint) to avoid flash
 ;(function() {
   const p = loadPrefs();
-  applyTheme(p.theme || 'light');
+  applyTheme(p.theme || 'soft-white');
   applyLayout(p.layout || 'left');
-  if (p.accentColor) _applyAccentColor(p.accentColor);
+  _applyAccentColor(p.accentColor || '#0891b2');
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1976,7 +1920,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDropZone();
   setupSettingsListeners();
   setupSidebarResize();
-  setupModal();
+  setupMainResize();
+  setupCardSize();
   setupCustomizePanel();
   setupPreviewQuality();
   setupMobileTabs();
