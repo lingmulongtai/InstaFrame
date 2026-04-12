@@ -456,6 +456,10 @@
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
         <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
       </div>
+      <div class="preview-history-wrap" id="previewHistoryWrap">
+        <button class="preview-history-btn" id="undoEditBtn" data-i18n="undoEdit" title="Undo">Undo</button>
+        <button class="preview-history-btn" id="redoEditBtn" data-i18n="redoEdit" title="Redo">Redo</button>
+      </div>
       <!-- Quality button (bottom-left, shown only when preview is active) -->
       <div class="preview-quality-wrap" id="previewQualityWrap">
         <button class="preview-quality-btn" id="previewQualityBtn" title="Preview quality">
@@ -477,6 +481,7 @@
         <input type="range" id="zoomRange" min="50" max="300" step="10" value="100" orient="vertical">
         <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
       </div>
+      <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
     </div>
 
     <div class="main-resize-handle" id="mainResizeHandle"></div>
@@ -545,6 +550,10 @@
         <button class="btn btn-secondary btn-lg" id="downloadAllBtn" disabled>
           <span>⬇</span>
           <span data-i18n="downloadAll">Download All</span>
+        </button>
+        <button class="btn btn-danger btn-lg" id="clearAllBtn" disabled>
+          <span>🗑</span>
+          <span data-i18n="clearAll">Clear All</span>
         </button>
       </div>
 
