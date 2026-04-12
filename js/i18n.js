@@ -92,6 +92,9 @@ const I18N = {
     themeSoftWhite: 'Soft White',
     themeBlueGrey: 'Blue Grey',
     accentLabel: 'Accent',
+    tabPreview: 'Preview',
+    tabPhotos: 'Photos',
+    tabSettings: 'Settings',
   },
   ja: {
     appTitle: 'InstaFrame',
@@ -183,6 +186,9 @@ const I18N = {
     themeSoftWhite: 'ソフトホワイト',
     themeBlueGrey: 'ブルーグレー',
     accentLabel: 'アクセント',
+    tabPreview: 'プレビュー',
+    tabPhotos: '写真',
+    tabSettings: '設定',
   },
 };
 
@@ -218,4 +224,9 @@ function applyTranslations() {
   // Update lang toggle button label
   const btn = document.getElementById('langToggleBtn');
   if (btn) btn.textContent = t('langToggle');
+
+  // Set tooltip (title attr) on truncated setting labels so hover shows full text
+  document.querySelectorAll('.setting-label[data-i18n]').forEach(el => {
+    el.setAttribute('title', el.textContent);
+  });
 }
