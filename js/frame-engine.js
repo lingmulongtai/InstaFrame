@@ -165,9 +165,10 @@ const FrameEngine = (() => {
     const centerX = canvasW / 2;
 
     // Build font strings — CSS shorthand: [style] [weight] [size] [family]
-    const labelFont  = `300 ${soSize}px ${stack}`;
-    const camWeight  = cameraNameBold ? '700' : '500';
-    const camStyle   = cameraNameItalic ? 'italic ' : '';
+    const labelWeight = cameraNameBold ? '700' : '300';
+    const camWeight   = cameraNameBold ? '700' : '500';
+    const camStyle    = cameraNameItalic ? 'italic ' : '';
+    const labelFont   = `${camStyle}${labelWeight} ${soSize}px ${stack}`;
     const camFont    = `${camStyle}${camWeight} ${soSize}px ${stack}`;
     const exStyle    = exifItalic ? 'italic ' : '';
     const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
