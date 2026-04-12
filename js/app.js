@@ -743,17 +743,25 @@ let _livePreviewTimer = null;
 
 function scheduleLivePreview() {
   clearTimeout(_livePreviewTimer);
-  _livePreviewTimer = setTimeout(renderLivePreview, 300);
+  // HTML preview updates are near-instant; canvas still needs debounce
+  _livePreviewTimer = setTimeout(renderLivePreview, 80);
 }
 
 // ─── Preview Zoom & Pan ───────────────────────────────────────────────────────
 function applyPreviewTransform() {
-  const canvas = document.getElementById('livePreviewCanvas');
-  if (!canvas) return;
-  canvas.style.transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
-  // Dark frame outline
+  const transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
   const isDark = FrameEngine.isColorDark(state.settings.frameColor);
-  canvas.classList.toggle('frame-dark', isDark);
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (canvas) {
+    canvas.style.transform = transform;
+    canvas.classList.toggle('frame-dark', isDark);
+  }
+  // Also transform the HTML preview frame
+  const hpFrame = document.getElementById('hpFrame');
+  if (hpFrame) {
+    hpFrame.style.transform = transform;
+    hpFrame.classList.toggle('hp-dark-frame', isDark);
+  }
 }
 
 function setPreviewZoom(zoom) {
@@ -776,17 +784,26 @@ function selectItem(id) {
   document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected-preview'));
   const el = document.getElementById(`item-${id}`);
   if (el) el.classList.add('selected-preview');
+  // On mobile: auto-switch to preview tab so user can see the result
+  if (window.innerWidth <= 768) {
+    document.body.setAttribute('data-mobile-tab', 'preview');
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === 'preview');
+    });
+  }
   scheduleLivePreview();
 }
 
 async function renderLivePreview() {
-  const pane         = document.getElementById('dropZone');
+  const pane          = document.getElementById('dropZone');
   const previewCanvas = document.getElementById('livePreviewCanvas');
-  const emptyEl      = document.getElementById('previewEmpty');
+  const htmlPreview   = document.getElementById('htmlPreview');
+  const emptyEl       = document.getElementById('previewEmpty');
   if (!pane || !previewCanvas) return;
 
   if (state.items.length === 0) {
     previewCanvas.style.display = 'none';
+    if (htmlPreview) htmlPreview.classList.remove('hp-visible');
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
     return;
@@ -796,10 +813,11 @@ async function renderLivePreview() {
   const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
     || state.items[0];
 
-  // For video items, show native video element instead of canvas
+  // For video items, show native video element instead of canvas/html-preview
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
     previewCanvas.style.display = 'none';
+    if (htmlPreview) htmlPreview.classList.remove('hp-visible');
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
       liveVideo._objUrl = URL.createObjectURL(item.file);
@@ -809,10 +827,28 @@ async function renderLivePreview() {
     liveVideo.style.display = 'block';
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
-    applyPreviewTransform();
     return;
   }
   if (liveVideo) liveVideo.style.display = 'none';
+
+  // ── HTML/CSS preview (fast, no canvas redraw for most setting changes) ────
+  if (htmlPreview) {
+    try {
+      const ok = await _updateHTMLPreview(item);
+      if (ok) {
+        previewCanvas.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = 'none';
+        pane.classList.add('has-preview');
+        applyPreviewTransform();
+        return;
+      }
+    } catch (_e) {
+      // fall through to canvas
+    }
+  }
+
+  // ── Canvas fallback (older browsers, or when HTML preview errors) ─────────
+  if (htmlPreview) htmlPreview.classList.remove('hp-visible');
 
   // Compute maxPreviewPx from quality preference
   const pq = loadPrefs().previewQuality || 'auto';
@@ -866,6 +902,239 @@ async function renderLivePreview() {
   } catch (e) {
     // Non-critical — silently ignore preview failures
   }
+}
+
+// ─── HTML/CSS Live Preview ────────────────────────────────────────────────────
+let _hpItemId  = null;
+let _hpObjUrl  = null;
+
+function _formatShutter(val) {
+  const n = parseFloat(val);
+  if (isNaN(n)) return String(val);
+  if (n >= 1) return `${n}s`;
+  return `1/${Math.round(1 / n)}s`;
+}
+
+async function _updateHTMLPreview(item) {
+  const htmlPreview = document.getElementById('htmlPreview');
+  const hpFrame     = document.getElementById('hpFrame');
+  const hpPhoto     = document.getElementById('hpPhoto');
+  if (!htmlPreview || !hpFrame || !hpPhoto) return false;
+
+  // Load image only when item changes
+  if (_hpItemId !== item.id) {
+    if (_hpObjUrl) { URL.revokeObjectURL(_hpObjUrl); _hpObjUrl = null; }
+    _hpObjUrl  = URL.createObjectURL(item.file);
+    _hpItemId  = item.id;
+    hpPhoto.src = _hpObjUrl;
+  }
+
+  // Wait for the image to load if not yet complete
+  if (!hpPhoto.complete || !hpPhoto.naturalWidth) {
+    await new Promise((resolve, reject) => {
+      const orig = hpPhoto.src;
+      hpPhoto.onload  = resolve;
+      hpPhoto.onerror = reject;
+      if (hpPhoto.complete && hpPhoto.src === orig) resolve(); // already loaded race
+    });
+  }
+
+  const W = hpPhoto.naturalWidth;
+  const H = hpPhoto.naturalHeight;
+  if (!W || !H) return false;
+
+  _applyHTMLLayout(W, H, item, hpFrame);
+  htmlPreview.classList.add('hp-visible');
+  return true;
+}
+
+function _applyHTMLLayout(W, H, item, hpFrame) {
+  const s = state.settings;
+  const isPortrait = H > W;
+  const ts = s.thicknessScale || 1.0;
+
+  // Mirror renderFrame border math exactly
+  const baseBorder  = Math.min(W, H) * 0.05 * 1.2 * ts;
+  const sideBorder  = baseBorder * 0.5;
+  const extraHeight = H * 0.10 * ts;
+  const locExtra    = (s.showLocation && item.exif && item.exif.location && s.locationPosition === 'below-exif')
+                      ? H * 0.038 * ts : 0;
+  const bottomBorder = sideBorder * 4 + extraHeight + locExtra;
+  const pf = isPortrait ? 0.75 : 1.0;
+  const sB = sideBorder   * pf;
+  const tB = sideBorder   * pf;
+  const bB = bottomBorder * pf;
+
+  const canvasW = W + sB * 2;
+  const canvasH = H + tB + bB;
+
+  const isDark  = FrameEngine.isColorDark(s.frameColor);
+  const primary = isDark ? '#E8E8E8' : '#111111';
+  const muted   = isDark ? '#999999' : '#888888';
+
+  // Frame background + aspect ratio
+  hpFrame.style.backgroundColor = s.frameColor;
+  hpFrame.style.aspectRatio     = `${canvasW} / ${canvasH}`;
+  hpFrame.classList.toggle('hp-dark-frame', isDark);
+
+  // Photo area: percentage padding creates frame borders
+  // Note: % padding is relative to *width*, which maps correctly since
+  // aspect-ratio preserves proportions.
+  const padLR  = (sB / canvasW * 100).toFixed(4) + '%';
+  const padTop = (tB / canvasW * 100).toFixed(4) + '%'; // width-% trick: gives tB px
+
+  const hpPhotoArea = document.getElementById('hpPhotoArea');
+  if (hpPhotoArea) {
+    hpPhotoArea.style.cssText = `
+      flex-shrink:0;
+      padding-left:${padLR};
+      padding-right:${padLR};
+      padding-top:${padTop};
+    `;
+  }
+
+  // #hpTextBar uses flex:1 in CSS to fill remaining space — no explicit height needed
+
+  // Font sizes as multiples of cqw (= 1% of hpFrame display width)
+  // baseFs = canvasW * 0.022 → in CSS: 2.2cqw
+  const soFs  = (2.2 * 1.15 * (s.shotOnFontScale  || 1)).toFixed(4);
+  const exFs  = (2.2 * 0.92 * (s.exifFontScale    || 1)).toFixed(4);
+  const locFs = (2.2 * 1.15 * 0.82).toFixed(4);
+  const gapFactor = isPortrait ? 1.4 : 1.7;
+  const gapFs = (parseFloat(soFs) * gapFactor * (s.lineGapScale || 1)).toFixed(4);
+  const offsetFs = ((s.textOffsetY || 0) * parseFloat(soFs)).toFixed(4);
+
+  hpFrame.style.setProperty('--hp-so-fs',  soFs);
+  hpFrame.style.setProperty('--hp-ex-fs',  exFs);
+  hpFrame.style.setProperty('--hp-loc-fs', locFs);
+  hpFrame.style.setProperty('--hp-gap',    gapFs + 'cqw');
+  hpFrame.style.setProperty('--hp-offset', offsetFs + 'cqw');
+
+  // Font family + colors
+  const stack     = `'${s.fontFamily || 'Inter'}', Arial, sans-serif`;
+  const camWeight = s.cameraNameBold   ? '700' : '500';
+  const camStyle  = s.cameraNameItalic ? 'italic' : 'normal';
+  const exStyle   = s.exifItalic       ? 'italic' : 'normal';
+
+  // ── Shot-on line ──────────────────────────────────────────────────────────
+  const hpShotOn = document.getElementById('hpShotOn');
+  if (hpShotOn) {
+    hpShotOn.style.display     = s.showShotOn ? '' : 'none';
+    hpShotOn.style.fontFamily  = stack;
+    const cam = [item.exif && item.exif.make, item.exif && item.exif.model].filter(Boolean).join(' ');
+    if (cam) {
+      hpShotOn.innerHTML =
+        `<span style="color:${muted};font-weight:300;font-style:normal;">Shot on&nbsp;&nbsp;</span>` +
+        `<span style="color:${primary};font-weight:${camWeight};font-style:${camStyle};">${escHtml(cam)}</span>`;
+    } else {
+      hpShotOn.innerHTML = '';
+    }
+  }
+
+  // ── EXIF line ─────────────────────────────────────────────────────────────
+  const hpExifLine = document.getElementById('hpExifLine');
+  if (hpExifLine) {
+    hpExifLine.style.display    = s.showExifInfo ? '' : 'none';
+    hpExifLine.style.fontFamily = stack;
+    hpExifLine.style.fontStyle  = exStyle;
+    hpExifLine.style.color      = muted;
+    const parts = [];
+    const ex = item.exif || {};
+    if (ex.lensModel)    parts.push(ex.lensModel);
+    if (ex.focalLength)  parts.push(`${ex.focalLength}mm`);
+    if (ex.fNumber)      parts.push(`f/${ex.fNumber}`);
+    if (ex.exposureTime) parts.push(_formatShutter(ex.exposureTime));
+    if (ex.iso)          parts.push(`ISO\u2009${ex.iso}`);
+    hpExifLine.textContent = parts.join('  \u2003  ');
+  }
+
+  // ── Location line (below EXIF) ────────────────────────────────────────────
+  const hpLocLine = document.getElementById('hpLocLine');
+  if (hpLocLine) {
+    const showLocBelow = s.showLocation && item.exif && item.exif.location && s.locationPosition === 'below-exif';
+    hpLocLine.style.display  = showLocBelow ? '' : 'none';
+    hpLocLine.style.color    = muted;
+    hpLocLine.style.fontFamily = stack;
+    hpLocLine.textContent = showLocBelow ? `📍 ${item.exif.location}` : '';
+  }
+
+  // ── Decorative line ───────────────────────────────────────────────────────
+  const hpDecoLine = document.getElementById('hpDecoLine');
+  if (hpDecoLine) {
+    hpDecoLine.style.display    = s.showDecoLine ? '' : 'none';
+    hpDecoLine.style.background = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+  }
+}
+
+// Add pan/drag events to HTML preview frame (mirrors canvas handlers)
+function _setupHTMLPreviewInteraction() {
+  const hpFrame = document.getElementById('hpFrame');
+  const zone    = document.getElementById('dropZone');
+  if (!hpFrame || !zone) return;
+
+  let _panDragging = false;
+  let _panStart    = { x: 0, y: 0 };
+  let _panOrigin   = { x: 0, y: 0 };
+  let _pinching    = false;
+  let _pinchDist   = 0;
+  let _pinchZoom   = 1.0;
+
+  function _dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+
+  hpFrame.addEventListener('mousedown', e => {
+    _panDragging = true;
+    _panStart    = { x: e.clientX, y: e.clientY };
+    _panOrigin   = { x: previewPan.x, y: previewPan.y };
+    hpFrame.classList.add('dragging');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_panDragging) return;
+    previewPan.x = _panOrigin.x + (e.clientX - _panStart.x);
+    previewPan.y = _panOrigin.y + (e.clientY - _panStart.y);
+    applyPreviewTransform();
+  });
+  window.addEventListener('mouseup', () => {
+    if (!_panDragging) return;
+    _panDragging = false;
+    hpFrame.classList.remove('dragging');
+  });
+
+  hpFrame.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      _panDragging = false; _pinching = true;
+      _pinchDist = _dist(e.touches); _pinchZoom = previewZoom;
+      e.preventDefault();
+    } else if (e.touches.length === 1 && !_pinching) {
+      _panDragging = true;
+      _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      _panOrigin = { x: previewPan.x, y: previewPan.y };
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  hpFrame.addEventListener('touchmove', e => {
+    if (e.touches.length === 2 && _pinching) {
+      setPreviewZoom(_pinchZoom * _dist(e.touches) / _pinchDist);
+      e.preventDefault();
+    } else if (e.touches.length === 1 && _panDragging) {
+      previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
+      previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
+      applyPreviewTransform();
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  hpFrame.addEventListener('touchend', e => {
+    if (e.touches.length === 0) {
+      if (_pinching) scheduleLivePreview();
+      _panDragging = false; _pinching = false;
+    } else if (e.touches.length === 1 && _pinching) {
+      _pinching = false; _panDragging = true;
+      _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      _panOrigin = { x: previewPan.x, y: previewPan.y };
+    }
+  });
 }
 
 // ─── Photo Preview Modal ──────────────────────────────────────────────────────
@@ -1133,6 +1402,8 @@ function updateUI() {
     if (dropZone) dropZone.classList.remove('has-preview');
     const previewCanvas = document.getElementById('livePreviewCanvas');
     if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.opacity = ''; previewCanvas.style.transform = ''; }
+    const htmlPreview = document.getElementById('htmlPreview');
+    if (htmlPreview) htmlPreview.classList.remove('hp-visible');
     const emptyEl = document.getElementById('previewEmpty');
     if (emptyEl) emptyEl.style.display = '';
     previewZoom = 1.0;
@@ -1707,67 +1978,88 @@ function setupCustomizePanel() {
     });
   });
 
-  // ── Accent color ───────────────────────────────────────────────────────────
-  const accentPicker = document.getElementById('accentColorPicker');
+  // ── Accent color presets ───────────────────────────────────────────────────
+  const accentSwatches = document.getElementById('accentSwatches');
+  const accentPicker   = document.getElementById('accentColorPicker');
+  const savedAccent    = prefs.accentColor;
+
+  function _activateSwatch(color) {
+    document.querySelectorAll('.accent-swatch').forEach(s => {
+      s.classList.toggle('active', s.dataset.color === color);
+    });
+    // Also activate custom btn when no preset matches
+    const customBtn = document.getElementById('accentCustomBtn');
+    const isPreset  = !!document.querySelector(`.accent-swatch[data-color="${color}"]:not(.accent-custom)`);
+    if (customBtn) customBtn.classList.toggle('active', !isPreset);
+    if (accentPicker) accentPicker.value = color;
+  }
+
+  if (accentSwatches) {
+    accentSwatches.querySelectorAll('.accent-swatch:not(.accent-custom)').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const color = btn.dataset.color;
+        _applyAccentColor(color);
+        _activateSwatch(color);
+        const p = loadPrefs(); p.accentColor = color; savePrefs(p);
+      });
+    });
+  }
   if (accentPicker) {
-    // Restore saved accent (not when a theme override is active — themes set their own accent)
-    const savedAccent = prefs.accentColor;
-    if (savedAccent) {
-      accentPicker.value = savedAccent;
-      _applyAccentColor(savedAccent);
-    }
     accentPicker.addEventListener('input', () => {
       _applyAccentColor(accentPicker.value);
+      _activateSwatch(accentPicker.value);
       const p = loadPrefs(); p.accentColor = accentPicker.value; savePrefs(p);
     });
+  }
+  // Restore saved accent
+  if (savedAccent) {
+    _applyAccentColor(savedAccent);
+    _activateSwatch(savedAccent);
   }
 
 }
 
-// ─── Mobile Sidebar ───────────────────────────────────────────────────────────
-function setupMobileSidebar() {
-  const toggleBtn = document.getElementById('mobileSidebarToggle');
-  const overlay   = document.getElementById('mobileSidebarOverlay');
-  const sidebar   = document.querySelector('.sidebar');
-  if (!toggleBtn || !overlay || !sidebar) return;
+// ─── Mobile Tab Bar ───────────────────────────────────────────────────────────
+function setupMobileTabs() {
+  const tabBar = document.getElementById('mobileTabBar');
+  if (!tabBar) return;
 
-  function openSidebar() {
-    overlay.style.display = 'block';          // make it part of the stacking context
-    requestAnimationFrame(() => {             // next frame so transition fires
-      sidebar.classList.add('mobile-open');
-      overlay.classList.add('visible');
-      toggleBtn.classList.add('active');
-    });
-  }
-  function closeSidebar() {
-    sidebar.classList.remove('mobile-open');
-    overlay.classList.remove('visible');
-    toggleBtn.classList.remove('active');
-    // hide overlay after fade-out transition (250ms)
-    setTimeout(() => { if (!overlay.classList.contains('visible')) overlay.style.display = 'none'; }, 280);
-  }
   function isMobile() { return window.innerWidth <= 768; }
 
-  toggleBtn.addEventListener('click', () => {
-    if (sidebar.classList.contains('mobile-open')) closeSidebar();
-    else openSidebar();
+  function switchTab(tab) {
+    if (!isMobile()) return;
+    document.body.setAttribute('data-mobile-tab', tab);
+    tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+
+    // When switching to preview tab, fire a live preview update
+    if (tab === 'preview') scheduleLivePreview();
+  }
+
+  tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // Close on backdrop click
-  overlay.addEventListener('click', closeSidebar);
+  // Default to preview tab on mobile
+  if (isMobile()) {
+    document.body.setAttribute('data-mobile-tab', 'preview');
+  }
 
-  // Swipe-down to close (touch)
-  let touchStartY = 0;
-  sidebar.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
-  sidebar.addEventListener('touchmove', e => {
-    const delta = e.touches[0].clientY - touchStartY;
-    if (delta > 60) closeSidebar();
-  }, { passive: true });
-
-  // Auto-close when resizing above mobile breakpoint
+  // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
-    if (!isMobile()) closeSidebar();
+    if (!isMobile()) document.body.removeAttribute('data-mobile-tab');
+    else if (!document.body.getAttribute('data-mobile-tab')) {
+      document.body.setAttribute('data-mobile-tab', 'preview');
+    }
   });
+
+  // Mobile "Add Photos" button (in empty hint on Photos tab)
+  const mobileAddBtn = document.getElementById('mobileAddBtn');
+  const fileInput    = document.getElementById('fileInput');
+  if (mobileAddBtn && fileInput) {
+    mobileAddBtn.addEventListener('click', () => fileInput.click());
+  }
 }
 
 // ─── Accent Color ─────────────────────────────────────────────────────────────
@@ -1842,7 +2134,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModal();
   setupCustomizePanel();
   setupPreviewQuality();
-  setupMobileSidebar();
+  setupMobileTabs();
+  _setupHTMLPreviewInteraction();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
