@@ -48,6 +48,12 @@ let itemIdCounter = 0;
 let previewZoom   = 1.0;
 let previewPan    = { x: 0, y: 0 };
 
+// ─── Preview caches ───────────────────────────────────────────────────────────
+const _imgCache   = new Map(); // item.id → { img: HTMLImageElement, objUrl: string }
+const _frameCache = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
+const _imgFailed  = new Set(); // item IDs that failed image load — skip retry
+let   _renderSeq  = 0;         // increments on each render to cancel stale ones
+
 // ImageItem schema:
 // {
 //   id: number,
@@ -248,6 +254,9 @@ async function addFiles(files) {
     // Auto-select first item added for live preview
     if (state.items.length === 1) selectItem(item.id);
 
+    // Pre-warm image cache so the first live preview is fast
+    if (!video) _loadPreviewImage(item).catch(() => {});
+
     // Generate thumbnail for video cards asynchronously
     if (video) {
       FrameEngine.captureVideoFrame(file)
@@ -266,6 +275,7 @@ async function addFiles(files) {
 }
 
 function removeItem(id) {
+  _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) state.items.splice(idx, 1);
   const el = document.getElementById(`item-${id}`);
@@ -731,6 +741,7 @@ function applyExifEdit(id) {
 
   item.status = 'pending';
   item.canvas = null;
+  _invalidateItemCache(id);
   updateItemStatus(item);
   updateItemPreview(item);
   toggleExifEditor(id);
@@ -755,12 +766,6 @@ function applyPreviewTransform() {
   if (canvas) {
     canvas.style.transform = transform;
     canvas.classList.toggle('frame-dark', isDark);
-  }
-  // Also transform the HTML preview frame
-  const hpFrame = document.getElementById('hpFrame');
-  if (hpFrame) {
-    hpFrame.style.transform = transform;
-    hpFrame.classList.toggle('hp-dark-frame', isDark);
   }
 }
 
@@ -794,30 +799,122 @@ function selectItem(id) {
   scheduleLivePreview();
 }
 
-async function renderLivePreview() {
-  const pane          = document.getElementById('dropZone');
-  const previewCanvas = document.getElementById('livePreviewCanvas');
-  const htmlPreview   = document.getElementById('htmlPreview');
-  const emptyEl       = document.getElementById('previewEmpty');
-  if (!pane || !previewCanvas) return;
+// ─── Preview Helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Stable hash of all settings that affect the canvas output.
+ * Also encodes a quantised maxPreviewPx so quality-tier changes invalidate the cache.
+ */
+function _previewSettingsHash() {
+  const s  = state.settings;
+  const pq = loadPrefs().previewQuality || 'auto';
+  const maxPx = pq === 'draft'  ? 600
+              : pq === 'normal' ? 1200
+              : pq === 'high'   ? 1800
+              : pq === 'max'    ? 2400
+              : previewZoom <= 1.0 ? 900
+              : previewZoom <= 1.5 ? 1200
+              : previewZoom <= 2.0 ? 1800 : 2400;
+  return [maxPx,
+    s.frameColor, s.thicknessScale, s.fontFamily,
+    s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
+    s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
+    s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
+    s.showLocation, s.locationPosition, s.outerPadding, s.aspectRatio,
+  ].join('|');
+}
+
+/** Drop all cached data for one item (call on remove + EXIF edit). */
+function _invalidateItemCache(itemId) {
+  const e = _imgCache.get(itemId);
+  if (e) { URL.revokeObjectURL(e.objUrl); _imgCache.delete(itemId); }
+  _imgFailed.delete(itemId);
+  for (const k of [..._frameCache.keys()])
+    if (k.startsWith(`${itemId}|`)) _frameCache.delete(k);
+}
+
+/** Load image for an item, keeping the Object URL alive for re-use. */
+async function _loadPreviewImage(item) {
+  if (_imgFailed.has(item.id)) throw new Error('Image load previously failed');
+  const cached = _imgCache.get(item.id);
+  if (cached) return cached.img;
+
+  const objUrl = URL.createObjectURL(item.file);
+  const img    = new Image();
+  img.src      = objUrl;
+  await new Promise((resolve, reject) => {
+    img.onload  = resolve;
+    img.onerror = () => reject(new Error('Image load error'));
+    if (img.complete && img.naturalWidth) resolve();
+  }).catch(e => {
+    URL.revokeObjectURL(objUrl);
+    _imgFailed.add(item.id);
+    throw e;
+  });
+
+  if (_imgCache.size >= 50) {                         // LRU eviction
+    const firstKey = _imgCache.keys().next().value;
+    URL.revokeObjectURL(_imgCache.get(firstKey).objUrl);
+    _imgCache.delete(firstKey);
+  }
+  _imgCache.set(item.id, { img, objUrl });
+  return img;
+}
+
+/** Draw a rendered frame canvas into the live-preview canvas, DPR-aware. */
+function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
+  const dpr   = window.devicePixelRatio || 1;
+  const areaW = Math.max(pane.clientWidth  - 40, 80);
+  const areaH = Math.max(pane.clientHeight - 40, 60);
+  const ratio = src.height / src.width;
+
+  let dispW = Math.min(areaW, Math.round(areaH / ratio));
+  let dispH = Math.round(dispW * ratio);
+  if (dispH > areaH) { dispH = areaH; dispW = Math.round(areaH / ratio); }
+  dispW = Math.max(dispW, 80);
+  dispH = Math.max(dispH, 60);
+
+  canvas.width        = Math.round(dispW * dpr);
+  canvas.height       = Math.round(dispH * dpr);
+  canvas.style.width  = dispW + 'px';
+  canvas.style.height = dispH + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+
+  // Fade in only on first appearance
+  const firstShow = canvas.style.display === 'none' || canvas.style.display === '';
+  if (firstShow) canvas.style.opacity = '0';
+  canvas.style.display = 'block';
+  if (firstShow) { void canvas.offsetWidth; canvas.style.opacity = '1'; }
+
+  if (emptyEl) emptyEl.style.display = 'none';
+  pane.classList.add('has-preview');
+}
+
+async function renderLivePreview() {
+  const pane    = document.getElementById('dropZone');
+  const canvas  = document.getElementById('livePreviewCanvas');
+  const emptyEl = document.getElementById('previewEmpty');
+  if (!pane || !canvas) return;
+
+  // ── Empty state ────────────────────────────────────────────────────────────
   if (state.items.length === 0) {
-    previewCanvas.style.display = 'none';
-    if (htmlPreview) htmlPreview.classList.remove('hp-visible');
+    canvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
     return;
   }
 
-  // Use selected item (set by card click) or fall back to first
   const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
-    || state.items[0];
+             || state.items[0];
 
-  // For video items, show native video element instead of canvas/html-preview
+  // ── Video: show native <video> element ─────────────────────────────────────
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
-    previewCanvas.style.display = 'none';
-    if (htmlPreview) htmlPreview.classList.remove('hp-visible');
+    canvas.style.display = 'none';
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
       liveVideo._objUrl = URL.createObjectURL(item.file);
@@ -831,310 +928,50 @@ async function renderLivePreview() {
   }
   if (liveVideo) liveVideo.style.display = 'none';
 
-  // ── HTML/CSS preview (fast, no canvas redraw for most setting changes) ────
-  if (htmlPreview) {
-    try {
-      const ok = await _updateHTMLPreview(item);
-      if (ok) {
-        previewCanvas.style.display = 'none';
-        if (emptyEl) emptyEl.style.display = 'none';
-        pane.classList.add('has-preview');
-        applyPreviewTransform();
-        return;
-      }
-    } catch (_e) {
-      // fall through to canvas
+  // ── Canvas preview with caching ────────────────────────────────────────────
+  const hash   = `${item.id}|${_previewSettingsHash()}`;
+  const cached = _frameCache.get(hash);
+
+  // Cache hit: draw immediately and return
+  if (cached) {
+    _drawFrameToCanvas(canvas, pane, emptyEl, cached);
+    applyPreviewTransform();
+    return;
+  }
+
+  // Cache miss: show any stale frame for this item as a placeholder while re-rendering
+  for (const [k, c] of _frameCache) {
+    if (k.startsWith(`${item.id}|`)) {
+      _drawFrameToCanvas(canvas, pane, emptyEl, c);
+      applyPreviewTransform();
+      break;
     }
   }
 
-  // ── Canvas fallback (older browsers, or when HTML preview errors) ─────────
-  if (htmlPreview) htmlPreview.classList.remove('hp-visible');
-
-  // Compute maxPreviewPx from quality preference
-  const pq = loadPrefs().previewQuality || 'auto';
-  const maxPreviewPx = pq === 'draft'  ? 600
-    : pq === 'normal' ? 1200
-    : pq === 'high'   ? 1800
-    : pq === 'max'    ? 2400
-    : Math.min(2400, Math.round(1200 * previewZoom)); // 'auto': zoom-adaptive
-
+  // Kick off async render
+  const seq = ++_renderSeq;
   try {
-    const img = await FrameEngine.loadImage(item.file);
-    const canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { maxPreviewPx });
+    const img = await _loadPreviewImage(item);
 
-    const dpr      = window.devicePixelRatio || 1;
-    const areaW    = Math.max(pane.clientWidth  - 40, 80);
-    const areaH    = Math.max(pane.clientHeight - 40, 60);
-    const srcRatio = canvas.height / canvas.width;
+    const pq = loadPrefs().previewQuality || 'auto';
+    const maxPreviewPx = pq === 'draft'  ? 600
+      : pq === 'normal' ? 1200 : pq === 'high' ? 1800 : pq === 'max' ? 2400
+      : Math.min(2400, Math.round(1200 * previewZoom));
 
-    // Fit canvas inside the available area, maintain aspect ratio
-    let displayW = Math.min(areaW, Math.round(areaH / srcRatio));
-    let displayH = Math.round(displayW * srcRatio);
-    if (displayH > areaH) { displayH = areaH; displayW = Math.round(areaH / srcRatio); }
-    displayW = Math.max(displayW, 80);
-    displayH = Math.max(displayH, 60);
+    const rendered = await FrameEngine.renderFrameWhenReady(
+      img, item.exif, state.settings, { maxPreviewPx });
 
-    // Physical pixels = CSS pixels × DPR → sharp on HiDPI / Retina
-    previewCanvas.width  = Math.round(displayW * dpr);
-    previewCanvas.height = Math.round(displayH * dpr);
-    previewCanvas.style.width  = displayW + 'px';
-    previewCanvas.style.height = displayH + 'px';
+    if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
-    // Draw with high-quality downscaling so larger render canvases look sharper
-    function drawToPreview() {
-      const ctx2 = previewCanvas.getContext('2d');
-      ctx2.imageSmoothingEnabled = true;
-      ctx2.imageSmoothingQuality = 'high';
-      ctx2.drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+    if (_frameCache.size >= 30) {             // evict oldest entry to cap memory
+      _frameCache.delete(_frameCache.keys().next().value);
     }
-
-    // Fade in: start transparent, draw, then reveal
-    const isFirstRender = previewCanvas.style.display === 'none' || previewCanvas.style.display === '';
-    if (isFirstRender) previewCanvas.style.opacity = '0';
-    previewCanvas.style.display = 'block';
-    drawToPreview();
-    if (isFirstRender) {
-      void previewCanvas.offsetWidth;
-      previewCanvas.style.opacity = '1';
-    }
-    if (emptyEl) emptyEl.style.display = 'none';
-    pane.classList.add('has-preview');
-  } catch (e) {
+    _frameCache.set(hash, rendered);
+    _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
+    applyPreviewTransform();
+  } catch (_e) {
     // Non-critical — silently ignore preview failures
   }
-}
-
-// ─── HTML/CSS Live Preview ────────────────────────────────────────────────────
-let _hpItemId  = null;
-let _hpObjUrl  = null;
-
-function _formatShutter(val) {
-  const n = parseFloat(val);
-  if (isNaN(n)) return String(val);
-  if (n >= 1) return `${n}s`;
-  return `1/${Math.round(1 / n)}s`;
-}
-
-async function _updateHTMLPreview(item) {
-  const htmlPreview = document.getElementById('htmlPreview');
-  const hpFrame     = document.getElementById('hpFrame');
-  const hpPhoto     = document.getElementById('hpPhoto');
-  if (!htmlPreview || !hpFrame || !hpPhoto) return false;
-
-  // Load image only when item changes
-  if (_hpItemId !== item.id) {
-    if (_hpObjUrl) { URL.revokeObjectURL(_hpObjUrl); _hpObjUrl = null; }
-    _hpObjUrl  = URL.createObjectURL(item.file);
-    _hpItemId  = item.id;
-    hpPhoto.src = _hpObjUrl;
-  }
-
-  // Wait for the image to load if not yet complete
-  if (!hpPhoto.complete || !hpPhoto.naturalWidth) {
-    await new Promise((resolve, reject) => {
-      const orig = hpPhoto.src;
-      hpPhoto.onload  = resolve;
-      hpPhoto.onerror = reject;
-      if (hpPhoto.complete && hpPhoto.src === orig) resolve(); // already loaded race
-    });
-  }
-
-  const W = hpPhoto.naturalWidth;
-  const H = hpPhoto.naturalHeight;
-  if (!W || !H) return false;
-
-  _applyHTMLLayout(W, H, item, hpFrame);
-  htmlPreview.classList.add('hp-visible');
-  return true;
-}
-
-function _applyHTMLLayout(W, H, item, hpFrame) {
-  const s = state.settings;
-  const isPortrait = H > W;
-  const ts = s.thicknessScale || 1.0;
-
-  // Mirror renderFrame border math exactly
-  const baseBorder  = Math.min(W, H) * 0.05 * 1.2 * ts;
-  const sideBorder  = baseBorder * 0.5;
-  const extraHeight = H * 0.10 * ts;
-  const locExtra    = (s.showLocation && item.exif && item.exif.location && s.locationPosition === 'below-exif')
-                      ? H * 0.038 * ts : 0;
-  const bottomBorder = sideBorder * 4 + extraHeight + locExtra;
-  const pf = isPortrait ? 0.75 : 1.0;
-  const sB = sideBorder   * pf;
-  const tB = sideBorder   * pf;
-  const bB = bottomBorder * pf;
-
-  const canvasW = W + sB * 2;
-  const canvasH = H + tB + bB;
-
-  const isDark  = FrameEngine.isColorDark(s.frameColor);
-  const primary = isDark ? '#E8E8E8' : '#111111';
-  const muted   = isDark ? '#999999' : '#888888';
-
-  // Frame background + aspect ratio
-  hpFrame.style.backgroundColor = s.frameColor;
-  hpFrame.style.aspectRatio     = `${canvasW} / ${canvasH}`;
-  hpFrame.classList.toggle('hp-dark-frame', isDark);
-
-  // Photo area: percentage padding creates frame borders
-  // Note: % padding is relative to *width*, which maps correctly since
-  // aspect-ratio preserves proportions.
-  const padLR  = (sB / canvasW * 100).toFixed(4) + '%';
-  const padTop = (tB / canvasW * 100).toFixed(4) + '%'; // width-% trick: gives tB px
-
-  const hpPhotoArea = document.getElementById('hpPhotoArea');
-  if (hpPhotoArea) {
-    hpPhotoArea.style.cssText = `
-      flex-shrink:0;
-      padding-left:${padLR};
-      padding-right:${padLR};
-      padding-top:${padTop};
-    `;
-  }
-
-  // #hpTextBar uses flex:1 in CSS to fill remaining space — no explicit height needed
-
-  // Font sizes as multiples of cqw (= 1% of hpFrame display width)
-  // baseFs = canvasW * 0.022 → in CSS: 2.2cqw
-  const soFs  = (2.2 * 1.15 * (s.shotOnFontScale  || 1)).toFixed(4);
-  const exFs  = (2.2 * 0.92 * (s.exifFontScale    || 1)).toFixed(4);
-  const locFs = (2.2 * 1.15 * 0.82).toFixed(4);
-  const gapFactor = isPortrait ? 1.4 : 1.7;
-  const gapFs = (parseFloat(soFs) * gapFactor * (s.lineGapScale || 1)).toFixed(4);
-  const offsetFs = ((s.textOffsetY || 0) * parseFloat(soFs)).toFixed(4);
-
-  hpFrame.style.setProperty('--hp-so-fs',  soFs);
-  hpFrame.style.setProperty('--hp-ex-fs',  exFs);
-  hpFrame.style.setProperty('--hp-loc-fs', locFs);
-  hpFrame.style.setProperty('--hp-gap',    gapFs + 'cqw');
-  hpFrame.style.setProperty('--hp-offset', offsetFs + 'cqw');
-
-  // Font family + colors
-  const stack     = `'${s.fontFamily || 'Inter'}', Arial, sans-serif`;
-  const camWeight = s.cameraNameBold   ? '700' : '500';
-  const camStyle  = s.cameraNameItalic ? 'italic' : 'normal';
-  const exStyle   = s.exifItalic       ? 'italic' : 'normal';
-
-  // ── Shot-on line ──────────────────────────────────────────────────────────
-  const hpShotOn = document.getElementById('hpShotOn');
-  if (hpShotOn) {
-    hpShotOn.style.display     = s.showShotOn ? '' : 'none';
-    hpShotOn.style.fontFamily  = stack;
-    const cam = [item.exif && item.exif.make, item.exif && item.exif.model].filter(Boolean).join(' ');
-    if (cam) {
-      hpShotOn.innerHTML =
-        `<span style="color:${muted};font-weight:300;font-style:normal;">Shot on&nbsp;&nbsp;</span>` +
-        `<span style="color:${primary};font-weight:${camWeight};font-style:${camStyle};">${escHtml(cam)}</span>`;
-    } else {
-      hpShotOn.innerHTML = '';
-    }
-  }
-
-  // ── EXIF line ─────────────────────────────────────────────────────────────
-  const hpExifLine = document.getElementById('hpExifLine');
-  if (hpExifLine) {
-    hpExifLine.style.display    = s.showExifInfo ? '' : 'none';
-    hpExifLine.style.fontFamily = stack;
-    hpExifLine.style.fontStyle  = exStyle;
-    hpExifLine.style.color      = muted;
-    const parts = [];
-    const ex = item.exif || {};
-    if (ex.lensModel)    parts.push(ex.lensModel);
-    if (ex.focalLength)  parts.push(`${ex.focalLength}mm`);
-    if (ex.fNumber)      parts.push(`f/${ex.fNumber}`);
-    if (ex.exposureTime) parts.push(_formatShutter(ex.exposureTime));
-    if (ex.iso)          parts.push(`ISO\u2009${ex.iso}`);
-    hpExifLine.textContent = parts.join('  \u2003  ');
-  }
-
-  // ── Location line (below EXIF) ────────────────────────────────────────────
-  const hpLocLine = document.getElementById('hpLocLine');
-  if (hpLocLine) {
-    const showLocBelow = s.showLocation && item.exif && item.exif.location && s.locationPosition === 'below-exif';
-    hpLocLine.style.display  = showLocBelow ? '' : 'none';
-    hpLocLine.style.color    = muted;
-    hpLocLine.style.fontFamily = stack;
-    hpLocLine.textContent = showLocBelow ? `📍 ${item.exif.location}` : '';
-  }
-
-  // ── Decorative line ───────────────────────────────────────────────────────
-  const hpDecoLine = document.getElementById('hpDecoLine');
-  if (hpDecoLine) {
-    hpDecoLine.style.display    = s.showDecoLine ? '' : 'none';
-    hpDecoLine.style.background = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
-  }
-}
-
-// Add pan/drag events to HTML preview frame (mirrors canvas handlers)
-function _setupHTMLPreviewInteraction() {
-  const hpFrame = document.getElementById('hpFrame');
-  const zone    = document.getElementById('dropZone');
-  if (!hpFrame || !zone) return;
-
-  let _panDragging = false;
-  let _panStart    = { x: 0, y: 0 };
-  let _panOrigin   = { x: 0, y: 0 };
-  let _pinching    = false;
-  let _pinchDist   = 0;
-  let _pinchZoom   = 1.0;
-
-  function _dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
-
-  hpFrame.addEventListener('mousedown', e => {
-    _panDragging = true;
-    _panStart    = { x: e.clientX, y: e.clientY };
-    _panOrigin   = { x: previewPan.x, y: previewPan.y };
-    hpFrame.classList.add('dragging');
-    e.preventDefault();
-  });
-  window.addEventListener('mousemove', e => {
-    if (!_panDragging) return;
-    previewPan.x = _panOrigin.x + (e.clientX - _panStart.x);
-    previewPan.y = _panOrigin.y + (e.clientY - _panStart.y);
-    applyPreviewTransform();
-  });
-  window.addEventListener('mouseup', () => {
-    if (!_panDragging) return;
-    _panDragging = false;
-    hpFrame.classList.remove('dragging');
-  });
-
-  hpFrame.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) {
-      _panDragging = false; _pinching = true;
-      _pinchDist = _dist(e.touches); _pinchZoom = previewZoom;
-      e.preventDefault();
-    } else if (e.touches.length === 1 && !_pinching) {
-      _panDragging = true;
-      _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      _panOrigin = { x: previewPan.x, y: previewPan.y };
-      e.preventDefault();
-    }
-  }, { passive: false });
-
-  hpFrame.addEventListener('touchmove', e => {
-    if (e.touches.length === 2 && _pinching) {
-      setPreviewZoom(_pinchZoom * _dist(e.touches) / _pinchDist);
-      e.preventDefault();
-    } else if (e.touches.length === 1 && _panDragging) {
-      previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);
-      previewPan.y = _panOrigin.y + (e.touches[0].clientY - _panStart.y);
-      applyPreviewTransform();
-      e.preventDefault();
-    }
-  }, { passive: false });
-
-  hpFrame.addEventListener('touchend', e => {
-    if (e.touches.length === 0) {
-      if (_pinching) scheduleLivePreview();
-      _panDragging = false; _pinching = false;
-    } else if (e.touches.length === 1 && _pinching) {
-      _pinching = false; _panDragging = true;
-      _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      _panOrigin = { x: previewPan.x, y: previewPan.y };
-    }
-  });
 }
 
 // ─── Photo Preview Modal ──────────────────────────────────────────────────────
@@ -2128,6 +1965,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (state.isCustomColor) updateCustomColorBtn(state.customColorValue);
 
   applySettings();           // sync state.settings from restored DOM values
+
+  // Pre-load current font so the very first preview render skips the font-fetch delay
+  if (document.fonts) {
+    const fam = `'${state.settings.fontFamily || 'Inter'}'`;
+    ['300 16px', '400 16px', '500 16px', '700 16px']
+      .forEach(s => document.fonts.load(`${s} ${fam}`).catch(() => {}));
+  }
+
   setupDropZone();
   setupSettingsListeners();
   setupSidebarResize();
@@ -2135,7 +1980,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCustomizePanel();
   setupPreviewQuality();
   setupMobileTabs();
-  _setupHTMLPreviewInteraction();
   updateUI();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
