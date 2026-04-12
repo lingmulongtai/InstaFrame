@@ -51,17 +51,17 @@
   }
 }
 
-/* ── Soft White theme ────────────────────────────────────────────────────────── */
+/* ── Soft White theme (warm, slightly darker than pure white) ────────────────── */
 [data-theme="soft-white"] {
-  --bg:        #f8f6f1;
-  --surface:   #fffef9;
-  --surface-2: #f5f3ee;
-  --border:    #e0ddd6;
+  --bg:        #e8e5df;
+  --surface:   #f2f0ea;
+  --surface-2: #e2dfd9;
+  --border:    #ccc9c2;
   --text:      #2c2a25;
   --text-2:    #6b6760;
   --text-3:    #a09c94;
-  --shadow:    0 1px 4px rgba(0,0,0,0.06), 0 2px 10px rgba(0,0,0,0.04);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.10);
+  --shadow:    0 1px 4px rgba(0,0,0,0.08), 0 2px 10px rgba(0,0,0,0.06);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.13);
 }
 
 /* ── Blue-Grey Dark theme ─────────────────────────────────────────────────────── */
@@ -228,13 +228,46 @@ html, body {
 }
 .customize-sep { height: 1px; background: var(--border); margin: 8px 0; }
 
-#accentColorPicker {
-  width: 32px;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
-  padding: 1px;
+/* Accent colour presets */
+.accent-swatches { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+
+.accent-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.accent-swatch:hover { transform: scale(1.15); }
+.accent-swatch.active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+  transform: scale(1.08);
+}
+
+/* Custom colour picker swatch */
+.accent-custom {
+  background: conic-gradient(
+    hsl(0,100%,60%), hsl(60,100%,55%), hsl(120,100%,50%),
+    hsl(180,100%,50%), hsl(240,100%,65%), hsl(300,100%,65%), hsl(360,100%,60%)
+  );
+}
+.accent-custom svg { width: 11px; height: 11px; position: relative; z-index: 1; pointer-events: none; }
+.accent-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -1256,6 +1289,132 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 /* Smooth sidebar separator */
 .sidebar-sep { transition: background 0.2s; }
 
+/* ── Toolbar slider: fixed width so labels don't get squished ────────────────── */
+.range-wrap input[type="range"] {
+  flex: none;
+  width: 90px;
+  min-width: 0;
+}
+
+/* ── HTML/CSS live preview (replaces canvas re-rendering for photos) ─────────── */
+#htmlPreview {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  pointer-events: none;
+}
+#htmlPreview.hp-visible { display: flex; }
+
+#hpFrame {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  border-radius: 4px;
+  box-shadow: 0 6px 30px rgba(0,0,0,0.55);
+  overflow: hidden;
+  max-width: calc(100% - 40px);
+  max-height: calc(100% - 40px);
+  cursor: grab;
+  pointer-events: all;
+  transition: box-shadow 0.2s;
+  /* aspect-ratio and background-color set by JS */
+}
+#hpFrame.hp-dark-frame {
+  box-shadow: 0 6px 30px rgba(0,0,0,0.55), 0 0 0 1.5px rgba(255,255,255,0.2);
+}
+#hpFrame.dragging { cursor: grabbing; }
+
+#hpPhotoArea {
+  flex-shrink: 0;
+  /* padding (borders) set by JS as percentages */
+}
+
+#hpPhoto {
+  display: block;
+  width: 100%;
+  height: auto;   /* natural aspect ratio; % padding-top trick gives correct top border */
+}
+
+#hpTextBar {
+  flex: 1;         /* fills remaining vertical space after the photo area */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 0;
+}
+
+.hp-deco-line {
+  position: absolute;
+  top: 22%;
+  left: 35%;
+  right: 35%;
+  height: 1px;
+}
+
+#hpTextWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--hp-gap, 0.35em);
+  text-align: center;
+  width: 92%;
+  overflow: hidden;
+  /* transform: translateY offset set by JS via --hp-offset */
+  transform: translateY(var(--hp-offset, 0));
+}
+
+.hp-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+#hpShotOn  { font-size: calc(var(--hp-so-fs,  2.53) * 1cqw); }
+#hpExifLine { font-size: calc(var(--hp-ex-fs,  2.02) * 1cqw); }
+#hpLocLine  { font-size: calc(var(--hp-loc-fs, 2.08) * 1cqw); }
+
+/* ── Mobile tab bar ──────────────────────────────────────────────────────────── */
+.mobile-tab-bar {
+  display: none; /* shown via media query on mobile */
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 600;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 5px 0;
+  transition: color 0.15s;
+}
+.tab-btn.active { color: var(--accent); }
+.tab-btn svg { width: 20px; height: 20px; }
+.tab-btn span { line-height: 1.2; }
+
 /* ── Mobile sidebar toggle button ───────────────────────────────────────────── */
 .mobile-sidebar-toggle {
   display: none; /* shown via media query */
@@ -1305,85 +1464,123 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   #imageGrid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ── Mobile: sidebar as bottom sheet, main full-screen ──────────────────────── */
+/* ── Mobile: tab-bar layout ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  :root { --tab-bar-h: 56px; }
+
+  /* Safe-area padding for home indicator (notch devices) */
+  @supports (padding: max(0px)) {
+    .mobile-tab-bar { padding-bottom: max(0px, env(safe-area-inset-bottom)); height: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  }
+
   html, body { overflow: hidden; }
 
+  /* Show tab bar */
+  .mobile-tab-bar { display: flex; }
+
+  /* Hide old FAB + overlay */
+  .mobile-sidebar-toggle { display: none !important; }
+  .mobile-sidebar-overlay { display: none !important; }
+
+  /* App shell: column layout, leave room for tab bar */
   .app-shell {
     flex-direction: column;
-    height: 100dvh;
-    height: 100vh; /* fallback */
+    height: calc(100dvh - var(--tab-bar-h));
+    height: calc(100vh - var(--tab-bar-h));
     overflow: hidden;
     position: relative;
   }
 
-  /* Main takes all available space; sidebar overlays it */
+  /* Main: flex column, fills remaining space */
   .main {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
-  /* Sidebar: hidden off-screen at the bottom, slides up as a sheet */
+  /* Sidebar: fullscreen overlay (shown when settings tab is active) */
   .sidebar {
     position: fixed;
-    bottom: 0;
+    top: 0;
     left: 0;
     right: 0;
+    bottom: var(--tab-bar-h, 56px);
     width: 100% !important;
-    max-height: 80dvh;
-    max-height: 80vh;
-    z-index: 1000;
-    border-right: none;
-    border-top: 1px solid var(--border);
-    border-radius: 18px 18px 0 0;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    z-index: 500;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
     overflow: hidden;
-    transform: translateY(100%);
-    transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
-    box-shadow: 0 -8px 40px rgba(0,0,0,0.22);
-  }
-  .sidebar.mobile-open {
-    transform: translateY(0);
+    box-shadow: none;
   }
 
-  /* Drag handle at top of bottom sheet */
-  .sidebar-header::before {
-    content: '';
-    position: absolute;
-    top: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 36px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--border);
+  /* Settings tab active: show sidebar */
+  body[data-mobile-tab="settings"] .sidebar {
+    opacity: 1;
+    pointer-events: all;
   }
-  .sidebar-header { position: relative; padding-top: 20px; }
 
   /* Resize handle hidden on mobile */
   .sidebar-resize-handle { display: none; }
 
-  /* Show mobile toggle button */
-  .mobile-sidebar-toggle { display: flex; }
-
-  /* Preview occupies ~45% of viewport, always visible */
+  /* Preview area: fills the main area on preview tab */
   .preview-area {
-    height: 45vw;
-    min-height: 200px;
-    max-height: 50vh;
+    flex: 1;
+    height: auto !important;
+    min-height: 0;
+    max-height: none;
+    position: relative;
   }
 
-  /* Image section scrolls naturally */
-  .image-section { flex: none; }
+  /* Image section: fills the main area on photos tab */
+  .image-section {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Empty hint: fills the main area on photos tab (no photos) */
+  .empty-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 20px 16px;
+  }
+
+  /* Mobile add button (shown in empty hint on Photos tab) */
+  .mobile-add-btn { display: none; }
+  body[data-mobile-tab="photos"] .mobile-add-btn { display: inline-flex; }
+
+  /* Tab visibility — hide/show sections based on active tab */
+  body[data-mobile-tab="preview"] .image-section { display: none !important; }
+
+  body[data-mobile-tab="photos"] .preview-area { display: none !important; }
+
+  body[data-mobile-tab="settings"] .preview-area,
+  body[data-mobile-tab="settings"] .image-section,
+  body[data-mobile-tab="settings"] .empty-hint {
+    display: none !important;
+  }
+
+  /* Image grid: 2 columns on mobile */
   #imageGrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
 
-  /* Card actions wrap on small screens */
+  /* Card actions compact */
   .card-actions { flex-wrap: wrap; gap: 4px; }
   .card-actions .btn { font-size: 11px; padding: 4px 8px; }
 
-  /* Empty hint compact */
-  .empty-hint { flex: none; padding: 12px; }
+  /* Empty hint grid 2×2 */
   .empty-hint-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .empty-hint-card { padding: 12px 8px; }
   .empty-hint-emoji { font-size: 22px; }
@@ -1392,21 +1589,19 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   .batch-bar { flex-wrap: wrap; gap: 6px; }
   .batch-bar .btn-lg { flex: 1; min-width: 120px; font-size: 13px; padding: 10px 12px; }
 
+  /* Section header tighter */
+  .section-header { padding: 10px 12px 6px; }
+
   /* Modal nav inside on mobile */
   .modal-prev { left: 4px; }
   .modal-next { right: 4px; }
 
-  /* Quality and zoom controls: adjust for smaller space */
+  /* Preview controls */
   .preview-quality-wrap { bottom: 8px; left: 8px; }
   .preview-zoom-bar { right: 8px; }
-
-  /* Zoom bar slightly smaller */
   #zoomRange { height: 60px; }
   .zoom-btn  { width: 20px; height: 20px; font-size: 14px; }
 
-  /* Section header tighter */
-  .section-header { padding: 10px 12px 6px; }
-
-  /* Toast shifted above FAB */
-  #toast { bottom: 84px; }
+  /* Toast: above tab bar */
+  #toast { bottom: calc(var(--tab-bar-h) + 12px); }
 }
