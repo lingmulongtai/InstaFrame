@@ -57,8 +57,12 @@ const FrameEngine = (() => {
     canvas.height = canvasH;
     const ctx = canvas.getContext('2d');
 
-    ctx.fillStyle = frameColor;
-    ctx.fillRect(0, 0, canvasW, canvasH);
+    if (settings.frameBackground === 'blur') {
+      drawBlurBackground(ctx, img, canvasW, canvasH, settings);
+    } else {
+      ctx.fillStyle = frameColor;
+      ctx.fillRect(0, 0, canvasW, canvasH);
+    }
     ctx.drawImage(img, sB, tB, W, H);
     drawInnerShadow(ctx, sB, tB, W, H);
 
@@ -132,6 +136,37 @@ const FrameEngine = (() => {
     grad.addColorStop(1, 'rgba(0,0,0,0.05)');
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
+  }
+
+  /**
+   * Draw the source image blurred and scaled to cover the canvas as a background.
+   * Uses ctx.filter for blur, grayscale/sepia/saturation, and brightness.
+   */
+  function drawBlurBackground(ctx, src, canvasW, canvasH, settings) {
+    const radius     = Math.max(0, Math.min(100, settings.blurRadius     ?? 20));
+    const brightness = Math.max(10, Math.min(200, settings.blurBrightness ?? 80));
+    const style      = settings.blurStyle || 'normal';
+
+    const styleFilter =
+      style === 'grayscale' ? 'grayscale(100%) '  :
+      style === 'sepia'     ? 'sepia(100%) '       :
+      style === 'saturate'  ? 'saturate(250%) '    : '';
+
+    ctx.save();
+    ctx.filter = `${styleFilter}blur(${radius}px) brightness(${brightness}%)`;
+
+    // Scale the source to cover the canvas (object-fit: cover)
+    const srcW = src.naturalWidth  || src.videoWidth  || src.width  || canvasW;
+    const srcH = src.naturalHeight || src.videoHeight || src.height || canvasH;
+    const scale = Math.max(canvasW / srcW, canvasH / srcH);
+    const dw = Math.ceil(srcW * scale);
+    const dh = Math.ceil(srcH * scale);
+    const dx = Math.round((canvasW - dw) / 2);
+    const dy = Math.round((canvasH - dh) / 2);
+
+    ctx.drawImage(src, dx, dy, dw, dh);
+    ctx.filter = 'none';
+    ctx.restore();
   }
 
   /**
@@ -261,10 +296,10 @@ const FrameEngine = (() => {
             ctx.textAlign = 'right';
             ctx.fillText(exif.location, canvasW - sidePad, line1Y);
             const tw = ctx.measureText(exif.location).width;
-            drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted);
+            drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted, settings.locationIconStyle);
           } else {
             const pinCx = sidePad + pinSize * 0.6;
-            drawLocationPin(ctx, pinCx, line1Y, pinSize, muted);
+            drawLocationPin(ctx, pinCx, line1Y, pinSize, muted, settings.locationIconStyle);
             ctx.textAlign = 'left';
             ctx.fillText(exif.location, sidePad + pinSize * 1.5, line1Y);
           }
@@ -298,7 +333,7 @@ const FrameEngine = (() => {
       const textW   = ctx.measureText(exif.location).width;
       const totalW  = pinSize * 1.5 + textW;
       const startX  = centerX - totalW / 2;
-      drawLocationPin(ctx, startX + pinSize * 0.6, line3Y, pinSize, muted);
+      drawLocationPin(ctx, startX + pinSize * 0.6, line3Y, pinSize, muted, settings.locationIconStyle);
       ctx.textAlign = 'left';
       ctx.fillText(exif.location, startX + pinSize * 1.5, line3Y);
     }
@@ -316,25 +351,102 @@ const FrameEngine = (() => {
     ctx.restore();
   }
 
-  function drawLocationPin(ctx, cx, cy, size, color) {
+  function drawLocationPin(ctx, cx, cy, size, color, style) {
     ctx.save();
     ctx.fillStyle = color;
-    // Pin head (circle)
-    ctx.beginPath();
-    ctx.arc(cx, cy - size * 0.55, size * 0.44, 0, Math.PI * 2);
-    ctx.fill();
-    // Pin tail (triangle pointing down)
-    ctx.beginPath();
-    ctx.moveTo(cx - size * 0.28, cy - size * 0.2);
-    ctx.lineTo(cx + size * 0.28, cy - size * 0.2);
-    ctx.lineTo(cx, cy + size * 0.5);
-    ctx.closePath();
-    ctx.fill();
-    // Inner dot highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.beginPath();
-    ctx.arc(cx, cy - size * 0.55, size * 0.17, 0, Math.PI * 2);
-    ctx.fill();
+
+    if (style === 'dot') {
+      // Minimalist filled circle with outer ring
+      ctx.beginPath();
+      ctx.arc(cx, cy - size * 0.1, size * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.beginPath();
+      ctx.arc(cx, cy - size * 0.1, size * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === 'compass') {
+      // Compass rose: four pointed star / arrow
+      const r = size * 0.48;
+      ctx.translate(cx, cy - size * 0.15);
+      ctx.beginPath();
+      // North (up)
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r * 0.3, -r * 0.25);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-r * 0.3, -r * 0.25);
+      ctx.closePath();
+      ctx.fill();
+      // South (down)
+      ctx.fillStyle = color + '99';
+      ctx.beginPath();
+      ctx.moveTo(0, r);
+      ctx.lineTo(r * 0.3, r * 0.25);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-r * 0.3, r * 0.25);
+      ctx.closePath();
+      ctx.fill();
+      // East
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(r * 0.25, -r * 0.3);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(r * 0.25, r * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      // West
+      ctx.fillStyle = color + '99';
+      ctx.beginPath();
+      ctx.moveTo(-r, 0);
+      ctx.lineTo(-r * 0.25, -r * 0.3);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-r * 0.25, r * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      // Center dot
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === 'globe') {
+      // Globe circle with latitude/longitude lines
+      const r = size * 0.46;
+      ctx.translate(cx, cy - size * 0.1);
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Oval equator
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth   = r * 0.14;
+      ctx.beginPath();
+      ctx.scale(1, 0.5);
+      ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      // Vertical meridian
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.9, -Math.PI / 2, Math.PI / 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth   = r * 0.14;
+      ctx.stroke();
+    } else {
+      // Default 'pin': teardrop pin with circle head
+      ctx.beginPath();
+      ctx.arc(cx, cy - size * 0.55, size * 0.44, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.28, cy - size * 0.2);
+      ctx.lineTo(cx + size * 0.28, cy - size * 0.2);
+      ctx.lineTo(cx, cy + size * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath();
+      ctx.arc(cx, cy - size * 0.55, size * 0.17, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
   }
 
@@ -357,8 +469,12 @@ const FrameEngine = (() => {
     const out = document.createElement('canvas');
     out.width = fW; out.height = fH;
     const ctx = out.getContext('2d');
-    ctx.fillStyle = frameColor;
-    ctx.fillRect(0, 0, fW, fH);
+    if (settings.frameBackground === 'blur') {
+      drawBlurBackground(ctx, src, fW, fH, settings);
+    } else {
+      ctx.fillStyle = frameColor;
+      ctx.fillRect(0, 0, fW, fH);
+    }
     ctx.drawImage(src, Math.round((fW - W) / 2), Math.round((fH - H) / 2));
     return out;
   }
@@ -548,8 +664,12 @@ const FrameEngine = (() => {
           if (finalized) return;
           const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
 
-          ctx.fillStyle = frameColor;
-          ctx.fillRect(0, 0, canvasW, canvasH);
+          if (settings.frameBackground === 'blur') {
+            drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+          } else {
+            ctx.fillStyle = frameColor;
+            ctx.fillRect(0, 0, canvasW, canvasH);
+          }
           ctx.drawImage(video, sB, tB, W, H);
           drawInnerShadow(ctx, sB, tB, W, H);
           drawExifText(ctx, exif, settings, layout);
@@ -691,8 +811,12 @@ const FrameEngine = (() => {
 
         let rafId;
         function drawLoop() {
-          ctx.fillStyle = frameColor;
-          ctx.fillRect(0, 0, canvasW, canvasH);
+          if (settings.frameBackground === 'blur') {
+            drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+          } else {
+            ctx.fillStyle = frameColor;
+            ctx.fillRect(0, 0, canvasW, canvasH);
+          }
           ctx.drawImage(video, sB, tB, W, H);
           drawInnerShadow(ctx, sB, tB, W, H);
           drawExifText(ctx, exif, settings, layout);
