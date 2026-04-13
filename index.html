@@ -693,6 +693,18 @@
         <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
       </div>
       <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
+      <!-- Video playback bar (bottom center, shown only when a video is being previewed) -->
+      <div class="preview-video-bar" id="previewVideoBar">
+        <button class="video-ctrl-btn" id="videoPlayPauseBtn" aria-label="Play/Pause">
+          <svg id="videoPlayIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M3 2.5l10 5.5-10 5.5V2.5z"/></svg>
+          <svg id="videoPauseIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" style="display:none"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
+        </button>
+        <span class="video-time-label" id="videoCurrentTime">0:00</span>
+        <div class="video-seek-wrap">
+          <input type="range" class="video-seek-range" id="videoSeekRange" min="0" max="100" step="0.01" value="0">
+        </div>
+        <span class="video-time-label" id="videoDuration">0:00</span>
+      </div>
     </div>
 
     <div class="main-resize-handle" id="mainResizeHandle"></div>

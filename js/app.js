@@ -1433,6 +1433,76 @@ function scheduleLivePreview() {
   _livePreviewTimer = setTimeout(renderLivePreview, 80);
 }
 
+// ─── Video Preview Bar ────────────────────────────────────────────────────────
+function _formatVideoTime(secs) {
+  if (!Number.isFinite(secs) || secs < 0) return '0:00';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function setupVideoPreviewBar() {
+  const video        = document.getElementById('livePreviewVideo');
+  const playPauseBtn = document.getElementById('videoPlayPauseBtn');
+  const playIcon     = document.getElementById('videoPlayIcon');
+  const pauseIcon    = document.getElementById('videoPauseIcon');
+  const seekRange    = document.getElementById('videoSeekRange');
+  const currentEl    = document.getElementById('videoCurrentTime');
+  const durationEl   = document.getElementById('videoDuration');
+  if (!video || !playPauseBtn || !seekRange) return;
+
+  function syncPlayPauseIcon() {
+    const paused = video.paused || video.ended;
+    if (playIcon)  playIcon.style.display  = paused ? '' : 'none';
+    if (pauseIcon) pauseIcon.style.display = paused ? 'none' : '';
+  }
+
+  playPauseBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (video.paused || video.ended) {
+      if (video.ended) video.currentTime = 0;
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  });
+
+  video.addEventListener('play',   syncPlayPauseIcon);
+  video.addEventListener('pause',  syncPlayPauseIcon);
+  video.addEventListener('ended',  syncPlayPauseIcon);
+
+  video.addEventListener('loadedmetadata', () => {
+    if (durationEl) durationEl.textContent = _formatVideoTime(video.duration);
+    seekRange.max   = String(video.duration || 100);
+    seekRange.value = '0';
+    if (currentEl) currentEl.textContent = _formatVideoTime(0);
+    syncPlayPauseIcon();
+  });
+
+  let _seeking = false;
+
+  video.addEventListener('timeupdate', () => {
+    if (!_seeking) seekRange.value = String(video.currentTime);
+    if (currentEl) currentEl.textContent = _formatVideoTime(video.currentTime);
+  });
+
+  seekRange.addEventListener('mousedown', e => {
+    e.stopPropagation();
+    _seeking = true;
+  });
+  seekRange.addEventListener('touchstart', e => {
+    e.stopPropagation();
+    _seeking = true;
+  });
+  seekRange.addEventListener('input', () => {
+    const t = parseFloat(seekRange.value);
+    video.currentTime = t;
+    if (currentEl) currentEl.textContent = _formatVideoTime(t);
+  });
+  seekRange.addEventListener('change', () => { _seeking = false; });
+  seekRange.addEventListener('mouseup',  () => { _seeking = false; });
+}
+
 // ─── Preview Zoom & Pan ───────────────────────────────────────────────────────
 function applyPreviewTransform() {
   const transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
@@ -1607,13 +1677,16 @@ async function renderLivePreview() {
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
       liveVideo.src     = liveVideo._objUrl;
+      liveVideo.load();
     }
     liveVideo.style.display = 'block';
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
+    pane.classList.add('has-video');
     return;
   }
   if (liveVideo) liveVideo.style.display = 'none';
+  pane.classList.remove('has-video');
 
   // ── Canvas preview with caching ────────────────────────────────────────────
   const hash   = `${item.id}|${_previewSettingsHash()}`;
@@ -1797,9 +1870,14 @@ function updateUI() {
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
     const dropZone = document.getElementById('dropZone');
-    if (dropZone) dropZone.classList.remove('has-preview');
+    if (dropZone) {
+      dropZone.classList.remove('has-preview');
+      dropZone.classList.remove('has-video');
+    }
     const previewCanvas = document.getElementById('livePreviewCanvas');
     if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.opacity = ''; previewCanvas.style.transform = ''; }
+    const liveVideo = document.getElementById('livePreviewVideo');
+    if (liveVideo) { liveVideo.style.display = 'none'; liveVideo.pause(); }
     const htmlPreview = document.getElementById('htmlPreview');
     if (htmlPreview) htmlPreview.classList.remove('hp-visible');
     const emptyEl = document.getElementById('previewEmpty');
@@ -1981,6 +2059,7 @@ function setupDropZone() {
   // Allow dragging from anywhere in the preview area (canvas or background margin)
   zone.addEventListener('mousedown', e => {
     if (!zone.classList.contains('has-preview')) return;
+    if (zone.classList.contains('has-video')) return;  // no pan when video is showing
     // Skip if the click landed on an interactive overlay element
     if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     _panDragging = true;
@@ -2015,6 +2094,7 @@ function setupDropZone() {
 
   zone.addEventListener('touchstart', e => {
     if (!zone.classList.contains('has-preview')) return;
+    if (zone.classList.contains('has-video')) return;  // no pan/pinch when video is showing
     // Skip if touch started on an interactive overlay element
     if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     if (e.touches.length === 2) {
@@ -2840,6 +2920,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   setupDropZone();
+  setupVideoPreviewBar();
   setupSettingsListeners();
   setupSidebarResize();
   setupMainResize();
