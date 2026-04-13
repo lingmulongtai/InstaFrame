@@ -104,6 +104,7 @@ const I18N = {
     tabSettings: 'Settings',
     supportProjectTitle: 'Enjoying InstaFrame?',
     supportProjectSub: 'Star this open-source project and help us improve it.',
+    langToggleTitle: 'Toggle language',
   },
   ja: {
     appTitle: 'InstaFrame',
@@ -207,18 +208,48 @@ const I18N = {
     tabSettings: '設定',
     supportProjectTitle: 'InstaFrameを気に入ったら',
     supportProjectSub: 'このオープンソースプロジェクトにスターを付けて、改善への協力をお願いします。',
+    langToggleTitle: '言語を切り替え',
   },
 };
 
-let currentLang = localStorage.getItem('instaframe_lang') || 'en';
+const LANG_STORAGE_KEY = 'instaframe_lang';
+
+function detectInitialLang() {
+  const saved = localStorage.getItem(LANG_STORAGE_KEY);
+  if (saved === 'en' || saved === 'ja') return saved;
+
+  const langCandidates = [];
+  if (Array.isArray(navigator.languages)) langCandidates.push(...navigator.languages);
+  if (navigator.language) langCandidates.push(navigator.language);
+  if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    if (locale) langCandidates.push(locale);
+  }
+
+  const normalized = langCandidates
+    .filter(Boolean)
+    .map(v => String(v).toLowerCase());
+  if (normalized.some(v => v.startsWith('ja'))) return 'ja';
+  if (normalized.some(v => /[-_]jp\b/.test(v))) return 'ja';
+
+  const tz = typeof Intl !== 'undefined' && Intl.DateTimeFormat
+    ? String(Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase()
+    : '';
+  if (tz.includes('asia/tokyo') || tz.includes('/japan')) return 'ja';
+
+  return 'en';
+}
+
+let currentLang = detectInitialLang();
 
 function t(key) {
   return I18N[currentLang][key] || I18N['en'][key] || key;
 }
 
 function setLang(lang) {
-  currentLang = lang;
-  localStorage.setItem('instaframe_lang', lang);
+  currentLang = (lang === 'ja') ? 'ja' : 'en';
+  localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+  document.documentElement.setAttribute('lang', currentLang);
   applyTranslations();
 }
 
