@@ -1021,15 +1021,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   pointer-events: all;
 }
 
-/* Hide image-only controls when a video is showing */
-.preview-area.has-video .preview-zoom-bar,
-.preview-area.has-video .preview-quality-wrap,
-.preview-area.has-video .preview-history-wrap,
-.preview-area.has-video .preview-reset-view-btn,
-.preview-area.has-video .preview-exif-wrap { display: none !important; }
+/* Hide quality selector for video (not applicable — video always renders at native res) */
+.preview-area.has-video .preview-quality-wrap { display: none !important; }
 
-/* No grab cursor over video preview */
-.preview-area.has-video { cursor: default; }
+/* Video canvas preview supports pan/zoom — inherit grab cursor from has-preview */
 
 .video-ctrl-btn {
   border: none;
@@ -1070,6 +1065,49 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   cursor: pointer;
   accent-color: white;
 }
+
+/* ── Video volume control ────────────────────────────────────────────────────── */
+.video-volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.video-mute-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.video-volume-range {
+  width: 64px;
+  height: 3px;
+  cursor: pointer;
+  accent-color: white;
+  flex-shrink: 0;
+}
+
+/* ── Video speed select ──────────────────────────────────────────────────────── */
+.video-speed-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 100px;
+  color: rgba(255,255,255,0.85);
+  font-size: 10.5px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+  outline: none;
+  transition: background 0.12s;
+  min-width: 38px;
+  text-align: center;
+}
+.video-speed-select:hover { background: rgba(255,255,255,0.22); }
+.video-speed-select option { background: #1a1a1a; color: white; }
 
 /* ── EXIF panel (left edge of live preview, desktop only) ───────────────────── */
 .preview-exif-wrap {
@@ -2002,7 +2040,21 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   .preview-history-wrap { right: 8px; top: 8px; }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
-  .preview-video-bar { bottom: 8px; }
+  /* Video bar: compact on mobile */
+  .preview-video-bar {
+    bottom: 8px;
+    gap: 4px;
+    padding: 5px 8px;
+    max-width: calc(100% - 16px);
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+  .video-ctrl-btn { width: 22px; height: 22px; }
+  .video-mute-btn { width: 20px; height: 20px; }
+  .video-time-label { font-size: 10px; min-width: 24px; }
+  .video-volume-range { width: 36px; }
+  .video-seek-wrap { min-width: 36px; }
+  .video-speed-select { font-size: 9.5px; padding: 2px 5px; min-width: 30px; }
   .preview-exif-wrap {
     display: block !important;
     left: 8px;
@@ -2014,7 +2066,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
     width: min(236px, calc(100vw - 68px));
     max-height: calc(100% - 16px);
   }
-  .preview-exif-content { max-height: 240px; }
+  .preview-exif-content { max-height: 200px; }
   .preview-exif-grid {
     grid-template-columns: 1fr;
     gap: 5px;
