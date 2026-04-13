@@ -559,6 +559,17 @@ input[type="range"]::-moz-range-thumb {
   flex-shrink: 0;
 }
 
+.range-val.range-val-editable {
+  cursor: text;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.range-val.range-val-editable:focus {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
 /* Color swatches */
 .color-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
 

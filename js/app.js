@@ -1997,8 +1997,100 @@ function setupDropZone() {
 }
 
 // ─── Settings Listeners ───────────────────────────────────────────────────────
+function _decimalPlaces(num) {
+  if (!Number.isFinite(num)) return 0;
+  const s = String(num);
+  if (!s.includes('.')) return 0;
+  return s.split('.')[1].length;
+}
+
+function _clampRangeInputValue(el, rawValue) {
+  const minAttr  = parseFloat(el.min);
+  const maxAttr  = parseFloat(el.max);
+  const stepAttr = parseFloat(el.step);
+  const min = Number.isFinite(minAttr) ? minAttr : -Infinity;
+  const max = Number.isFinite(maxAttr) ? maxAttr : Infinity;
+  let val = Number(rawValue);
+  if (!Number.isFinite(val)) return null;
+  val = Math.min(max, Math.max(min, val));
+
+  if (Number.isFinite(stepAttr) && stepAttr > 0 && Number.isFinite(minAttr)) {
+    const stepCount = Math.round((val - minAttr) / stepAttr);
+    val = minAttr + stepCount * stepAttr;
+    const precision = Math.max(_decimalPlaces(stepAttr), _decimalPlaces(minAttr), _decimalPlaces(maxAttr));
+    val = Number(val.toFixed(precision));
+    val = Math.min(max, Math.max(min, val));
+  }
+  return val;
+}
+
+function _extractNumericInputValue(text) {
+  const m = String(text ?? '').replace(',', '.').match(/[+-]?\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
 function setupSettingsListeners() {
-  // Range sliders
+  const bindRangeControl = (id, valId, fmt, onValueChange) => {
+    const el    = document.getElementById(id);
+    const valEl = document.getElementById(valId);
+    if (!el) return;
+
+    el.addEventListener('input', () => {
+      if (valEl) valEl.textContent = fmt(el.value);
+      onValueChange(el.value);
+    });
+
+    // Double click slider track/thumb to reset to its default value.
+    el.addEventListener('dblclick', () => {
+      const defaultRaw = el.defaultValue ?? el.getAttribute('value') ?? el.value;
+      const clamped = _clampRangeInputValue(el, defaultRaw);
+      if (clamped == null) return;
+      el.value = String(clamped);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    // Make the numeric text on the right editable.
+    if (!valEl) return;
+    valEl.classList.add('range-val-editable');
+    valEl.setAttribute('contenteditable', 'plaintext-only');
+    valEl.setAttribute('role', 'textbox');
+    valEl.setAttribute('spellcheck', 'false');
+    valEl.setAttribute('title', 'Edit value');
+
+    const commit = () => {
+      const parsed = _extractNumericInputValue(valEl.textContent);
+      if (parsed == null) {
+        valEl.textContent = fmt(el.value);
+        return;
+      }
+      const clamped = _clampRangeInputValue(el, parsed);
+      if (clamped == null) {
+        valEl.textContent = fmt(el.value);
+        return;
+      }
+      el.value = String(clamped);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    valEl.addEventListener('focus', () => {
+      valEl.textContent = el.value;
+      document.getSelection()?.selectAllChildren(valEl);
+    });
+    valEl.addEventListener('blur', commit);
+    valEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        valEl.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        valEl.textContent = fmt(el.value);
+        valEl.blur();
+      }
+    });
+  };
+
   [
     ['thicknessRange',          'thicknessRangeVal',          v => parseFloat(v).toFixed(1) + '×'],
     ['imageOffsetRange',        'imageOffsetRangeVal',        v => parseFloat(v).toFixed(0) + '%'],
@@ -2008,15 +2100,7 @@ function setupSettingsListeners() {
     ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1)],
     ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%'],
     ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%'],
-  ].forEach(([id, valId, fmt]) => {
-    const el    = document.getElementById(id);
-    const valEl = document.getElementById(valId);
-    if (!el) return;
-    el.addEventListener('input', () => {
-      if (valEl) valEl.textContent = fmt(el.value);
-      applySettings();
-    });
-  });
+  ].forEach(([id, valId, fmt]) => bindRangeControl(id, valId, fmt, () => applySettings()));
 
   // Frame color radios (standard swatches)
   document.querySelectorAll('input[name="frameColor"]').forEach(radio => {
@@ -2085,15 +2169,7 @@ function setupSettingsListeners() {
   [
     ['blurRadiusRange',     'blurRadiusVal',     v => v + 'px'],
     ['blurBrightnessRange', 'blurBrightnessVal', v => v + '%'],
-  ].forEach(([id, valId, fmt]) => {
-    const el    = document.getElementById(id);
-    const valEl = document.getElementById(valId);
-    if (!el) return;
-    el.addEventListener('input', () => {
-      if (valEl) valEl.textContent = fmt(el.value);
-      applySettings();
-    });
-  });
+  ].forEach(([id, valId, fmt]) => bindRangeControl(id, valId, fmt, () => applySettings()));
 
   const blurStyleEl = document.getElementById('blurStyleSelect');
   if (blurStyleEl) blurStyleEl.addEventListener('change', applySettings);
@@ -2132,15 +2208,15 @@ function setupSettingsListeners() {
     });
   });
 
-  const pqEl = document.getElementById('photoQualityRange');
-  if (pqEl) {
-    pqEl.addEventListener('input', () => {
-      const valEl = document.getElementById('photoQualityRangeVal');
-      if (valEl) valEl.textContent = pqEl.value + '%';
-      state.settings.exportPhotoQuality = parseInt(pqEl.value, 10);
+  bindRangeControl(
+    'photoQualityRange',
+    'photoQualityRangeVal',
+    v => v + '%',
+    v => {
+      state.settings.exportPhotoQuality = parseInt(v, 10);
       saveSettings();
-    });
-  }
+    }
+  );
 
   // ── Export: video bitrate (format wired in initVideoFormatOptions) ────────
   document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(r => {
