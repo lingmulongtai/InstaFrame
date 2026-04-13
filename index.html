@@ -98,6 +98,16 @@
       <div class="customize-sep"></div>
 
       <div class="customize-section">
+        <div class="customize-label" data-i18n="mapboxTokenLabel">Mapbox Token</div>
+        <div class="customize-row" style="flex-direction:column;align-items:stretch;gap:4px;">
+          <input type="text" id="customMapboxToken" class="customize-token-input" placeholder="pk.eyJ1… (optional)" autocomplete="off" spellcheck="false">
+          <span class="customize-row-hint" data-i18n="mapboxTokenHint">Your token is used for map overlays instead of the default.</span>
+        </div>
+      </div>
+
+      <div class="customize-sep"></div>
+
+      <div class="customize-section">
         <div class="customize-label" data-i18n="layoutLabel">Layout</div>
         <div class="customize-row">
           <span class="customize-row-label" data-i18n="sidebarLabel">Sidebar</span>
@@ -126,8 +136,25 @@
           <span data-i18n="sectionFrame">Frame</span>
         </div>
 
-        <!-- Color -->
+        <!-- Frame Background Mode -->
         <div class="setting-row">
+          <div class="setting-label" data-i18n="frameBg">Background</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="frameBackground" id="bg-color" value="color" checked>
+                <label for="bg-color" data-i18n="bgColor">Color</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="frameBackground" id="bg-blur" value="blur">
+                <label for="bg-blur" data-i18n="bgBlur">Blur</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Color -->
+        <div class="setting-row" id="frameColorRow">
           <div class="setting-label" data-i18n="frameColor">Color</div>
           <div class="setting-control">
             <div class="color-row">
@@ -148,6 +175,38 @@
                 <input type="color" id="customColorPicker" value="#e8c49a">
                 <span class="rainbow-icon" id="customColorIcon"></span>
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Blur Background Options (shown when background=blur) -->
+        <div class="setting-row" id="blurOptionsRow" style="display:none;">
+          <div class="setting-label" data-i18n="blurOptions">Blur</div>
+          <div class="setting-control">
+            <div class="blur-controls">
+              <div class="blur-row">
+                <span class="blur-sub-label" data-i18n="blurRadius">Radius</span>
+                <div class="range-wrap">
+                  <input type="range" id="blurRadiusRange" min="0" max="60" step="2" value="20">
+                  <span class="range-val" id="blurRadiusVal">20px</span>
+                </div>
+              </div>
+              <div class="blur-row">
+                <span class="blur-sub-label" data-i18n="blurStyle">Style</span>
+                <select id="blurStyleSelect" class="font-select" style="flex:1;">
+                  <option value="normal" data-i18n="blurStyleNormal">Normal</option>
+                  <option value="grayscale" data-i18n="blurStyleGrayscale">Grayscale</option>
+                  <option value="sepia" data-i18n="blurStyleSepia">Sepia</option>
+                  <option value="saturate" data-i18n="blurStyleSaturate">Vivid</option>
+                </select>
+              </div>
+              <div class="blur-row">
+                <span class="blur-sub-label" data-i18n="blurBrightness">Brightness</span>
+                <div class="range-wrap">
+                  <input type="range" id="blurBrightnessRange" min="20" max="120" step="5" value="80">
+                  <span class="range-val" id="blurBrightnessVal">80%</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -364,6 +423,26 @@
             <div class="range-wrap">
               <input type="range" id="mapOverlayOpacityRange" min="10" max="100" step="5" value="70">
               <span class="range-val" id="mapOverlayOpacityVal">70%</span>
+            </div>
+          </div>
+        </div>
+        <!-- Location icon picker (shown when showLocation is on) -->
+        <div class="setting-row" id="locationIconRow" style="display:none;">
+          <div class="setting-label" data-i18n="mapIcon">Icon</div>
+          <div class="setting-control">
+            <div class="icon-picker">
+              <button class="icon-pick-btn active" data-icon="pin" title="Pin">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+              </button>
+              <button class="icon-pick-btn" data-icon="dot" title="Dot">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3" fill="white"/></svg>
+              </button>
+              <button class="icon-pick-btn" data-icon="compass" title="Compass">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><polygon points="12,4 14,12 12,14 10,12" fill="currentColor" stroke="none"/><polygon points="12,20 14,12 12,10 10,12" fill="currentColor" opacity=".4" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="white" stroke="none"/></svg>
+              </button>
+              <button class="icon-pick-btn" data-icon="globe" title="Globe">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/><path d="M4.5 7.5h15M4.5 16.5h15"/></svg>
+              </button>
             </div>
           </div>
         </div>
