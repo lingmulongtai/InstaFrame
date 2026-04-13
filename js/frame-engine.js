@@ -376,8 +376,8 @@ const FrameEngine = (() => {
       ctx.lineTo(-r * 0.3, -r * 0.25);
       ctx.closePath();
       ctx.fill();
-      // South (down)
-      ctx.fillStyle = color + '99';
+      // South (down) — muted
+      ctx.globalAlpha = 0.4;
       ctx.beginPath();
       ctx.moveTo(0, r);
       ctx.lineTo(r * 0.3, r * 0.25);
@@ -386,7 +386,7 @@ const FrameEngine = (() => {
       ctx.closePath();
       ctx.fill();
       // East
-      ctx.fillStyle = color;
+      ctx.globalAlpha = 1;
       ctx.beginPath();
       ctx.moveTo(r, 0);
       ctx.lineTo(r * 0.25, -r * 0.3);
@@ -394,8 +394,8 @@ const FrameEngine = (() => {
       ctx.lineTo(r * 0.25, r * 0.3);
       ctx.closePath();
       ctx.fill();
-      // West
-      ctx.fillStyle = color + '99';
+      // West — muted
+      ctx.globalAlpha = 0.4;
       ctx.beginPath();
       ctx.moveTo(-r, 0);
       ctx.lineTo(-r * 0.25, -r * 0.3);
@@ -403,6 +403,7 @@ const FrameEngine = (() => {
       ctx.lineTo(-r * 0.25, r * 0.3);
       ctx.closePath();
       ctx.fill();
+      ctx.globalAlpha = 1;
       // Center dot
       ctx.fillStyle = 'rgba(255,255,255,0.6)';
       ctx.beginPath();
