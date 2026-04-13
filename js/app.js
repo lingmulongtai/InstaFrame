@@ -51,6 +51,7 @@ const SETTINGS_HISTORY_LIMIT = 80;
 const _settingsUndoStack = [];
 const _settingsRedoStack = [];
 let _historyLocked = false;
+let _updateMobileEmptyOverlay = null; // set by setupMobileTabs, called from updateUI
 
 function _createSettingsSnapshot() {
   return {
@@ -1309,8 +1310,8 @@ function updateUI() {
   if (resizeHandle) resizeHandle.style.display = hasItems ? 'block' : 'none';
 
   // Update mobile tap-to-import overlay
-  if (typeof setupMobileTabs._updateEmptyTapOverlay === 'function') {
-    setupMobileTabs._updateEmptyTapOverlay();
+  if (typeof _updateMobileEmptyOverlay === 'function') {
+    _updateMobileEmptyOverlay();
   }
 
   // If no items, reset the drop zone to its empty/clickable state
@@ -2070,8 +2071,8 @@ function setupMobileTabs() {
   }
 
   // Re-evaluate overlay whenever items change (hooked via updateUI calls)
-  // We expose this so updateUI() can call it after state changes
-  setupMobileTabs._updateEmptyTapOverlay = updateEmptyTapOverlay;
+  // Expose via module-level variable so updateUI() can call it after state changes
+  _updateMobileEmptyOverlay = updateEmptyTapOverlay;
 
   // Initial evaluation
   updateEmptyTapOverlay();
