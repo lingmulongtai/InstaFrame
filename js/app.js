@@ -2025,9 +2025,9 @@ function _clampRangeInputValue(el, rawValue) {
 }
 
 function _extractNumericInputValue(text) {
-  const m = String(text ?? '').replace(',', '.').match(/[+-]?\d+(?:\.\d+)?/);
+  const m = String(text ?? '').replace(',', '.').match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(?:%|×|px)?\s*$/i);
   if (!m) return null;
-  const n = Number(m[0]);
+  const n = Number(m[1]);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -2076,7 +2076,8 @@ function setupSettingsListeners() {
 
     valEl.addEventListener('focus', () => {
       valEl.textContent = el.value;
-      document.getSelection()?.selectAllChildren(valEl);
+      const sel = document.getSelection();
+      if (sel) sel.selectAllChildren(valEl);
     });
     valEl.addEventListener('blur', commit);
     valEl.addEventListener('keydown', e => {
