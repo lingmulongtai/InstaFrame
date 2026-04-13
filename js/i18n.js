@@ -229,7 +229,7 @@ function detectInitialLang() {
   const validCandidates = langCandidates.filter(Boolean);
   const normalized = validCandidates.map(v => String(v).toLowerCase());
   if (normalized.some(v => v.startsWith('ja'))) return 'ja';
-  const hasJapanRegion = validCandidates.some(v => {
+  const hasJapanRegion = !!validCandidates.find(v => {
     const raw = String(v);
     if (typeof Intl !== 'undefined' && Intl.Locale) {
       try {
