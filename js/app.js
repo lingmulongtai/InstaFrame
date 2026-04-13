@@ -1308,6 +1308,11 @@ function updateUI() {
   const resizeHandle = document.getElementById('mainResizeHandle');
   if (resizeHandle) resizeHandle.style.display = hasItems ? 'block' : 'none';
 
+  // Update mobile tap-to-import overlay
+  if (typeof setupMobileTabs._updateEmptyTapOverlay === 'function') {
+    setupMobileTabs._updateEmptyTapOverlay();
+  }
+
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
     const dropZone = document.getElementById('dropZone');
@@ -2003,6 +2008,9 @@ function setupMobileTabs() {
 
     // When switching to preview tab, fire a live preview update
     if (tab === 'preview') scheduleLivePreview();
+
+    // Update tap-to-import overlay visibility for the new tab
+    updateEmptyTapOverlay();
   }
 
   tabBar.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2020,6 +2028,7 @@ function setupMobileTabs() {
     else if (!document.body.getAttribute('data-mobile-tab')) {
       document.body.setAttribute('data-mobile-tab', 'preview');
     }
+    updateEmptyTapOverlay();
   });
 
   // Mobile "Add Photos" button (in empty hint on Photos tab)
@@ -2028,6 +2037,44 @@ function setupMobileTabs() {
   if (mobileAddBtn && fileInput) {
     mobileAddBtn.addEventListener('click', () => fileInput.click());
   }
+
+  // ── Tap-to-import overlay for empty state ──────────────────────────────────
+  // A transparent overlay placed over preview-area and empty-hint that opens
+  // the file picker when tapped, but only while no files are loaded on mobile.
+
+  // Create overlay element once and reuse
+  const tapOverlay = document.createElement('div');
+  tapOverlay.className = 'mobile-empty-tap-overlay';
+  tapOverlay.style.display = 'none';
+  // Append to main so it covers whichever tab panel is visible
+  const mainEl = document.querySelector('.main');
+  if (mainEl) mainEl.appendChild(tapOverlay);
+
+  if (tapOverlay && fileInput) {
+    tapOverlay.addEventListener('click', (e) => {
+      // Only trigger when no files loaded and on mobile
+      if (!isMobile() || state.items.length > 0) return;
+      // Prevent double-trigger if a child button was the target
+      if (e.target !== tapOverlay) return;
+      fileInput.click();
+    });
+  }
+
+  function updateEmptyTapOverlay() {
+    if (!tapOverlay) return;
+    const empty   = state.items.length === 0;
+    const mobile  = isMobile();
+    const tab     = document.body.getAttribute('data-mobile-tab');
+    const active  = empty && mobile && (tab === 'preview' || tab === 'photos');
+    tapOverlay.style.display = active ? 'block' : 'none';
+  }
+
+  // Re-evaluate overlay whenever items change (hooked via updateUI calls)
+  // We expose this so updateUI() can call it after state changes
+  setupMobileTabs._updateEmptyTapOverlay = updateEmptyTapOverlay;
+
+  // Initial evaluation
+  updateEmptyTapOverlay();
 }
 
 // ─── Accent Color ─────────────────────────────────────────────────────────────
