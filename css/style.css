@@ -2016,8 +2016,11 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
     display: none !important;
   }
 
-  /* Image grid: 2 columns on mobile */
-  #imageGrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  /* Image grid: mobile card-size slider should still affect column sizing */
+  #imageGrid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min-w)), 1fr));
+    gap: 8px;
+  }
 
   /* Card actions compact */
   .card-actions { flex-wrap: wrap; gap: 4px; }
