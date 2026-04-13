@@ -48,9 +48,10 @@ const FrameEngine = (() => {
     const sB = sideBorder   * pf;
     const tB = sideBorder   * pf;
     const bB = bottomBorder * pf;
+    const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
 
     const canvasW = Math.round(W + sB * 2);
-    const canvasH = Math.round(H + tB + bB);
+    const canvasH = imageLayout.canvasH;
 
     const canvas = document.createElement('canvas');
     canvas.width  = canvasW;
@@ -63,17 +64,17 @@ const FrameEngine = (() => {
       ctx.fillStyle = frameColor;
       ctx.fillRect(0, 0, canvasW, canvasH);
     }
-    drawImageWithVerticalOffset(ctx, img, sB, tB, W, H, settings.imageOffsetY);
-    drawInnerShadow(ctx, sB, tB, W, H);
+    drawImageAtY(ctx, img, sB, imageLayout.imageTop, W, H);
+    drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
 
     // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
     if (mapOverlayImg && settings.showMapOverlay) {
-      drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB, W, H });
+      drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageLayout.imageTop, W, H });
     }
 
     drawExifText(ctx, exif, settings, {
       canvasW, canvasH,
-      imageBottom: tB + H,
+      imageBottom: imageLayout.imageBottom,
       bottomAreaHeight: bB,
       isPortrait,
       frameColor,
@@ -138,16 +139,19 @@ const FrameEngine = (() => {
     ctx.fillRect(x, y, w, h);
   }
 
-  function drawImageWithVerticalOffset(ctx, src, x, y, w, h, imageOffsetY = 0) {
+  function computeImageVerticalLayout(h, topBorder, bottomBorder, imageOffsetY = 0) {
     const raw = Number(imageOffsetY);
     const pct = Number.isFinite(raw) ? Math.max(-100, Math.min(100, raw)) : 0;
     const offsetPx = Math.round(h * (pct / 100));
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x, y, w, h);
-    ctx.clip();
-    ctx.drawImage(src, x, y + offsetPx, w, h);
-    ctx.restore();
+    const imageTop = Math.max(0, topBorder + offsetPx);
+    const imageBottom = imageTop + h;
+    const baseCanvasH = Math.round(h + topBorder + bottomBorder);
+    const canvasH = Math.max(baseCanvasH, Math.round(imageBottom + bottomBorder));
+    return { imageTop, imageBottom, canvasH };
+  }
+
+  function drawImageAtY(ctx, src, x, y, w, h) {
+    ctx.drawImage(src, x, y, w, h);
   }
 
   /**
@@ -594,12 +598,13 @@ const FrameEngine = (() => {
         const sB  = sideBorder   * pf;
         const tB  = sideBorder   * pf;
         const bB  = bottomBorder * pf;
+        const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
         const canvasW = Math.round(W + sB * 2);
-        const canvasH = Math.round(H + tB + bB);
+        const canvasH = imageLayout.canvasH;
 
         const layout = {
           canvasW, canvasH,
-          imageBottom: tB + H,
+          imageBottom: imageLayout.imageBottom,
           bottomAreaHeight: bB,
           isPortrait,
           frameColor: settings.frameColor || '#F0F0F0',
@@ -675,8 +680,8 @@ const FrameEngine = (() => {
             ctx.fillStyle = frameColor;
             ctx.fillRect(0, 0, canvasW, canvasH);
           }
-          drawImageWithVerticalOffset(ctx, video, sB, tB, W, H, settings.imageOffsetY);
-          drawInnerShadow(ctx, sB, tB, W, H);
+          drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
+          drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
           drawExifText(ctx, exif, settings, layout);
 
           try {
@@ -764,9 +769,10 @@ const FrameEngine = (() => {
         const sB = sideBorder    * pf;
         const tB = sideBorder    * pf;
         const bB = bottomBorder  * pf;
+        const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
 
         const canvasW = Math.round(W + sB * 2);
-        const canvasH = Math.round(H + tB + bB);
+        const canvasH = imageLayout.canvasH;
 
         const canvas = document.createElement('canvas');
         canvas.width  = canvasW;
@@ -775,7 +781,7 @@ const FrameEngine = (() => {
 
         const layout = {
           canvasW, canvasH,
-          imageBottom: tB + H,
+          imageBottom: imageLayout.imageBottom,
           bottomAreaHeight: bB,
           isPortrait,
           frameColor: settings.frameColor || '#F0F0F0',
@@ -822,8 +828,8 @@ const FrameEngine = (() => {
             ctx.fillStyle = frameColor;
             ctx.fillRect(0, 0, canvasW, canvasH);
           }
-          drawImageWithVerticalOffset(ctx, video, sB, tB, W, H, settings.imageOffsetY);
-          drawInnerShadow(ctx, sB, tB, W, H);
+          drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
+          drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
           drawExifText(ctx, exif, settings, layout);
 
           if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
