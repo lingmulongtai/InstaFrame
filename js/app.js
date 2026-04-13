@@ -1947,16 +1947,6 @@ function setupCustomizePanel() {
     });
   });
 
-  // ── Language ───────────────────────────────────────────────────────────────
-  document.querySelectorAll('input[name="langChoice"]').forEach(r => {
-    if (r.value === currentLang) r.checked = true;
-    r.addEventListener('change', () => {
-      if (r.value === currentLang) return;
-      setLang(r.value);
-      rerenderCards();
-    });
-  });
-
   // ── Accent color presets ───────────────────────────────────────────────────
   const accentSwatches = document.getElementById('accentSwatches');
   const accentPicker   = document.getElementById('accentColorPicker');
@@ -2180,6 +2170,10 @@ document.addEventListener('DOMContentLoaded', () => {
   setupHistoryControls();
   setupKeyboardShortcuts();
   setupMobileTabs();
+  document.getElementById('langToggleBtn')?.addEventListener('click', () => {
+    toggleLang();
+    rerenderCards();
+  });
   updateUI();
   updatePreviewViewModifiedState();
 
