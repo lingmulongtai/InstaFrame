@@ -2171,7 +2171,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupKeyboardShortcuts();
   setupMobileTabs();
   document.getElementById('langToggleBtn')?.addEventListener('click', () => {
-    toggleLang();
+    setLang(currentLang === 'en' ? 'ja' : 'en');
     rerenderCards();
   });
   updateUI();
