@@ -970,6 +970,144 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .pq-option:hover { background: var(--surface-2); }
 .pq-option.active { color: var(--accent); font-weight: 500; }
 
+/* ── EXIF panel (left edge of live preview, desktop only) ───────────────────── */
+.preview-exif-wrap {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.preview-area.has-preview .preview-exif-wrap {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.preview-exif-toggle {
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: rgba(255,255,255,0.88);
+  border: none;
+  border-radius: 100px;
+  padding: 6px 11px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+.preview-exif-toggle:hover { background: rgba(0,0,0,0.72); }
+.preview-exif-toggle.active { background: rgba(8,145,178,0.72); }
+
+.preview-exif-drawer {
+  display: none;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(0,0,0,0.68);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
+  padding: 12px;
+  width: 210px;
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
+}
+.preview-exif-drawer::-webkit-scrollbar { width: 3px; }
+.preview-exif-drawer::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+
+.preview-exif-wrap.exif-open .preview-exif-drawer { display: flex; }
+
+.preview-exif-drawer-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+}
+
+.preview-exif-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+.preview-exif-grid label {
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.5);
+  white-space: nowrap;
+  user-select: none;
+}
+.preview-exif-grid input {
+  background: rgba(255,255,255,0.09);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.9);
+  font-family: inherit;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+.preview-exif-grid input:focus {
+  border-color: rgba(8,145,178,0.65);
+  background: rgba(255,255,255,0.14);
+}
+.preview-exif-grid input::placeholder { color: rgba(255,255,255,0.25); }
+
+.preview-exif-location-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.preview-exif-location-row input { flex: 1; min-width: 0; }
+
+.preview-exif-geo-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.65);
+  display: flex;
+  align-items: center;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+.preview-exif-geo-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+
+.preview-exif-apply-btn {
+  background: rgba(8,145,178,0.75);
+  color: white;
+  border: none;
+  border-radius: 100px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.12s;
+  margin-top: 2px;
+}
+.preview-exif-apply-btn:hover { background: rgba(6,121,143,0.88); }
+
+/* Hide on mobile — per-card EXIF editor is used on mobile */
+@media (max-width: 768px) {
+  .preview-exif-wrap { display: none !important; }
+}
+
 /* ── Empty hint ───────────────────────────────────────────────────────────────── */
 .empty-hint {
   flex: 1;
