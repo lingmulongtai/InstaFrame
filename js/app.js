@@ -2025,8 +2025,10 @@ function _clampRangeInputValue(el, rawValue) {
 }
 
 function _extractNumericInputValue(text, allowedUnits = []) {
+  const normalized = String(text ?? '').replace(',', '.');
+  if (normalized.length > 64) return null;
   // Accept suffixes shown in UI labels so users can edit in-place without removing units.
-  const m = String(text ?? '').replace(',', '.').match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(%|×|px)?\s*$/i);
+  const m = normalized.match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(%|×|px)?\s*$/i);
   if (!m) return null;
   const unit = (m[2] || '').toLowerCase();
   if (allowedUnits.length > 0 && unit && !allowedUnits.map(u => String(u).toLowerCase()).includes(unit)) {
@@ -2083,7 +2085,11 @@ function setupSettingsListeners() {
       valEl.textContent = el.value;
       const sel = document.getSelection();
       if (sel) {
-        try { sel.selectAllChildren(valEl); } catch (_) { /* Safe fallback for edge-browser/contenteditable quirks. */ }
+        try { sel.selectAllChildren(valEl); } catch (err) {
+          if (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost') {
+            console.debug('Range value selection skipped:', err);
+          }
+        }
       }
     });
     valEl.addEventListener('blur', commit);
