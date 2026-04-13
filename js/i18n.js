@@ -4,6 +4,8 @@
 const I18N = {
   en: {
     appTitle: 'InstaFrame by lingmulongtai',
+    appTitleMain: 'InstaFrame',
+    appTitleBy: 'by lingmulongtai',
     appSubtitle: 'EXIF photo frame generator',
     dropZoneText: 'Drop photos here, or click to select',
     dropZoneSubtext: 'JPEG · PNG · HEIC · MP4 · MOV · multiple files',
@@ -20,6 +22,7 @@ const I18N = {
     exifItalicLabel: 'Italic (EXIF line)',
     lineGap: 'Line Spacing',
     frameThickness: 'Frame Thickness',
+    imageOffsetY: 'Image Y',
     shotOnFontSize: '"Shot on" Font Size',
     exifFontSize: 'EXIF Font Size',
     textOffsetY: 'Text Vertical Offset',
@@ -134,6 +137,8 @@ const I18N = {
   },
   ja: {
     appTitle: 'InstaFrame by lingmulongtai',
+    appTitleMain: 'InstaFrame',
+    appTitleBy: 'by lingmulongtai',
     appSubtitle: 'EXIF photo frame generator',
     dropZoneText: 'ここに写真をドロップ、またはクリックして選択',
     dropZoneSubtext: 'JPEG · PNG · HEIC · MP4 · MOV · 複数ファイル対応',
@@ -150,6 +155,7 @@ const I18N = {
     exifItalicLabel: 'イタリック（EXIF行）',
     lineGap: '行間',
     frameThickness: 'フレームの太さ',
+    imageOffsetY: '画像の上下位置',
     shotOnFontSize: '「Shot on」フォントサイズ',
     exifFontSize: 'EXIFフォントサイズ',
     textOffsetY: 'テキスト縦位置',
