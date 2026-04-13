@@ -22,6 +22,9 @@
   <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/webm-muxer@5/build/webm-muxer.js"></script>
+  <!-- Leaflet.js — map location picker -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLcE=" crossorigin=""></script>
 </head>
 <body>
 <div class="app-shell">
@@ -337,6 +340,33 @@
             </div>
           </div>
         </div>
+        <!-- Map overlay (shown when showLocation is on) -->
+        <div class="setting-row map-overlay-row" id="mapOverlayRow" style="display:none;">
+          <div class="setting-control">
+            <div class="vis-toggles">
+              <label class="ios-toggle">
+                <input type="checkbox" id="showMapOverlay">
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label" data-i18n="showMapOverlay">Map Overlay</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row" id="mapOverlaySettingsRow" style="display:none;">
+          <div class="setting-label" data-i18n="mapboxToken">Mapbox Token</div>
+          <div class="setting-control">
+            <input type="text" id="mapboxToken" class="setting-text-input" placeholder="pk.eyJ1…" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="setting-row" id="mapOverlayOpacityRow" style="display:none;">
+          <div class="setting-label" data-i18n="mapOverlayOpacity">Opacity</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="mapOverlayOpacityRange" min="10" max="100" step="5" value="70">
+              <span class="range-val" id="mapOverlayOpacityVal">70%</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="sidebar-sep"></div>
@@ -473,37 +503,43 @@
         </div>
       </div>
       <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
-      <div class="preview-exif-wrap" id="previewExifWrap">
-        <button class="preview-exif-toggle" id="previewExifToggleBtn" onclick="toggleLiveExifPanel()" title="EXIF">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 9h4"/></svg>
-          <span>EXIF</span>
-        </button>
+      <div class="preview-exif-wrap exif-open" id="previewExifWrap">
         <div class="preview-exif-drawer" id="previewExifDrawer">
-          <div class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</div>
-          <div class="preview-exif-grid">
-            <label data-i18n="cameraMake">Camera Make</label>
-            <input id="live-exif-make" placeholder="e.g. FUJIFILM">
-            <label data-i18n="cameraModel">Camera Model</label>
-            <input id="live-exif-model" placeholder="e.g. X-T5">
-            <label data-i18n="lensModel">Lens</label>
-            <input id="live-exif-lens" placeholder="e.g. XF35mmF1.4 R">
-            <label data-i18n="focalLength">Focal Length</label>
-            <input id="live-exif-fl" placeholder="35">
-            <label data-i18n="fNumber">Aperture</label>
-            <input id="live-exif-fn" placeholder="1.4">
-            <label data-i18n="exposureTime">Shutter</label>
-            <input id="live-exif-et" placeholder="1/250">
-            <label data-i18n="iso">ISO</label>
-            <input id="live-exif-iso" placeholder="400">
-            <label data-i18n="location">Location</label>
-            <div class="preview-exif-location-row">
-              <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
-              <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
-                <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
-              </button>
-            </div>
+          <div class="preview-exif-drawer-header" onclick="toggleLiveExifPanel()">
+            <div class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</div>
+            <button class="preview-exif-collapse-btn" id="previewExifCollapseBtn" title="Toggle EXIF panel" tabindex="-1">
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>
+            </button>
           </div>
-          <button class="preview-exif-apply-btn" onclick="applyLiveExifEdit()" data-i18n="applyExif">Apply</button>
+          <div class="preview-exif-content" id="previewExifContent">
+            <div class="preview-exif-grid">
+              <label data-i18n="cameraMake">Camera Make</label>
+              <input id="live-exif-make" placeholder="e.g. FUJIFILM">
+              <label data-i18n="cameraModel">Camera Model</label>
+              <input id="live-exif-model" placeholder="e.g. X-T5">
+              <label data-i18n="lensModel">Lens</label>
+              <input id="live-exif-lens" placeholder="e.g. XF35mmF1.4 R">
+              <label data-i18n="focalLength">Focal Length</label>
+              <input id="live-exif-fl" placeholder="35">
+              <label data-i18n="fNumber">Aperture</label>
+              <input id="live-exif-fn" placeholder="1.4">
+              <label data-i18n="exposureTime">Shutter</label>
+              <input id="live-exif-et" placeholder="1/250">
+              <label data-i18n="iso">ISO</label>
+              <input id="live-exif-iso" placeholder="400">
+              <label data-i18n="location">Location</label>
+              <div class="preview-exif-location-row">
+                <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
+                <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
+                </button>
+                <button class="preview-exif-map-btn" onclick="openMapPicker()" title="" data-i18n-attr="title" data-i18n="pickOnMap">
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l-4 2-4-2v10l4 2 4-2 4 2V4l-4-2z"/><path d="M6 4v10M10 2v10"/></svg>
+                </button>
+              </div>
+            </div>
+            <button class="preview-exif-apply-btn" onclick="applyLiveExifEdit()" data-i18n="applyExif">Apply</button>
+          </div>
         </div>
       </div>
       <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
@@ -621,5 +657,20 @@
 <script src="js/i18n.js"></script>
 <script src="js/frame-engine.js"></script>
 <script src="js/app.js"></script>
+
+<!-- ─── Map Location Picker Modal ───────────────────────────────────────────── -->
+<div class="map-modal" id="mapPickerModal" onclick="if(event.target===this)closeMapPicker()">
+  <div class="map-modal-content">
+    <div class="map-modal-header">
+      <span class="map-modal-title" data-i18n="pickOnMap">Pick Location on Map</span>
+      <button class="map-modal-close" onclick="closeMapPicker()" title="Close">×</button>
+    </div>
+    <div id="mapPickerContainer" class="map-picker-container"></div>
+    <div class="map-modal-footer">
+      <span id="mapPickerCoords" class="map-picker-coords" data-i18n="mapClickHint">Click on the map to select a location</span>
+      <button class="btn btn-primary btn-sm" onclick="confirmMapLocation()" data-i18n="mapConfirm">Set Location</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
