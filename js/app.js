@@ -1169,11 +1169,58 @@ let _mapPickerMap    = null;
 let _mapPickerMarker = null;
 let _mapPickerLat    = null;
 let _mapPickerLon    = null;
+let _leafletLoadPromise = null;
+
+function _ensureLeafletStylesheet() {
+  const hasLeafletCss = !!document.querySelector('link[href*="leaflet.css"]');
+  if (hasLeafletCss) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+  link.setAttribute('data-leaflet-runtime', '1');
+  document.head.appendChild(link);
+}
+
+function _loadLeafletScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => reject(new Error('Leaflet script load failed'));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureLeafletLoaded() {
+  if (typeof L !== 'undefined') return true;
+  if (_leafletLoadPromise) return _leafletLoadPromise;
+
+  _leafletLoadPromise = (async () => {
+    _ensureLeafletStylesheet();
+    const sources = [
+      'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js',
+      'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+    ];
+    for (const src of sources) {
+      try {
+        await _loadLeafletScript(src);
+        if (typeof L !== 'undefined') return true;
+      } catch (_) {}
+    }
+    return typeof L !== 'undefined';
+  })();
+
+  const loaded = await _leafletLoadPromise;
+  if (!loaded) _leafletLoadPromise = null;
+  return loaded;
+}
 
 async function openMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (!modal) return;
-  if (typeof L === 'undefined') {
+  const leafletReady = await ensureLeafletLoaded();
+  if (!leafletReady || typeof L === 'undefined') {
     showToast('Map library failed to load', 'error');
     return;
   }
@@ -1370,11 +1417,12 @@ function _previewSettingsHash() {
               : previewZoom <= 1.5 ? 1200
               : previewZoom <= 2.0 ? 1800 : 2400;
   return [maxPx,
-    s.frameColor, s.thicknessScale, s.fontFamily,
+    s.frameColor, s.frameBackground, s.blurRadius, s.blurStyle, s.blurBrightness,
+    s.thicknessScale, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
     s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
     s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
-    s.showLocation, s.locationPosition, s.outerPadding, s.aspectRatio,
+    s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio,
     s.showMapOverlay, s.mapOverlayOpacity,
   ].join('|');
 }
