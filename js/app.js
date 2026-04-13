@@ -26,6 +26,9 @@ const state = {
     locationPosition:    'below-exif',
     outerPadding:        0,
     aspectRatio:         'original',
+    // ── Map overlay ──────────────────────────────────────────────
+    showMapOverlay:      false,
+    mapOverlayOpacity:   0.7,
     // ── Export (applied at download time) ────────────────────────
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
@@ -88,10 +91,28 @@ function updateHistoryButtons() {
 }
 
 // ─── Preview caches ───────────────────────────────────────────────────────────
-const _imgCache   = new Map(); // item.id → { img: HTMLImageElement, objUrl: string }
-const _frameCache = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
-const _imgFailed  = new Set(); // item IDs that failed image load — skip retry
-let   _renderSeq  = 0;         // increments on each render to cancel stale ones
+const _imgCache      = new Map(); // item.id → { img: HTMLImageElement, objUrl: string }
+const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
+const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
+const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
+let   _renderSeq     = 0;         // increments on each render to cancel stale ones
+
+/** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
+async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
+  const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
+  if (_mapImgCache.has(key)) return _mapImgCache.get(key);
+  let token;
+  try { token = localStorage.getItem('instaframe_mapbox_token') || ''; } catch (_) { token = ''; }
+  if (!token) return null;
+  const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => { _mapImgCache.set(key, img); resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
 
 // ImageItem schema:
 // {
@@ -198,11 +219,15 @@ async function readExif(file) {
     if (!raw) return emptyExif();
 
     // Parse GPS coordinates if present
-    let location = '';
+    let location  = '';
+    let latitude  = null;
+    let longitude = null;
     if (raw.GPSLatitude && raw.GPSLongitude) {
       const lat = gpsToDecimal(raw.GPSLatitude, raw.GPSLatitudeRef);
       const lon = gpsToDecimal(raw.GPSLongitude, raw.GPSLongitudeRef);
       if (lat != null && lon != null) {
+        latitude  = lat;
+        longitude = lon;
         // Kick off reverse geocoding asynchronously; returns raw coords initially
         location = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
         // Store coords for later reverse-geocoding
@@ -219,6 +244,8 @@ async function readExif(file) {
       exposureTime: raw.ExposureTime ? String(raw.ExposureTime) : '',
       iso:          raw.ISO || raw.ISOSpeedRatings || '',
       location,
+      latitude,
+      longitude,
     };
   } catch (e) {
     return emptyExif();
@@ -226,7 +253,7 @@ async function readExif(file) {
 }
 
 function emptyExif() {
-  return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'' };
+  return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'', latitude: null, longitude: null };
 }
 
 function gpsToDecimal(dms, ref) {
@@ -368,8 +395,14 @@ async function generateItem(item, onExternalProgress = null) {
         }
       );
     } else {
-      const img   = await FrameEngine.loadImage(item.file);
-      item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings);
+      const img = await FrameEngine.loadImage(item.file);
+      // Pre-fetch map overlay image if enabled and coordinates are available
+      let mapOverlayImg = null;
+      if (state.settings.showMapOverlay && state.settings.showLocation &&
+          item.exif && item.exif.latitude != null && item.exif.longitude != null) {
+        mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
+      }
+      item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
       if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
@@ -663,6 +696,7 @@ function restoreSettings() {
     ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
     ['showLocation',     saved.showLocation],
+    ['showMapOverlay',   saved.showMapOverlay],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -674,9 +708,29 @@ function restoreSettings() {
     const r = document.querySelector(`input[name="locationPos"][value="${saved.locationPosition}"]`);
     if (r) r.checked = true;
   }
-  // Show/hide location position row
-  const locPosRow = document.getElementById('locationPositionRow');
+  // Show/hide location position row and map overlay rows
+  const locPosRow   = document.getElementById('locationPositionRow');
   if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
+  const mapOvRow    = document.getElementById('mapOverlayRow');
+  if (mapOvRow) mapOvRow.style.display = (saved.showLocation) ? '' : 'none';
+  const mapOvSetRow = document.getElementById('mapOverlaySettingsRow');
+  if (mapOvSetRow) mapOvSetRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
+  if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+
+  // Map overlay opacity
+  if (saved.mapOverlayOpacity != null) {
+    const pct = Math.round(saved.mapOverlayOpacity * 100);
+    const opEl = document.getElementById('mapOverlayOpacityRange');
+    if (opEl) opEl.value = pct;
+    const opVal = document.getElementById('mapOverlayOpacityVal');
+    if (opVal) opVal.textContent = pct + '%';
+  }
+  // Restore Mapbox token from localStorage
+  try {
+    const token = localStorage.getItem('instaframe_mapbox_token');
+    if (token) { const el = document.getElementById('mapboxToken'); if (el) el.value = token; }
+  } catch (_) {}
 
   // Aspect ratio
   if (saved.aspectRatio) {
@@ -759,9 +813,24 @@ function applySettings() {
   const locPosRadio = document.querySelector('input[name="locationPos"]:checked');
   state.settings.locationPosition = locPosRadio ? locPosRadio.value : 'below-exif';
 
-  // Show/hide location position row
-  const locPosRow = document.getElementById('locationPositionRow');
+  // Map overlay settings
+  state.settings.showMapOverlay    = document.getElementById('showMapOverlay')?.checked ?? false;
+  state.settings.mapOverlayOpacity = parseInt(document.getElementById('mapOverlayOpacityRange')?.value || '70', 10) / 100;
+  // Save Mapbox token separately (not in state.settings to keep it out of settings history)
+  const tokenEl = document.getElementById('mapboxToken');
+  if (tokenEl && tokenEl.value.trim()) {
+    try { localStorage.setItem('instaframe_mapbox_token', tokenEl.value.trim()); } catch (_) {}
+  }
+
+  // Show/hide location position row and map overlay rows
+  const locPosRow      = document.getElementById('locationPositionRow');
+  const mapOvRow       = document.getElementById('mapOverlayRow');
+  const mapOvSetRow    = document.getElementById('mapOverlaySettingsRow');
+  const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
   if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
+  if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
+  if (mapOvSetRow) mapOvSetRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
+  if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -958,10 +1027,8 @@ function updateLiveExifPanel() {
 
 function toggleLiveExifPanel() {
   const wrap = document.getElementById('previewExifWrap');
-  const btn  = document.getElementById('previewExifToggleBtn');
   if (!wrap) return;
   const open = wrap.classList.toggle('exif-open');
-  if (btn) btn.classList.toggle('active', open);
   if (open) updateLiveExifPanel();
 }
 
@@ -1017,6 +1084,126 @@ async function getLiveDeviceLocation() {
     () => { input.value = original; input.disabled = false; showToast('Could not get location', 'warn'); },
     { timeout: 10000 }
   );
+}
+
+// ─── Map Location Picker ──────────────────────────────────────────────────────
+let _mapPickerMap    = null;
+let _mapPickerMarker = null;
+let _mapPickerLat    = null;
+let _mapPickerLon    = null;
+
+async function openMapPicker() {
+  const modal = document.getElementById('mapPickerModal');
+  if (!modal) return;
+  modal.classList.add('open');
+
+  // Initialize Leaflet map if not yet created
+  if (!_mapPickerMap) {
+    _mapPickerMap = L.map('mapPickerContainer').setView([35.6762, 139.6503], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(_mapPickerMap);
+
+    _mapPickerMap.on('click', e => {
+      const { lat, lng } = e.latlng;
+      _mapPickerLat = lat;
+      _mapPickerLon = lng;
+      if (_mapPickerMarker) {
+        _mapPickerMarker.setLatLng(e.latlng);
+      } else {
+        _mapPickerMarker = L.marker(e.latlng).addTo(_mapPickerMap);
+      }
+      const coordsEl = document.getElementById('mapPickerCoords');
+      if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
+    });
+  }
+
+  // Force Leaflet to recalculate size after modal becomes visible
+  setTimeout(() => _mapPickerMap.invalidateSize(), 50);
+
+  // Pre-fill from current item's lat/lon if available
+  const item = getSelectedPreviewItem();
+  if (item && item.exif && item.exif.latitude != null && item.exif.longitude != null) {
+    const lat = item.exif.latitude, lon = item.exif.longitude;
+    _mapPickerLat = lat;
+    _mapPickerLon = lon;
+    _mapPickerMap.setView([lat, lon], 12);
+    if (_mapPickerMarker) {
+      _mapPickerMarker.setLatLng([lat, lon]);
+    } else {
+      _mapPickerMarker = L.marker([lat, lon]).addTo(_mapPickerMap);
+    }
+    const coordsEl = document.getElementById('mapPickerCoords');
+    if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+    return;
+  }
+
+  // Try browser geolocation first, then IP-based fallback
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        _mapPickerMap.setView([latitude, longitude], 12);
+      },
+      () => _fetchIpLocation(),
+      { timeout: 5000 }
+    );
+  } else {
+    _fetchIpLocation();
+  }
+}
+
+async function _fetchIpLocation() {
+  try {
+    const res  = await fetch('https://ipapi.co/json/');
+    const data = await res.json();
+    if (data.latitude && data.longitude && _mapPickerMap) {
+      _mapPickerMap.setView([data.latitude, data.longitude], 10);
+    }
+  } catch { /* silently ignore — stay at default view */ }
+}
+
+function closeMapPicker() {
+  const modal = document.getElementById('mapPickerModal');
+  if (modal) modal.classList.remove('open');
+}
+
+async function confirmMapLocation() {
+  if (_mapPickerLat == null || _mapPickerLon == null) {
+    showToast('Please click on the map to select a location', 'warn');
+    return;
+  }
+  const lat = _mapPickerLat, lon = _mapPickerLon;
+
+  // Resolve location name via reverse geocoding
+  const name = await reverseGeocode(lat, lon);
+  const locStr = name || `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+
+  // Update live EXIF panel input
+  const locInput = document.getElementById('live-exif-location');
+  if (locInput) locInput.value = locStr;
+
+  // Store lat/lon on the current item's exif and apply
+  const item = getSelectedPreviewItem();
+  if (item) {
+    if (!item.exif) item.exif = {};
+    item.exif.latitude  = lat;
+    item.exif.longitude = lon;
+    item.exif.location  = locStr;
+    // Sync card EXIF editor if open
+    const cardLocEl = document.getElementById(`exif-location-${item.id}`);
+    if (cardLocEl) cardLocEl.value = locStr;
+    item.status = 'pending';
+    item.canvas = null;
+    _invalidateItemCache(item.id);
+    updateItemStatus(item);
+    updateItemPreview(item);
+    updateUI();
+    scheduleLivePreview();
+  }
+
+  closeMapPicker();
 }
 
 
@@ -1101,6 +1288,7 @@ function _previewSettingsHash() {
     s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
     s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.outerPadding, s.aspectRatio,
+    s.showMapOverlay, s.mapOverlayOpacity,
   ].join('|');
 }
 
@@ -1238,8 +1426,15 @@ async function renderLivePreview() {
       : pq === 'normal' ? 1200 : pq === 'high' ? 1800 : pq === 'max' ? 2400
       : Math.min(2400, Math.round(1200 * previewZoom));
 
+    // Pre-fetch map overlay image if enabled and coordinates are available
+    let mapOverlayImg = null;
+    if (state.settings.showMapOverlay && state.settings.showLocation &&
+        item.exif && item.exif.latitude != null && item.exif.longitude != null) {
+      mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
+    }
+
     const rendered = await FrameEngine.renderFrameWhenReady(
-      img, item.exif, state.settings, { maxPreviewPx });
+      img, item.exif, state.settings, { maxPreviewPx, mapOverlayImg });
 
     if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
@@ -1589,18 +1784,21 @@ function setupDropZone() {
     resetPreviewView();
   });
 
-  // ── Drag-to-pan on preview canvas ──────────────────────────────────────────
+  // ── Drag-to-pan on preview area (canvas + background) ──────────────────────
   const previewCanvas = document.getElementById('livePreviewCanvas');
   let _panDragging = false;
   let _panStart    = { x: 0, y: 0 };
   let _panOrigin   = { x: 0, y: 0 };
 
-  previewCanvas.addEventListener('mousedown', e => {
+  // Allow dragging from anywhere in the preview area (canvas or background margin)
+  zone.addEventListener('mousedown', e => {
     if (!zone.classList.contains('has-preview')) return;
+    // Skip if the click landed on an interactive overlay element
+    if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     _panDragging = true;
     _panStart    = { x: e.clientX, y: e.clientY };
     _panOrigin   = { x: previewPan.x, y: previewPan.y };
-    previewCanvas.classList.add('dragging');
+    zone.classList.add('dragging');
     e.preventDefault();
   });
 
@@ -1615,10 +1813,10 @@ function setupDropZone() {
   window.addEventListener('mouseup', () => {
     if (!_panDragging) return;
     _panDragging = false;
-    previewCanvas.classList.remove('dragging');
+    zone.classList.remove('dragging');
   });
 
-  // Touch: single-finger pan + two-finger pinch-to-zoom
+  // Touch: single-finger pan + two-finger pinch-to-zoom (whole preview area)
   let _pinching  = false;
   let _pinchDist = 0;
   let _pinchZoom = 1.0;
@@ -1627,8 +1825,10 @@ function setupDropZone() {
     return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   }
 
-  previewCanvas.addEventListener('touchstart', e => {
+  zone.addEventListener('touchstart', e => {
     if (!zone.classList.contains('has-preview')) return;
+    // Skip if touch started on an interactive overlay element
+    if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     if (e.touches.length === 2) {
       // Two fingers → start pinch; cancel any ongoing pan
       _panDragging = false;
@@ -1645,7 +1845,7 @@ function setupDropZone() {
     }
   }, { passive: false });
 
-  previewCanvas.addEventListener('touchmove', e => {
+  zone.addEventListener('touchmove', e => {
     if (!zone.classList.contains('has-preview')) return;
     if (e.touches.length === 2 && _pinching) {
       const dist  = _touchDist(e.touches);
@@ -1661,7 +1861,7 @@ function setupDropZone() {
     }
   }, { passive: false });
 
-  previewCanvas.addEventListener('touchend', e => {
+  zone.addEventListener('touchend', e => {
     if (e.touches.length === 0) {
       if (_pinching) scheduleLivePreview(); // re-render at new zoom level
       _panDragging = false;
@@ -1686,12 +1886,13 @@ function setupDropZone() {
 function setupSettingsListeners() {
   // Range sliders
   [
-    ['thicknessRange',    'thicknessRangeVal',    v => parseFloat(v).toFixed(1) + '×'],
-    ['shotOnFontRange',   'shotOnFontRangeVal',   v => parseFloat(v).toFixed(1) + '×'],
-    ['exifFontRange',     'exifFontRangeVal',     v => parseFloat(v).toFixed(1) + '×'],
-    ['lineGapRange',      'lineGapRangeVal',      v => parseFloat(v).toFixed(1) + '×'],
-    ['textOffsetRange',   'textOffsetRangeVal',   v => parseFloat(v).toFixed(1)],
-    ['outerPaddingRange', 'outerPaddingRangeVal', v => v + '%'],
+    ['thicknessRange',          'thicknessRangeVal',          v => parseFloat(v).toFixed(1) + '×'],
+    ['shotOnFontRange',         'shotOnFontRangeVal',         v => parseFloat(v).toFixed(1) + '×'],
+    ['exifFontRange',           'exifFontRangeVal',           v => parseFloat(v).toFixed(1) + '×'],
+    ['lineGapRange',            'lineGapRangeVal',            v => parseFloat(v).toFixed(1) + '×'],
+    ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1)],
+    ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%'],
+    ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%'],
   ].forEach(([id, valId, fmt]) => {
     const el    = document.getElementById(id);
     const valEl = document.getElementById(valId);
@@ -1745,11 +1946,20 @@ function setupSettingsListeners() {
     });
   }
 
-  // Font style checkboxes (camera name + EXIF)
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'showLocation'].forEach(id => {
+  // Font style checkboxes (camera name + EXIF) and map overlay toggle
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'showLocation', 'showMapOverlay'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
+
+  // Mapbox token input: save on blur
+  const mapboxTokenEl = document.getElementById('mapboxToken');
+  if (mapboxTokenEl) {
+    mapboxTokenEl.addEventListener('change', () => {
+      try { localStorage.setItem('instaframe_mapbox_token', mapboxTokenEl.value.trim()); } catch (_) {}
+      applySettings();
+    });
+  }
 
   // Location position radios
   document.querySelectorAll('input[name="locationPos"]').forEach(r => {
