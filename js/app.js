@@ -919,11 +919,107 @@ function applyExifEdit(id) {
   updateItemStatus(item);
   updateItemPreview(item);
   toggleExifEditor(id);
+  updateLiveExifPanel();
   updateUI();
   scheduleLivePreview();
 }
 
-// ─── Live Preview ─────────────────────────────────────────────────────────────
+// ─── Live EXIF Panel (left edge of preview, desktop only) ─────────────────────
+function getSelectedPreviewItem() {
+  return (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
+    || state.items[0]
+    || null;
+}
+
+function updateLiveExifPanel() {
+  const item = getSelectedPreviewItem();
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  if (!item) {
+    setVal('live-exif-make', '');
+    setVal('live-exif-model', '');
+    setVal('live-exif-lens', '');
+    setVal('live-exif-fl', '');
+    setVal('live-exif-fn', '');
+    setVal('live-exif-et', '');
+    setVal('live-exif-iso', '');
+    setVal('live-exif-location', '');
+    return;
+  }
+  const ex = item.exif || {};
+  setVal('live-exif-make',     ex.make);
+  setVal('live-exif-model',    ex.model);
+  setVal('live-exif-lens',     ex.lensModel);
+  setVal('live-exif-fl',       ex.focalLength);
+  setVal('live-exif-fn',       ex.fNumber);
+  setVal('live-exif-et',       ex.exposureTime);
+  setVal('live-exif-iso',      ex.iso);
+  setVal('live-exif-location', ex.location);
+}
+
+function toggleLiveExifPanel() {
+  const wrap = document.getElementById('previewExifWrap');
+  const btn  = document.getElementById('previewExifToggleBtn');
+  if (!wrap) return;
+  const open = wrap.classList.toggle('exif-open');
+  if (btn) btn.classList.toggle('active', open);
+  if (open) updateLiveExifPanel();
+}
+
+function applyLiveExifEdit() {
+  const item = getSelectedPreviewItem();
+  if (!item) return;
+  const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+  if (!item.exif) item.exif = {};
+  item.exif.make         = getVal('live-exif-make');
+  item.exif.model        = getVal('live-exif-model');
+  item.exif.lensModel    = getVal('live-exif-lens');
+  item.exif.focalLength  = getVal('live-exif-fl');
+  item.exif.fNumber      = getVal('live-exif-fn');
+  item.exif.exposureTime = getVal('live-exif-et');
+  item.exif.iso          = getVal('live-exif-iso');
+  item.exif.location     = getVal('live-exif-location');
+
+  // Sync the per-card EXIF editor inputs if they exist
+  const syncCard = (suffix, val) => { const el = document.getElementById(`${suffix}-${item.id}`); if (el) el.value = val; };
+  syncCard('exif-make',     item.exif.make);
+  syncCard('exif-model',    item.exif.model);
+  syncCard('exif-lens',     item.exif.lensModel);
+  syncCard('exif-fl',       item.exif.focalLength);
+  syncCard('exif-fn',       item.exif.fNumber);
+  syncCard('exif-et',       item.exif.exposureTime);
+  syncCard('exif-iso',      item.exif.iso);
+  syncCard('exif-location', item.exif.location);
+
+  item.status = 'pending';
+  item.canvas = null;
+  _invalidateItemCache(item.id);
+  updateItemStatus(item);
+  updateItemPreview(item);
+  updateUI();
+  scheduleLivePreview();
+}
+
+async function getLiveDeviceLocation() {
+  if (!navigator.geolocation) { showToast('Geolocation not supported', 'warn'); return; }
+  const input = document.getElementById('live-exif-location');
+  if (!input) return;
+  const original = input.value;
+  input.value = '…';
+  input.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const name = await reverseGeocode(latitude, longitude);
+      input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
+      input.disabled = false;
+    },
+    () => { input.value = original; input.disabled = false; showToast('Could not get location', 'warn'); },
+    { timeout: 10000 }
+  );
+}
+
+
 let _livePreviewTimer = null;
 
 function scheduleLivePreview() {
@@ -979,6 +1075,7 @@ function selectItem(id) {
       b.classList.toggle('active', b.dataset.tab === 'preview');
     });
   }
+  updateLiveExifPanel();
   scheduleLivePreview();
 }
 
