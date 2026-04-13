@@ -2024,16 +2024,20 @@ function _clampRangeInputValue(el, rawValue) {
   return val;
 }
 
-function _extractNumericInputValue(text) {
-  // Accept the same suffixes shown in UI labels so users can edit in-place without removing units.
-  const m = String(text ?? '').replace(',', '.').match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(?:%|×|px)?\s*$/i);
+function _extractNumericInputValue(text, allowedUnits = []) {
+  // Accept suffixes shown in UI labels so users can edit in-place without removing units.
+  const m = String(text ?? '').replace(',', '.').match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(%|×|px)?\s*$/i);
   if (!m) return null;
+  const unit = (m[2] || '').toLowerCase();
+  if (allowedUnits.length > 0 && unit && !allowedUnits.map(u => String(u).toLowerCase()).includes(unit)) {
+    return null;
+  }
   const n = Number(m[1]);
   return Number.isFinite(n) ? n : null;
 }
 
 function setupSettingsListeners() {
-  const bindRangeControl = (id, valId, fmt, onValueChange) => {
+  const bindRangeControl = (id, valId, fmt, onValueChange, expectedUnit = '') => {
     const el    = document.getElementById(id);
     const valEl = document.getElementById(valId);
     if (!el) return;
@@ -2061,7 +2065,7 @@ function setupSettingsListeners() {
     valEl.setAttribute('title', 'Edit value');
 
     const commit = () => {
-      const parsed = _extractNumericInputValue(valEl.textContent);
+      const parsed = _extractNumericInputValue(valEl.textContent, expectedUnit ? [expectedUnit] : []);
       if (parsed == null) {
         valEl.textContent = fmt(el.value);
         return;
@@ -2079,7 +2083,7 @@ function setupSettingsListeners() {
       valEl.textContent = el.value;
       const sel = document.getSelection();
       if (sel) {
-        try { sel.selectAllChildren(valEl); } catch (_) {}
+        try { sel.selectAllChildren(valEl); } catch (_) { /* Safe fallback for edge-browser/contenteditable quirks. */ }
       }
     });
     valEl.addEventListener('blur', commit);
@@ -2096,15 +2100,15 @@ function setupSettingsListeners() {
   };
 
   [
-    ['thicknessRange',          'thicknessRangeVal',          v => parseFloat(v).toFixed(1) + '×'],
-    ['imageOffsetRange',        'imageOffsetRangeVal',        v => parseFloat(v).toFixed(0) + '%'],
-    ['shotOnFontRange',         'shotOnFontRangeVal',         v => parseFloat(v).toFixed(1) + '×'],
-    ['exifFontRange',           'exifFontRangeVal',           v => parseFloat(v).toFixed(1) + '×'],
-    ['lineGapRange',            'lineGapRangeVal',            v => parseFloat(v).toFixed(1) + '×'],
-    ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1)],
-    ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%'],
-    ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%'],
-  ].forEach(([id, valId, fmt]) => bindRangeControl(id, valId, fmt, () => applySettings()));
+    ['thicknessRange',          'thicknessRangeVal',          v => parseFloat(v).toFixed(1) + '×', '×'],
+    ['imageOffsetRange',        'imageOffsetRangeVal',        v => parseFloat(v).toFixed(0) + '%', '%'],
+    ['shotOnFontRange',         'shotOnFontRangeVal',         v => parseFloat(v).toFixed(1) + '×', '×'],
+    ['exifFontRange',           'exifFontRangeVal',           v => parseFloat(v).toFixed(1) + '×', '×'],
+    ['lineGapRange',            'lineGapRangeVal',            v => parseFloat(v).toFixed(1) + '×', '×'],
+    ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1),       ''],
+    ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%',                         '%'],
+    ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%',                         '%'],
+  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, () => applySettings(), unit));
 
   // Frame color radios (standard swatches)
   document.querySelectorAll('input[name="frameColor"]').forEach(radio => {
@@ -2171,9 +2175,9 @@ function setupSettingsListeners() {
 
   // Blur background sliders
   [
-    ['blurRadiusRange',     'blurRadiusVal',     v => v + 'px'],
-    ['blurBrightnessRange', 'blurBrightnessVal', v => v + '%'],
-  ].forEach(([id, valId, fmt]) => bindRangeControl(id, valId, fmt, () => applySettings()));
+    ['blurRadiusRange',     'blurRadiusVal',     v => v + 'px', 'px'],
+    ['blurBrightnessRange', 'blurBrightnessVal', v => v + '%',  '%'],
+  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, () => applySettings(), unit));
 
   const blurStyleEl = document.getElementById('blurStyleSelect');
   if (blurStyleEl) blurStyleEl.addEventListener('change', applySettings);
@@ -2219,7 +2223,8 @@ function setupSettingsListeners() {
     v => {
       state.settings.exportPhotoQuality = parseInt(v, 10);
       saveSettings();
-    }
+    },
+    '%'
   );
 
   // ── Export: video bitrate (format wired in initVideoFormatOptions) ────────
