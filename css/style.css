@@ -1495,6 +1495,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
+    /* opacity fades over 0.2s; visibility stays visible during that 0.2s then snaps to hidden */
     transition: opacity 0.2s, visibility 0s 0.2s;
     overflow: hidden;
     box-shadow: none;
