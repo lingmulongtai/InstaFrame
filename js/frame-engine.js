@@ -26,7 +26,7 @@ const FrameEngine = (() => {
   /**
    * Core synchronous renderer — works at whatever resolution img was loaded at.
    */
-  function renderFrame(img, exif, settings) {
+  function renderFrame(img, exif, settings, mapOverlayImg = null) {
     const {
       frameColor       = '#F0F0F0',
       thicknessScale   = 1.0,
@@ -61,6 +61,12 @@ const FrameEngine = (() => {
     ctx.fillRect(0, 0, canvasW, canvasH);
     ctx.drawImage(img, sB, tB, W, H);
     drawInnerShadow(ctx, sB, tB, W, H);
+
+    // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
+    if (mapOverlayImg && settings.showMapOverlay) {
+      drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB, W, H });
+    }
+
     drawExifText(ctx, exif, settings, {
       canvasW, canvasH,
       imageBottom: tB + H,
@@ -98,8 +104,9 @@ const FrameEngine = (() => {
   /**
    * Load fonts needed for the current settings, then render.
    * Pass maxPreviewPx to scale the image down for fast live preview.
+   * Pass mapOverlayImg (HTMLImageElement) to draw a Passage-style map overlay.
    */
-  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null } = {}) {
+  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null } = {}) {
     const family = settings.fontFamily || 'Inter';
 
     if (document.fonts) {
@@ -113,7 +120,7 @@ const FrameEngine = (() => {
     }
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx) : img;
-    const base = renderFrame(renderImg, exif, settings);
+    const base = renderFrame(renderImg, exif, settings, mapOverlayImg);
     return applyPostProcess(base, settings);
   }
 
@@ -125,6 +132,45 @@ const FrameEngine = (() => {
     grad.addColorStop(1, 'rgba(0,0,0,0.05)');
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
+  }
+
+  /**
+   * Draw a Passage-style minimal map overlay in the bottom-right corner of the photo area.
+   */
+  function drawMapOverlay(ctx, mapImg, settings, { sB, tB, W, H }) {
+    const opacity = (typeof settings.mapOverlayOpacity === 'number')
+      ? Math.min(1, Math.max(0, settings.mapOverlayOpacity)) : 0.7;
+
+    // Target size: ~28% of the shorter side, capped at 320px
+    const shortSide = Math.min(W, H);
+    const ovW = Math.min(320, Math.round(shortSide * 0.28));
+    const ovH = Math.round(ovW * (mapImg.naturalHeight / mapImg.naturalWidth));
+
+    // Position: bottom-right corner with a small inset
+    const inset = Math.round(shortSide * 0.025);
+    const ox = sB + W - ovW - inset;
+    const oy = tB + H - ovH - inset;
+
+    ctx.save();
+    // Clip to rounded rect
+    const r = Math.round(ovW * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(ox + r, oy);
+    ctx.lineTo(ox + ovW - r, oy);
+    ctx.quadraticCurveTo(ox + ovW, oy, ox + ovW, oy + r);
+    ctx.lineTo(ox + ovW, oy + ovH - r);
+    ctx.quadraticCurveTo(ox + ovW, oy + ovH, ox + ovW - r, oy + ovH);
+    ctx.lineTo(ox + r, oy + ovH);
+    ctx.quadraticCurveTo(ox, oy + ovH, ox, oy + ovH - r);
+    ctx.lineTo(ox, oy + r);
+    ctx.quadraticCurveTo(ox, oy, ox + r, oy);
+    ctx.closePath();
+    ctx.clip();
+
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(mapImg, ox, oy, ovW, ovH);
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   function drawExifText(ctx, exif, settings, layout) {

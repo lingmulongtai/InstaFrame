@@ -977,10 +977,6 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   top: 50%;
   transform: translateY(-50%);
   z-index: 10;
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 6px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s;
@@ -1012,22 +1008,57 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .preview-exif-toggle.active { background: rgba(8,145,178,0.72); }
 
 .preview-exif-drawer {
-  display: none;
+  display: flex;
   flex-direction: column;
-  gap: 9px;
   background: rgba(0,0,0,0.68);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 10px;
-  padding: 12px;
   width: 210px;
   max-height: calc(100% - 80px);
+  overflow: hidden;
+}
+
+.preview-exif-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+.preview-exif-drawer-header:hover { background: rgba(255,255,255,0.04); }
+
+.preview-exif-content {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 0 12px 12px;
   overflow-y: auto;
 }
-.preview-exif-drawer::-webkit-scrollbar { width: 3px; }
-.preview-exif-drawer::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+.preview-exif-content::-webkit-scrollbar { width: 3px; }
+.preview-exif-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+.preview-exif-wrap:not(.exif-open) .preview-exif-content { display: none; }
 
-.preview-exif-wrap.exif-open .preview-exif-drawer { display: flex; }
+.preview-exif-collapse-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.45);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 0.12s;
+}
+.preview-exif-collapse-btn:hover { color: rgba(255,255,255,0.8); }
+.preview-exif-collapse-btn svg {
+  transition: transform 0.2s;
+}
+.preview-exif-wrap:not(.exif-open) .preview-exif-collapse-btn svg {
+  transform: rotate(180deg);
+}
 
 .preview-exif-drawer-title {
   font-size: 10px;
@@ -1088,6 +1119,20 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 }
 .preview-exif-geo-btn:hover { background: rgba(255,255,255,0.2); color: white; }
 
+.preview-exif-map-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.65);
+  display: flex;
+  align-items: center;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+.preview-exif-map-btn:hover { background: rgba(8,145,178,0.35); color: white; }
+
 .preview-exif-apply-btn {
   background: rgba(8,145,178,0.75);
   color: white;
@@ -1107,6 +1152,95 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 @media (max-width: 768px) {
   .preview-exif-wrap { display: none !important; }
 }
+
+/* ── Map picker modal ─────────────────────────────────────────────────────────── */
+.map-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.map-modal.open { display: flex; }
+
+.map-modal-content {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 95vw);
+  height: min(520px, 90vh);
+  overflow: hidden;
+}
+
+.map-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.map-modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.map-modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.map-modal-close:hover { background: var(--surface-2); color: var(--text); }
+
+.map-picker-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.map-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.map-picker-coords {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Map overlay settings ────────────────────────────────────────────────────── */
+.setting-text-input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  font-family: 'Menlo', 'Consolas', monospace;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.setting-text-input:focus { border-color: var(--accent); }
+.setting-text-input::placeholder { color: var(--text-3); }
 
 /* ── Empty hint ───────────────────────────────────────────────────────────────── */
 .empty-hint {
@@ -1155,9 +1289,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 #livePreviewCanvas.frame-dark {
   box-shadow: 0 6px 30px rgba(0,0,0,0.55), 0 0 0 1.5px rgba(255,255,255,0.2);
 }
-#livePreviewCanvas.dragging {
-  cursor: grabbing;
-}
+/* Whole preview area gets grab cursor when a preview is active */
+.preview-area.has-preview { cursor: grab; }
+.preview-area.has-preview.dragging,
+.preview-area.has-preview.dragging #livePreviewCanvas { cursor: grabbing; }
 
 /* ── Image section ───────────────────────────────────────────────────────────── */
 .image-section {
