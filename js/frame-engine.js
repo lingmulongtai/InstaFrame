@@ -869,5 +869,62 @@ const FrameEngine = (() => {
     });
   }
 
-  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark };
+  /**
+   * Compute the frame layout for a video given its pixel dimensions and current settings.
+   * Returns the same shape used internally by _renderVideoWebCodecs / _renderVideoMediaRecorder.
+   */
+  function computeVideoFrameLayout(videoW, videoH, settings) {
+    const W = videoW, H = videoH;
+    const isPortrait    = H > W;
+    const ts            = settings.thicknessScale || 1;
+    const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
+    const sideBorder    = baseBorder * 0.5;
+    const showLoc       = settings.showLocation && settings.locationPosition === 'below-exif';
+    const locationExtra = showLoc ? H * 0.038 * ts : 0;
+    const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
+    const pf            = isPortrait ? 0.75 : 1.0;
+    const sB            = sideBorder   * pf;
+    const tB            = sideBorder   * pf;
+    const bB            = bottomBorder * pf;
+    const imageLayout   = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
+    const canvasW       = Math.round(W + sB * 2);
+    const canvasH       = imageLayout.canvasH;
+    const frameColor    = settings.frameColor || '#F0F0F0';
+    return {
+      W, H, sB, tB, bB,
+      canvasW, canvasH,
+      imageTop:    imageLayout.imageTop,
+      imageBottom: imageLayout.imageBottom,
+      isPortrait,
+      frameColor,
+    };
+  }
+
+  /**
+   * Draw one video frame (with EXIF frame borders) synchronously onto ctx.
+   * ctx must already be scaled so that 1 unit = 1 logical canvas pixel
+   * (i.e. the caller handles DPR scaling before calling this).
+   */
+  function drawVideoFrameSync(ctx, video, exif, settings, layout) {
+    const { W, H, sB, canvasW, canvasH, imageTop, imageBottom, bB, isPortrait, frameColor } = layout;
+
+    if (settings.frameBackground === 'blur') {
+      drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+    } else {
+      ctx.fillStyle = frameColor;
+      ctx.fillRect(0, 0, canvasW, canvasH);
+    }
+    drawImageAtY(ctx, video, sB, imageTop, W, H);
+    drawInnerShadow(ctx, sB, imageTop, W, H);
+    drawExifText(ctx, exif || {}, settings, {
+      canvasW,
+      canvasH,
+      imageBottom,
+      bottomAreaHeight: bB,
+      isPortrait,
+      frameColor,
+    });
+  }
+
+  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
 })();
