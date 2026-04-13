@@ -158,6 +158,7 @@ html, body {
 .logo-by {
   font-weight: 400;
   font-style: italic;
+  color: var(--text-3);
 }
 .logo-sub {
   display: block;
@@ -840,8 +841,8 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
 .preview-history-wrap {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  right: 12px;
+  bottom: 12px;
   display: flex;
   gap: 6px;
   z-index: 10;
@@ -998,16 +999,12 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .preview-exif-wrap {
   position: absolute;
   left: 12px;
-  top: 46px;
+  top: 12px;
   transform: none;
   z-index: 10;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s, top 0.24s ease, transform 0.24s ease;
-}
-.preview-exif-wrap.exif-open {
-  top: 50%;
-  transform: translateY(-50%);
+  transition: opacity 0.2s;
 }
 .preview-area.has-preview .preview-exif-wrap {
   opacity: 1;
@@ -1269,6 +1266,39 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   font-size: 11.5px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Share modal ─────────────────────────────────────────────────────────────── */
+.share-modal-content {
+  width: min(560px, 94vw);
+  height: auto;
+}
+.share-modal-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.share-modal-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.share-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.share-grid .btn {
+  text-align: center;
+  justify-content: center;
+}
+.share-copy-row {
+  display: flex;
+  gap: 8px;
+}
+.share-copy-row .setting-text-input {
+  font-family: inherit;
 }
 
 /* ── Map overlay settings ────────────────────────────────────────────────────── */
@@ -1895,7 +1925,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
   /* Preview controls */
   .preview-quality-wrap { bottom: 8px; left: 8px; }
-  .preview-history-wrap { top: 8px; left: 8px; }
+  .preview-history-wrap { right: 8px; bottom: 8px; }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
   #zoomRange { height: 60px; }
