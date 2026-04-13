@@ -235,7 +235,7 @@ function detectInitialLang() {
   const tz = typeof Intl !== 'undefined' && Intl.DateTimeFormat
     ? String(Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase()
     : '';
-  if (tz.includes('asia/tokyo') || tz.includes('/japan')) return 'ja';
+  if (tz.includes('asia/tokyo')) return 'ja';
 
   return 'en';
 }
