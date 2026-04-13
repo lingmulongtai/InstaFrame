@@ -1879,3 +1879,79 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
     -webkit-tap-highlight-color: transparent;
   }
 }
+
+/* ── Blur background controls ─────────────────────────────────────────────── */
+.blur-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.blur-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.blur-sub-label {
+  font-size: 11px;
+  color: var(--text-3);
+  min-width: 62px;
+  flex-shrink: 0;
+}
+
+/* ── Location icon picker ─────────────────────────────────────────────────── */
+.icon-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.icon-pick-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r);
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+  color: var(--text-3);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.icon-pick-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-pick-btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* ── Customize panel: token input ─────────────────────────────────────────── */
+.customize-token-input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 5px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  font-family: monospace;
+  box-sizing: border-box;
+}
+.customize-token-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.customize-row-hint {
+  font-size: 10.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+/* ── Map picker container: ensure it has height within flex layout ─────────── */
+.map-picker-container {
+  flex: 1;
+  min-height: 280px;
+}

@@ -9,6 +9,10 @@ const state = {
   settings: {
     // ── Frame rendering ──────────────────────────────────────────
     frameColor:          '#F0F0F0',
+    frameBackground:     'color',   // 'color' | 'blur'
+    blurRadius:          20,
+    blurStyle:           'normal',  // 'normal' | 'grayscale' | 'sepia' | 'saturate'
+    blurBrightness:      80,
     thicknessScale:      1.0,
     fontFamily:          'Inter',
     shotOnFontScale:     1.0,
@@ -24,6 +28,7 @@ const state = {
     cameraNameOnly:      false,
     showLocation:        false,
     locationPosition:    'below-exif',
+    locationIconStyle:   'pin',     // 'pin' | 'dot' | 'compass' | 'globe'
     outerPadding:        0,
     aspectRatio:         'original',
     // ── Map overlay ──────────────────────────────────────────────
@@ -97,18 +102,51 @@ const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 
+// ─── Mapbox token & usage tracking ────────────────────────────────────────────
+const DEFAULT_MAPBOX_TOKEN   = 'pk.eyJ1IjoibGluZ211bG9uZ3RhaSIsImEiOiJjbW53cHp3eHoxbDZhMnBtbzB3b3huemZwIn0.kX4B2BumC8txS9rZw41a-Q';
+const MAPBOX_USAGE_KEY       = 'instaframe_mb_usage';
+const MAPBOX_MONTHLY_LIMIT   = 50000;
+
+function _getMapboxUsage() {
+  try {
+    const data = JSON.parse(localStorage.getItem(MAPBOX_USAGE_KEY) || '{}');
+    const now  = new Date();
+    const month = `${now.getFullYear()}-${now.getMonth()}`;
+    if (data.month !== month) return { count: 0, month };
+    return data;
+  } catch { return { count: 0, month: '' }; }
+}
+
+function _trackMapboxLoad() {
+  try {
+    const usage = _getMapboxUsage();
+    usage.count += 1;
+    localStorage.setItem(MAPBOX_USAGE_KEY, JSON.stringify(usage));
+  } catch {}
+}
+
+/** Return the effective Mapbox token to use: user token → default (if within limit) → null. */
+function getMapboxToken() {
+  try {
+    const userToken = localStorage.getItem('instaframe_mapbox_token') || '';
+    if (userToken) return userToken;
+  } catch {}
+  const usage = _getMapboxUsage();
+  if (usage.count >= MAPBOX_MONTHLY_LIMIT) return null;
+  return DEFAULT_MAPBOX_TOKEN;
+}
+
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
 async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
   if (_mapImgCache.has(key)) return _mapImgCache.get(key);
-  let token;
-  try { token = localStorage.getItem('instaframe_mapbox_token') || ''; } catch (_) { token = ''; }
+  const token = getMapboxToken();
   if (!token) return null;
   const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => { _mapImgCache.set(key, img); resolve(img); };
+    img.onload  = () => { _trackMapboxLoad(); _mapImgCache.set(key, img); resolve(img); };
     img.onerror = () => resolve(null);
     img.src = url;
   });
@@ -488,33 +526,6 @@ async function applyAndDownloadSingle(id) {
 }
 
 // Get GPS location from the device and populate the location field
-async function getDeviceLocation(id) {
-  if (!navigator.geolocation) {
-    showToast('Geolocation not supported', 'warn');
-    return;
-  }
-  const input = document.getElementById(`exif-location-${id}`);
-  if (!input) return;
-  const original = input.value;
-  input.value = 'Getting location…';
-  input.disabled = true;
-
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude, longitude } = pos.coords;
-      const name = await reverseGeocode(latitude, longitude);
-      input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
-      input.disabled = false;
-    },
-    () => {
-      input.value = original;
-      input.disabled = false;
-      showToast('Could not get location', 'warn');
-    },
-    { timeout: 10000 }
-  );
-}
-
 // ─── Download ─────────────────────────────────────────────────────────────────
 function _photoExportOpts() {
   const fmt  = state.settings.exportPhotoFormat  || 'jpeg';
@@ -717,6 +728,43 @@ function restoreSettings() {
   if (mapOvSetRow) mapOvSetRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
   if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  const locIconRow  = document.getElementById('locationIconRow');
+  if (locIconRow) locIconRow.style.display = (saved.showLocation) ? '' : 'none';
+
+  // Frame background mode
+  if (saved.frameBackground) {
+    const r = document.querySelector(`input[name="frameBackground"][value="${saved.frameBackground}"]`);
+    if (r) r.checked = true;
+  }
+  const isBlurBg = saved.frameBackground === 'blur';
+  const frameColorRow = document.getElementById('frameColorRow');
+  const blurOptionsRow = document.getElementById('blurOptionsRow');
+  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
+  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+  // Blur sliders
+  if (saved.blurRadius != null) {
+    const el = document.getElementById('blurRadiusRange');
+    if (el) el.value = saved.blurRadius;
+    const v = document.getElementById('blurRadiusVal');
+    if (v) v.textContent = saved.blurRadius + 'px';
+  }
+  if (saved.blurStyle) {
+    const el = document.getElementById('blurStyleSelect');
+    if (el) el.value = saved.blurStyle;
+  }
+  if (saved.blurBrightness != null) {
+    const el = document.getElementById('blurBrightnessRange');
+    if (el) el.value = saved.blurBrightness;
+    const v = document.getElementById('blurBrightnessVal');
+    if (v) v.textContent = saved.blurBrightness + '%';
+  }
+
+  // Location icon style
+  if (saved.locationIconStyle) {
+    document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.icon === saved.locationIconStyle);
+    });
+  }
 
   // Map overlay opacity
   if (saved.mapOverlayOpacity != null) {
@@ -787,11 +835,26 @@ function applySettings() {
     state.settings.frameColor = colorRadio ? colorRadio.value : '#F0F0F0';
   }
 
+  // Frame background mode
+  const bgRadio = document.querySelector('input[name="frameBackground"]:checked');
+  state.settings.frameBackground = bgRadio ? bgRadio.value : 'color';
+  const isBlurBg = state.settings.frameBackground === 'blur';
+  const frameColorRow = document.getElementById('frameColorRow');
+  const blurOptionsRow = document.getElementById('blurOptionsRow');
+  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
+  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+
+  if (isBlurBg) {
+    state.settings.blurRadius     = parseInt(document.getElementById('blurRadiusRange')?.value || '20', 10);
+    state.settings.blurStyle      = document.getElementById('blurStyleSelect')?.value || 'normal';
+    state.settings.blurBrightness = parseInt(document.getElementById('blurBrightnessRange')?.value || '80', 10);
+  }
+
   // Update dark-frame outline on preview canvas
   const previewCanvas = document.getElementById('livePreviewCanvas');
   if (previewCanvas) {
     const isDark = FrameEngine.isColorDark(state.settings.frameColor);
-    previewCanvas.classList.toggle('frame-dark', isDark);
+    previewCanvas.classList.toggle('frame-dark', isDark && !isBlurBg);
   }
 
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
@@ -810,6 +873,10 @@ function applySettings() {
   state.settings.showLocation     = document.getElementById('showLocation')?.checked ?? false;
   state.settings.outerPadding     = parseInt(document.getElementById('outerPaddingRange').value, 10);
 
+  // Location icon style
+  const activeIconBtn = document.querySelector('.icon-pick-btn.active');
+  if (activeIconBtn) state.settings.locationIconStyle = activeIconBtn.dataset.icon || 'pin';
+
   const locPosRadio = document.querySelector('input[name="locationPos"]:checked');
   state.settings.locationPosition = locPosRadio ? locPosRadio.value : 'below-exif';
 
@@ -822,14 +889,16 @@ function applySettings() {
     try { localStorage.setItem('instaframe_mapbox_token', tokenEl.value.trim()); } catch (_) {}
   }
 
-  // Show/hide location position row and map overlay rows
+  // Show/hide location position row, map overlay rows, and location icon row
   const locPosRow      = document.getElementById('locationPositionRow');
   const mapOvRow       = document.getElementById('mapOverlayRow');
   const mapOvSetRow    = document.getElementById('mapOverlaySettingsRow');
   const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
+  const locIconRow     = document.getElementById('locationIconRow');
   if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvSetRow) mapOvSetRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
+  if (locIconRow) locIconRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
@@ -926,8 +995,30 @@ function _syncDomWithStateSettings() {
   setText('outerPaddingRangeVal', parseInt(s.outerPadding, 10) + '%');
   setText('photoQualityRangeVal', parseInt(s.exportPhotoQuality, 10) + '%');
 
+  // Frame background mode
+  const bgR = document.querySelector(`input[name="frameBackground"][value="${s.frameBackground || 'color'}"]`);
+  if (bgR) bgR.checked = true;
+  const isBlur = s.frameBackground === 'blur';
+  const fcRow = document.getElementById('frameColorRow');
+  const boRow = document.getElementById('blurOptionsRow');
+  if (fcRow) fcRow.style.display = isBlur ? 'none' : '';
+  if (boRow) boRow.style.display = isBlur ? '' : 'none';
+  setVal('blurRadiusRange', s.blurRadius ?? 20);
+  setText('blurRadiusVal', (s.blurRadius ?? 20) + 'px');
+  setVal('blurBrightnessRange', s.blurBrightness ?? 80);
+  setText('blurBrightnessVal', (s.blurBrightness ?? 80) + '%');
+  const blurStyleEl = document.getElementById('blurStyleSelect');
+  if (blurStyleEl) blurStyleEl.value = s.blurStyle || 'normal';
+
+  // Location icon
+  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.icon === (s.locationIconStyle || 'pin'));
+  });
+
   const locPosRow = document.getElementById('locationPositionRow');
   if (locPosRow) locPosRow.style.display = s.showLocation ? '' : 'none';
+  const locIconRow = document.getElementById('locationIconRow');
+  if (locIconRow) locIconRow.style.display = s.showLocation ? '' : 'none';
 }
 
 function applySettingsSnapshot(snapshot) {
@@ -961,36 +1052,6 @@ function redoSettings() {
   if (_settingsUndoStack.length > SETTINGS_HISTORY_LIMIT) _settingsUndoStack.shift();
   applySettingsSnapshot(next);
   updateHistoryButtons();
-}
-
-// ─── EXIF Editor ──────────────────────────────────────────────────────────────
-function toggleExifEditor(id) {
-  const panel = document.getElementById(`exif-panel-${id}`);
-  if (panel) panel.classList.toggle('hidden');
-}
-
-function applyExifEdit(id) {
-  const item = state.items.find(i => i.id === id);
-  if (!item) return;
-
-  item.exif.make         = document.getElementById(`exif-make-${id}`).value.trim();
-  item.exif.model        = document.getElementById(`exif-model-${id}`).value.trim();
-  item.exif.lensModel    = document.getElementById(`exif-lens-${id}`).value.trim();
-  item.exif.focalLength  = document.getElementById(`exif-fl-${id}`).value.trim();
-  item.exif.fNumber      = document.getElementById(`exif-fn-${id}`).value.trim();
-  item.exif.exposureTime = document.getElementById(`exif-et-${id}`).value.trim();
-  item.exif.iso          = document.getElementById(`exif-iso-${id}`).value.trim();
-  item.exif.location     = document.getElementById(`exif-location-${id}`)?.value.trim() || '';
-
-  item.status = 'pending';
-  item.canvas = null;
-  _invalidateItemCache(id);
-  updateItemStatus(item);
-  updateItemPreview(item);
-  toggleExifEditor(id);
-  updateLiveExifPanel();
-  updateUI();
-  scheduleLivePreview();
 }
 
 // ─── Live EXIF Panel (left edge of preview, desktop only) ─────────────────────
@@ -1097,6 +1158,10 @@ async function openMapPicker() {
   if (!modal) return;
   modal.classList.add('open');
 
+  // Initialize Leaflet map in the next animation frame so the container
+  // has a layout (width/height) before Leaflet tries to measure it.
+  await new Promise(r => requestAnimationFrame(r));
+
   // Initialize Leaflet map if not yet created
   if (!_mapPickerMap) {
     _mapPickerMap = L.map('mapPickerContainer').setView([35.6762, 139.6503], 10);
@@ -1120,7 +1185,7 @@ async function openMapPicker() {
   }
 
   // Force Leaflet to recalculate size after modal becomes visible
-  setTimeout(() => _mapPickerMap.invalidateSize(), 50);
+  _mapPickerMap.invalidateSize();
 
   // Pre-fill from current item's lat/lon if available
   const item = getSelectedPreviewItem();
@@ -1473,9 +1538,6 @@ function renderItem(item) {
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-secondary" onclick="toggleExifEditor(${item.id})">
-          <span data-i18n="editExif">${t('editExif')}</span>
-        </button>
         <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="applyAndDownloadSingle(${item.id})">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
         </button>
@@ -1484,34 +1546,6 @@ function renderItem(item) {
         </button>
       </div>
     </div>
-    <div class="exif-panel hidden" id="exif-panel-${item.id}">
-      <div class="exif-grid">
-        <label>${t('cameraMake')}</label>
-        <input id="exif-make-${item.id}"  value="${escHtml(item.exif.make || '')}" placeholder="e.g. FUJIFILM">
-        <label>${t('cameraModel')}</label>
-        <input id="exif-model-${item.id}" value="${escHtml(item.exif.model || '')}" placeholder="e.g. X-T5">
-        <label>${t('lensModel')}</label>
-        <input id="exif-lens-${item.id}"  value="${escHtml(item.exif.lensModel || '')}" placeholder="e.g. XF35mmF1.4 R">
-        <label>${t('focalLength')}</label>
-        <input id="exif-fl-${item.id}"    value="${escHtml(item.exif.focalLength || '')}" placeholder="35">
-        <label>${t('fNumber')}</label>
-        <input id="exif-fn-${item.id}"    value="${escHtml(item.exif.fNumber || '')}" placeholder="1.4">
-        <label>${t('exposureTime')}</label>
-        <input id="exif-et-${item.id}"    value="${escHtml(item.exif.exposureTime || '')}" placeholder="1/250">
-        <label>${t('iso')}</label>
-        <input id="exif-iso-${item.id}"   value="${escHtml(item.exif.iso || '')}" placeholder="400">
-        <label>${t('location')}</label>
-        <div class="exif-location-row">
-          <input id="exif-location-${item.id}" value="${escHtml(item.exif.location || '')}" placeholder="e.g. Tokyo, Japan" style="flex:1;">
-          <button class="btn btn-sm btn-secondary exif-geolocate-btn" onclick="getDeviceLocation(${item.id})" title="${t('getLocation')}">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/><path d="M8 13c0 0-5-4-5-6a5 5 0 0 1 10 0c0 2-5 6-5 6z" stroke="none" fill="currentColor" opacity=".18"/></svg>
-          </button>
-        </div>
-      </div>
-      <button class="btn btn-primary btn-full" onclick="applyExifEdit(${item.id})">
-        <span data-i18n="applyExif">${t('applyExif')}</span>
-      </button>
-    </div>
   `;
 
   // Click preview image/video → select for live preview
@@ -1519,9 +1553,9 @@ function renderItem(item) {
     selectItem(item.id);
   });
 
-  // Click card body (not buttons/EXIF panel) → select for live preview
+  // Click card body (not buttons) → select for live preview
   card.addEventListener('click', e => {
-    if (e.target.closest('button') || e.target.closest('.exif-panel') || e.target.closest('.card-preview')) return;
+    if (e.target.closest('button') || e.target.closest('.card-preview')) return;
     selectItem(item.id);
   });
 
@@ -1961,6 +1995,46 @@ function setupSettingsListeners() {
     });
   }
 
+  // Custom Mapbox token in customize panel
+  const customTokenEl = document.getElementById('customMapboxToken');
+  if (customTokenEl) {
+    customTokenEl.addEventListener('change', () => {
+      try { localStorage.setItem('instaframe_mapbox_token', customTokenEl.value.trim()); } catch (_) {}
+      _mapImgCache.clear(); // clear cache so new token is used
+    });
+  }
+
+  // Frame background mode radios
+  document.querySelectorAll('input[name="frameBackground"]').forEach(r => {
+    r.addEventListener('change', applySettings);
+  });
+
+  // Blur background sliders
+  [
+    ['blurRadiusRange',     'blurRadiusVal',     v => v + 'px'],
+    ['blurBrightnessRange', 'blurBrightnessVal', v => v + '%'],
+  ].forEach(([id, valId, fmt]) => {
+    const el    = document.getElementById(id);
+    const valEl = document.getElementById(valId);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      if (valEl) valEl.textContent = fmt(el.value);
+      applySettings();
+    });
+  });
+
+  const blurStyleEl = document.getElementById('blurStyleSelect');
+  if (blurStyleEl) blurStyleEl.addEventListener('change', applySettings);
+
+  // Location icon picker
+  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.icon-pick-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applySettings();
+    });
+  });
+
   // Location position radios
   document.querySelectorAll('input[name="locationPos"]').forEach(r => {
     r.addEventListener('change', applySettings);
@@ -2297,6 +2371,13 @@ function setupCustomizePanel() {
   const effectiveAccent = savedAccent || '#0891b2';
   _applyAccentColor(effectiveAccent);
   _activateSwatch(effectiveAccent);
+
+  // ── Mapbox token (customize panel) ────────────────────────────────────────
+  try {
+    const savedToken = localStorage.getItem('instaframe_mapbox_token') || '';
+    const ctEl = document.getElementById('customMapboxToken');
+    if (ctEl && savedToken) ctEl.value = savedToken;
+  } catch {}
 
 }
 
