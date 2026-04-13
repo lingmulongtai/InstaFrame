@@ -472,6 +472,40 @@
           <div class="pq-option" data-q="max">Max (2400px)</div>
         </div>
       </div>
+      <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
+      <div class="preview-exif-wrap" id="previewExifWrap">
+        <button class="preview-exif-toggle" id="previewExifToggleBtn" onclick="toggleLiveExifPanel()" title="EXIF">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 9h4"/></svg>
+          <span>EXIF</span>
+        </button>
+        <div class="preview-exif-drawer" id="previewExifDrawer">
+          <div class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</div>
+          <div class="preview-exif-grid">
+            <label data-i18n="cameraMake">Camera Make</label>
+            <input id="live-exif-make" placeholder="e.g. FUJIFILM">
+            <label data-i18n="cameraModel">Camera Model</label>
+            <input id="live-exif-model" placeholder="e.g. X-T5">
+            <label data-i18n="lensModel">Lens</label>
+            <input id="live-exif-lens" placeholder="e.g. XF35mmF1.4 R">
+            <label data-i18n="focalLength">Focal Length</label>
+            <input id="live-exif-fl" placeholder="35">
+            <label data-i18n="fNumber">Aperture</label>
+            <input id="live-exif-fn" placeholder="1.4">
+            <label data-i18n="exposureTime">Shutter</label>
+            <input id="live-exif-et" placeholder="1/250">
+            <label data-i18n="iso">ISO</label>
+            <input id="live-exif-iso" placeholder="400">
+            <label data-i18n="location">Location</label>
+            <div class="preview-exif-location-row">
+              <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
+              <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
+                <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
+              </button>
+            </div>
+          </div>
+          <button class="preview-exif-apply-btn" onclick="applyLiveExifEdit()" data-i18n="applyExif">Apply</button>
+        </div>
+      </div>
       <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
       <div class="preview-zoom-bar" id="previewZoomBar">
         <span class="zoom-label" id="zoomLabel">100%</span>
