@@ -1345,7 +1345,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   pointer-events: none;
 }
 
-/* Drag-over overlay smoother */
+/* ── Preview empty: mobile import hint (hidden on desktop) ──────────────────── */
+.preview-empty-mobile-hint { display: none; }
+
+
 .preview-area::after { transition: opacity 0.15s ease; }
 .preview-area:not(.drag-over)::after { opacity: 0; pointer-events: none; }
 
@@ -1490,8 +1493,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
     border-radius: 0;
     z-index: 500;
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.2s;
+    /* opacity fades over 0.2s; visibility stays visible during that 0.2s then snaps to hidden */
+    transition: opacity 0.2s, visibility 0s 0.2s;
     overflow: hidden;
     box-shadow: none;
   }
@@ -1499,7 +1504,9 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   /* Settings tab active: show sidebar */
   body[data-mobile-tab="settings"] .sidebar {
     opacity: 1;
+    visibility: visible;
     pointer-events: all;
+    transition-delay: 0s;
   }
 
   /* Resize handle hidden on mobile */
@@ -1578,4 +1585,24 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
   /* Toast: above tab bar */
   #toast { bottom: calc(var(--tab-bar-h) + 12px); }
+
+  /* Preview empty-state mobile hint message */
+  .preview-empty-mobile-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--accent);
+    text-align: center;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  /* Tap-to-import overlay for empty state (preview + photos tabs) */
+  .mobile-empty-tap-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
 }
