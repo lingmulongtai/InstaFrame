@@ -206,7 +206,7 @@ const I18N = {
     tabPhotos: '写真',
     tabSettings: '設定',
     supportProjectTitle: 'InstaFrameを気に入ったら',
-    supportProjectSub: 'このオープンソースに⭐を付けて、改善への協力をお願いします。',
+    supportProjectSub: 'このオープンソースにスターを付けて、改善への協力をお願いします。',
   },
 };
 
