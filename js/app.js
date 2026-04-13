@@ -2025,6 +2025,7 @@ function _clampRangeInputValue(el, rawValue) {
 }
 
 function _extractNumericInputValue(text) {
+  // Accept the same suffixes shown in UI labels so users can edit in-place without removing units.
   const m = String(text ?? '').replace(',', '.').match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(?:%|×|px)?\s*$/i);
   if (!m) return null;
   const n = Number(m[1]);
@@ -2054,7 +2055,7 @@ function setupSettingsListeners() {
     // Make the numeric text on the right editable.
     if (!valEl) return;
     valEl.classList.add('range-val-editable');
-    valEl.setAttribute('contenteditable', 'plaintext-only');
+    valEl.setAttribute('contenteditable', 'true');
     valEl.setAttribute('role', 'textbox');
     valEl.setAttribute('spellcheck', 'false');
     valEl.setAttribute('title', 'Edit value');
@@ -2077,7 +2078,9 @@ function setupSettingsListeners() {
     valEl.addEventListener('focus', () => {
       valEl.textContent = el.value;
       const sel = document.getSelection();
-      if (sel) sel.selectAllChildren(valEl);
+      if (sel) {
+        try { sel.selectAllChildren(valEl); } catch (_) {}
+      }
     });
     valEl.addEventListener('blur', commit);
     valEl.addEventListener('keydown', e => {
