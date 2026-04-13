@@ -63,7 +63,7 @@ const FrameEngine = (() => {
       ctx.fillStyle = frameColor;
       ctx.fillRect(0, 0, canvasW, canvasH);
     }
-    ctx.drawImage(img, sB, tB, W, H);
+    drawImageWithVerticalOffset(ctx, img, sB, tB, W, H, settings.imageOffsetY);
     drawInnerShadow(ctx, sB, tB, W, H);
 
     // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
@@ -136,6 +136,18 @@ const FrameEngine = (() => {
     grad.addColorStop(1, 'rgba(0,0,0,0.05)');
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
+  }
+
+  function drawImageWithVerticalOffset(ctx, src, x, y, w, h, imageOffsetY = 0) {
+    const raw = Number(imageOffsetY);
+    const pct = Number.isFinite(raw) ? Math.max(-100, Math.min(100, raw)) : 0;
+    const offsetPx = Math.round(h * (pct / 100));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.drawImage(src, x, y + offsetPx, w, h);
+    ctx.restore();
   }
 
   /**
@@ -663,7 +675,7 @@ const FrameEngine = (() => {
             ctx.fillStyle = frameColor;
             ctx.fillRect(0, 0, canvasW, canvasH);
           }
-          ctx.drawImage(video, sB, tB, W, H);
+          drawImageWithVerticalOffset(ctx, video, sB, tB, W, H, settings.imageOffsetY);
           drawInnerShadow(ctx, sB, tB, W, H);
           drawExifText(ctx, exif, settings, layout);
 
@@ -810,7 +822,7 @@ const FrameEngine = (() => {
             ctx.fillStyle = frameColor;
             ctx.fillRect(0, 0, canvasW, canvasH);
           }
-          ctx.drawImage(video, sB, tB, W, H);
+          drawImageWithVerticalOffset(ctx, video, sB, tB, W, H, settings.imageOffsetY);
           drawInnerShadow(ctx, sB, tB, W, H);
           drawExifText(ctx, exif, settings, layout);
 
