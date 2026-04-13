@@ -356,81 +356,58 @@ const FrameEngine = (() => {
     ctx.fillStyle = color;
 
     if (style === 'dot') {
-      // Minimalist filled circle with outer ring
+      // Ring + center dot
       ctx.beginPath();
       ctx.arc(cx, cy - size * 0.1, size * 0.42, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = Math.max(1, size * 0.12);
+      ctx.strokeStyle = color;
+      ctx.stroke();
       ctx.beginPath();
-      ctx.arc(cx, cy - size * 0.1, size * 0.18, 0, Math.PI * 2);
+      ctx.arc(cx, cy - size * 0.1, size * 0.14, 0, Math.PI * 2);
+      ctx.fillStyle = color;
       ctx.fill();
     } else if (style === 'compass') {
-      // Compass rose: four pointed star / arrow
-      const r = size * 0.48;
+      // Diamond marker
+      const r = size * 0.52;
       ctx.translate(cx, cy - size * 0.15);
       ctx.beginPath();
-      // North (up)
       ctx.moveTo(0, -r);
-      ctx.lineTo(r * 0.3, -r * 0.25);
-      ctx.lineTo(0, 0);
-      ctx.lineTo(-r * 0.3, -r * 0.25);
+      ctx.lineTo(r, 0);
+      ctx.lineTo(0, r);
+      ctx.lineTo(-r, 0);
       ctx.closePath();
-      ctx.fill();
-      // South (down) — muted
-      ctx.globalAlpha = 0.4;
+      ctx.lineWidth = Math.max(1, size * 0.1);
+      ctx.strokeStyle = color;
+      ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(0, r);
-      ctx.lineTo(r * 0.3, r * 0.25);
-      ctx.lineTo(0, 0);
-      ctx.lineTo(-r * 0.3, r * 0.25);
-      ctx.closePath();
-      ctx.fill();
-      // East
-      ctx.globalAlpha = 1;
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(r * 0.25, -r * 0.3);
-      ctx.lineTo(0, 0);
-      ctx.lineTo(r * 0.25, r * 0.3);
-      ctx.closePath();
-      ctx.fill();
-      // West — muted
-      ctx.globalAlpha = 0.4;
-      ctx.beginPath();
-      ctx.moveTo(-r, 0);
-      ctx.lineTo(-r * 0.25, -r * 0.3);
-      ctx.lineTo(0, 0);
-      ctx.lineTo(-r * 0.25, r * 0.3);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      // Center dot
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.12, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.22, 0, Math.PI * 2);
+      ctx.fillStyle = color;
       ctx.fill();
     } else if (style === 'globe') {
-      // Globe circle with latitude/longitude lines
-      const r = size * 0.46;
-      ctx.translate(cx, cy - size * 0.1);
+      // Flag marker
+      const topY = cy - size * 0.6;
+      const baseY = cy + size * 0.48;
+      const poleX = cx - size * 0.18;
+      const w = size * 0.8;
+      const h = size * 0.45;
       ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.moveTo(poleX, topY);
+      ctx.lineTo(poleX, baseY);
+      ctx.lineWidth = Math.max(1, size * 0.1);
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(poleX, topY + size * 0.05);
+      ctx.lineTo(poleX + w, topY + size * 0.05);
+      ctx.lineTo(poleX + w * 0.72, topY + h);
+      ctx.lineTo(poleX + w, topY + h + size * 0.02);
+      ctx.lineTo(poleX, topY + h + size * 0.02);
+      ctx.closePath();
+      ctx.fillStyle = color;
       ctx.fill();
-      // Oval equator
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth   = r * 0.14;
       ctx.beginPath();
-      ctx.scale(1, 0.5);
-      ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-      // Vertical meridian
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.9, -Math.PI / 2, Math.PI / 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth   = r * 0.14;
-      ctx.stroke();
+      ctx.arc(poleX, baseY, size * 0.12, 0, Math.PI * 2);
+      ctx.fill();
     } else {
       // Default 'pin': teardrop pin with circle head
       ctx.beginPath();
