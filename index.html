@@ -34,7 +34,10 @@
     <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
     <div class="sidebar-header">
       <div class="sidebar-brand">
-        <span class="logo" data-i18n="appTitle">InstaFrame by lingmulongtai</span>
+        <span class="logo">
+          <span class="logo-main" data-i18n="appTitleMain">InstaFrame</span>
+          <span class="logo-by" data-i18n="appTitleBy">by lingmulongtai</span>
+        </span>
         <span class="logo-sub" data-i18n="appSubtitle">EXIF photo frame generator</span>
       </div>
       <div class="sidebar-actions">
@@ -220,6 +223,17 @@
             <div class="range-wrap">
               <input type="range" id="thicknessRange" min="0.4" max="2.0" step="0.1" value="1.0">
               <span class="range-val" id="thicknessRangeVal">1.0×</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Image Vertical Position -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="imageOffsetY">Image Y</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="imageOffsetRange" min="-30" max="30" step="1" value="0">
+              <span class="range-val" id="imageOffsetRangeVal">0%</span>
             </div>
           </div>
         </div>
@@ -640,12 +654,14 @@
               <label data-i18n="location">Location</label>
               <div class="preview-exif-location-row">
                 <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
-                <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
-                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
-                </button>
-                <button class="preview-exif-map-btn" onclick="openMapPicker()" title="" data-i18n-attr="title" data-i18n="pickOnMap">
-                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l-4 2-4-2v10l4 2 4-2 4 2V4l-4-2z"/><path d="M6 4v10M10 2v10"/></svg>
-                </button>
+                <div class="preview-exif-location-actions">
+                  <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
+                    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
+                  </button>
+                  <button class="preview-exif-map-btn" onclick="openMapPicker()" title="" data-i18n-attr="title" data-i18n="pickOnMap">
+                    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l-4 2-4-2v10l4 2 4-2 4 2V4l-4-2z"/><path d="M6 4v10M10 2v10"/></svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

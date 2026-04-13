@@ -14,6 +14,7 @@ const state = {
     blurStyle:           'normal',  // 'normal' | 'grayscale' | 'sepia' | 'saturate'
     blurBrightness:      80,
     thicknessScale:      1.0,
+    imageOffsetY:        0,
     fontFamily:          'Inter',
     shotOnFontScale:     1.0,
     exifFontScale:       1.0,
@@ -676,6 +677,7 @@ function restoreSettings() {
   // Range sliders
   [
     ['thicknessRange',    'thicknessRangeVal',    saved.thicknessScale,  v => parseFloat(v).toFixed(1) + '×'],
+    ['imageOffsetRange',  'imageOffsetRangeVal',  saved.imageOffsetY,    v => parseFloat(v).toFixed(0) + '%'],
     ['shotOnFontRange',   'shotOnFontRangeVal',   saved.shotOnFontScale, v => parseFloat(v).toFixed(1) + '×'],
     ['exifFontRange',     'exifFontRangeVal',     saved.exifFontScale,   v => parseFloat(v).toFixed(1) + '×'],
     ['lineGapRange',      'lineGapRangeVal',      saved.lineGapScale,    v => parseFloat(v).toFixed(1) + '×'],
@@ -851,6 +853,7 @@ function applySettings() {
   }
 
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
+  state.settings.imageOffsetY     = parseFloat(document.getElementById('imageOffsetRange').value);
   state.settings.fontFamily       = document.getElementById('fontFamily').value;
   state.settings.shotOnFontScale  = parseFloat(document.getElementById('shotOnFontRange').value);
   state.settings.exifFontScale    = parseFloat(document.getElementById('exifFontRange').value);
@@ -940,6 +943,7 @@ function _syncDomWithStateSettings() {
   };
 
   setVal('thicknessRange', s.thicknessScale);
+  setVal('imageOffsetRange', s.imageOffsetY);
   setVal('shotOnFontRange', s.shotOnFontScale);
   setVal('exifFontRange', s.exifFontScale);
   setVal('lineGapRange', s.lineGapScale);
@@ -978,6 +982,7 @@ function _syncDomWithStateSettings() {
     if (el) el.textContent = text;
   };
   setText('thicknessRangeVal', parseFloat(s.thicknessScale).toFixed(1) + '×');
+  setText('imageOffsetRangeVal', parseFloat(s.imageOffsetY || 0).toFixed(0) + '%');
   setText('shotOnFontRangeVal', parseFloat(s.shotOnFontScale).toFixed(1) + '×');
   setText('exifFontRangeVal', parseFloat(s.exifFontScale).toFixed(1) + '×');
   setText('lineGapRangeVal', parseFloat(s.lineGapScale).toFixed(1) + '×');
@@ -1423,7 +1428,7 @@ function _previewSettingsHash() {
               : previewZoom <= 2.0 ? 1800 : 2400;
   return [maxPx,
     s.frameColor, s.frameBackground, s.blurRadius, s.blurStyle, s.blurBrightness,
-    s.thicknessScale, s.fontFamily,
+    s.thicknessScale, s.imageOffsetY, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
     s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
     s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
@@ -1996,6 +2001,7 @@ function setupSettingsListeners() {
   // Range sliders
   [
     ['thicknessRange',          'thicknessRangeVal',          v => parseFloat(v).toFixed(1) + '×'],
+    ['imageOffsetRange',        'imageOffsetRangeVal',        v => parseFloat(v).toFixed(0) + '%'],
     ['shotOnFontRange',         'shotOnFontRangeVal',         v => parseFloat(v).toFixed(1) + '×'],
     ['exifFontRange',           'exifFontRangeVal',           v => parseFloat(v).toFixed(1) + '×'],
     ['lineGapRange',            'lineGapRangeVal',            v => parseFloat(v).toFixed(1) + '×'],
