@@ -399,33 +399,6 @@
             </div>
           </div>
         </div>
-        <!-- Map overlay (shown when showLocation is on) -->
-        <div class="setting-row map-overlay-row" id="mapOverlayRow" style="display:none;">
-          <div class="setting-control">
-            <div class="vis-toggles">
-              <label class="ios-toggle">
-                <input type="checkbox" id="showMapOverlay">
-                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
-                <span class="ios-toggle-label" data-i18n="showMapOverlay">Map Overlay</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="setting-row" id="mapOverlaySettingsRow" style="display:none;">
-          <div class="setting-label" data-i18n="mapboxToken">Mapbox Token</div>
-          <div class="setting-control">
-            <input type="text" id="mapboxToken" class="setting-text-input" placeholder="pk.eyJ1…" autocomplete="off" spellcheck="false">
-          </div>
-        </div>
-        <div class="setting-row" id="mapOverlayOpacityRow" style="display:none;">
-          <div class="setting-label" data-i18n="mapOverlayOpacity">Opacity</div>
-          <div class="setting-control">
-            <div class="range-wrap">
-              <input type="range" id="mapOverlayOpacityRange" min="10" max="100" step="5" value="70">
-              <span class="range-val" id="mapOverlayOpacityVal">70%</span>
-            </div>
-          </div>
-        </div>
         <!-- Location icon picker (shown when showLocation is on) -->
         <div class="setting-row" id="locationIconRow" style="display:none;">
           <div class="setting-label" data-i18n="mapIcon">Icon</div>
@@ -443,6 +416,30 @@
               <button class="icon-pick-btn" data-icon="globe" title="Globe">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/><path d="M4.5 7.5h15M4.5 16.5h15"/></svg>
               </button>
+            </div>
+          </div>
+        </div>
+        <!-- Map overlay (shown when showLocation is on) -->
+        <div class="setting-row map-overlay-row" id="mapOverlayRow" style="display:none;">
+          <div class="setting-control">
+            <div class="vis-toggles">
+              <label class="ios-toggle">
+                <input type="checkbox" id="showMapOverlay">
+                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+                <span class="ios-toggle-label">
+                  <span data-i18n="showMapOverlay">Map Overlay</span>
+                  <span class="tooltip-anchor">?<span class="tooltip-box" data-i18n="mapOverlayTooltip">Draws a mini map on the photo area. Requires saved location coordinates and a valid Mapbox token.</span></span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row" id="mapOverlayOpacityRow" style="display:none;">
+          <div class="setting-label" data-i18n="mapOverlayOpacity">Opacity</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="mapOverlayOpacityRange" min="10" max="100" step="5" value="70">
+              <span class="range-val" id="mapOverlayOpacityVal">70%</span>
             </div>
           </div>
         </div>
@@ -617,7 +614,6 @@
                 </button>
               </div>
             </div>
-            <button class="preview-exif-apply-btn" onclick="applyLiveExifEdit()" data-i18n="applyExif">Apply</button>
           </div>
         </div>
       </div>
