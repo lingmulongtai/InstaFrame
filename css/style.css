@@ -995,6 +995,82 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .pq-option:hover { background: var(--surface-2); }
 .pq-option.active { color: var(--accent); font-weight: 500; }
 
+/* ── Video Playback Bar (bottom center, shown only when video is in preview) ── */
+.preview-video-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 100px;
+  padding: 6px 10px;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  min-width: 180px;
+  max-width: calc(100% - 32px);
+}
+.preview-area.has-video .preview-video-bar {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* Hide image-only controls when a video is showing */
+.preview-area.has-video .preview-zoom-bar,
+.preview-area.has-video .preview-quality-wrap,
+.preview-area.has-video .preview-history-wrap,
+.preview-area.has-video .preview-reset-view-btn,
+.preview-area.has-video .preview-exif-wrap { display: none !important; }
+
+/* No grab cursor over video preview */
+.preview-area.has-video { cursor: default; }
+
+.video-ctrl-btn {
+  border: none;
+  background: rgba(255,255,255,0.14);
+  color: white;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.video-ctrl-btn:hover { background: rgba(255,255,255,0.28); }
+
+.video-time-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 28px;
+  text-align: center;
+}
+
+.video-seek-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 60px;
+}
+
+.video-seek-range {
+  width: 100%;
+  height: 3px;
+  cursor: pointer;
+  accent-color: white;
+}
+
 /* ── EXIF panel (left edge of live preview, desktop only) ───────────────────── */
 .preview-exif-wrap {
   position: absolute;
@@ -1926,6 +2002,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   .preview-history-wrap { right: 8px; top: 8px; }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
+  .preview-video-bar { bottom: 8px; }
   .preview-exif-wrap {
     display: block !important;
     left: 8px;
