@@ -230,7 +230,7 @@ function detectInitialLang() {
     .filter(Boolean)
     .map(v => String(v).toLowerCase());
   if (normalized.some(v => v.startsWith('ja'))) return 'ja';
-  if (normalized.some(v => /[-_]jp\b/.test(v))) return 'ja';
+  if (normalized.some(v => /[-_]jp($|[-_])/.test(v))) return 'ja';
 
   const tz = typeof Intl !== 'undefined' && Intl.DateTimeFormat
     ? String(Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase()
