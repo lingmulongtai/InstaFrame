@@ -102,6 +102,8 @@ const I18N = {
     tabPreview: 'Preview',
     tabPhotos: 'Photos',
     tabSettings: 'Settings',
+    supportProjectTitle: 'Enjoying InstaFrame?',
+    supportProjectSub: 'Star this open-source project and help us improve it.',
   },
   ja: {
     appTitle: 'InstaFrame',
@@ -203,6 +205,8 @@ const I18N = {
     tabPreview: 'プレビュー',
     tabPhotos: '写真',
     tabSettings: '設定',
+    supportProjectTitle: 'InstaFrameを気に入ったら',
+    supportProjectSub: 'このオープンソースプロジェクトにスターを付けて、改善への協力をお願いします。',
   },
 };
 
