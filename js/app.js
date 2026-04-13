@@ -24,7 +24,6 @@ const state = {
     cameraNameItalic:    false,
     exifItalic:          false,
     showShotOn:          true,
-    showDecoLine:        true,
     showExifInfo:        true,
     cameraNameOnly:      false,
     showLocation:        false,
@@ -36,6 +35,7 @@ const state = {
     // ── Map overlay ──────────────────────────────────────────────
     showMapOverlay:      false,
     mapOverlayOpacity:   0.7,
+    mapOverlayPosition:  'bottom-right',
     // ── Export (applied at download time) ────────────────────────
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
@@ -704,7 +704,6 @@ function restoreSettings() {
     ['cameraNameItalic', saved.cameraNameItalic],
     ['exifItalic',       saved.exifItalic],
     ['showShotOn',       saved.showShotOn],
-    ['showDecoLine',     saved.showDecoLine],
     ['showExifInfo',     saved.showExifInfo],
     ['showLocation',     saved.showLocation],
     ['showMapOverlay',   saved.showMapOverlay],
@@ -719,6 +718,10 @@ function restoreSettings() {
     const r = document.querySelector(`input[name="locationPos"][value="${saved.locationPosition}"]`);
     if (r) r.checked = true;
   }
+  if (saved.mapOverlayPosition) {
+    const r = document.querySelector(`input[name="mapOverlayPos"][value="${saved.mapOverlayPosition}"]`);
+    if (r) r.checked = true;
+  }
   // Show/hide location position row and map overlay rows
   const locPosRow   = document.getElementById('locationPositionRow');
   if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
@@ -726,6 +729,8 @@ function restoreSettings() {
   if (mapOvRow) mapOvRow.style.display = (saved.showLocation) ? '' : 'none';
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
   if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
+  if (mapOvPosRow) mapOvPosRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
   const locIconRow  = document.getElementById('locationIconRow');
   if (locIconRow) locIconRow.style.display = (saved.showLocation) ? '' : 'none';
 
@@ -864,7 +869,6 @@ function applySettings() {
   state.settings.cameraNameItalic = document.getElementById('cameraNameItalic').checked;
   state.settings.exifItalic       = document.getElementById('exifItalic').checked;
   state.settings.showShotOn       = document.getElementById('showShotOn').checked;
-  state.settings.showDecoLine     = document.getElementById('showDecoLine').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
   state.settings.cameraNameOnly   = false; // removed from UI; always false
   state.settings.showLocation     = document.getElementById('showLocation')?.checked ?? false;
@@ -880,15 +884,19 @@ function applySettings() {
   // Map overlay settings
   state.settings.showMapOverlay    = document.getElementById('showMapOverlay')?.checked ?? false;
   state.settings.mapOverlayOpacity = parseInt(document.getElementById('mapOverlayOpacityRange')?.value || '70', 10) / 100;
+  const mapOverlayPosRadio = document.querySelector('input[name="mapOverlayPos"]:checked');
+  state.settings.mapOverlayPosition = mapOverlayPosRadio ? mapOverlayPosRadio.value : 'bottom-right';
   // Show/hide location position row, map overlay rows, and location icon row
   const locPosRow      = document.getElementById('locationPositionRow');
   const mapOvRow       = document.getElementById('mapOverlayRow');
   const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
+  const mapOvPosRow    = document.getElementById('mapOverlayPositionRow');
   const locIconRow     = document.getElementById('locationIconRow');
   if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
   if (locIconRow) locIconRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
+  if (mapOvPosRow) mapOvPosRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -957,13 +965,14 @@ function _syncDomWithStateSettings() {
   setChecked('cameraNameItalic', s.cameraNameItalic);
   setChecked('exifItalic', s.exifItalic);
   setChecked('showShotOn', s.showShotOn);
-  setChecked('showDecoLine', s.showDecoLine);
   setChecked('showExifInfo', s.showExifInfo);
   setChecked('showLocation', s.showLocation);
   setChecked('showMapOverlay', s.showMapOverlay);
 
   const locPos = document.querySelector(`input[name="locationPos"][value="${s.locationPosition}"]`);
   if (locPos) locPos.checked = true;
+  const mapOvPos = document.querySelector(`input[name="mapOverlayPos"][value="${s.mapOverlayPosition || 'bottom-right'}"]`);
+  if (mapOvPos) mapOvPos.checked = true;
   const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
   if (ratio) ratio.checked = true;
   const orientation = document.querySelector(`input[name="aspectOrientation"][value="${s.aspectOrientation || 'auto'}"]`);
@@ -1017,6 +1026,8 @@ function _syncDomWithStateSettings() {
   if (mapOvRow) mapOvRow.style.display = s.showLocation ? '' : 'none';
   const mapOvOpRow = document.getElementById('mapOverlayOpacityRow');
   if (mapOvOpRow) mapOvOpRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
+  const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
+  if (mapOvPosRow) mapOvPosRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
   const locIconRow = document.getElementById('locationIconRow');
   if (locIconRow) locIconRow.style.display = s.showLocation ? '' : 'none';
 }
@@ -1351,6 +1362,68 @@ async function confirmMapLocation() {
   closeMapPicker();
 }
 
+// ─── Share Modal ───────────────────────────────────────────────────────────────
+function _buildSharePayload() {
+  const url = window.location.href;
+  const text = `InstaFrame — ${t('appSubtitle')}`;
+  return { url, text };
+}
+
+function _refreshShareLinks() {
+  const { url, text } = _buildSharePayload();
+  const encUrl  = encodeURIComponent(url);
+  const encText = encodeURIComponent(text);
+  const links = {
+    shareXBtn:        `https://twitter.com/intent/tweet?text=${encText}&url=${encUrl}`,
+    shareFacebookBtn: `https://www.facebook.com/sharer/sharer.php?u=${encUrl}`,
+    shareLineBtn:     `https://social-plugins.line.me/lineit/share?url=${encUrl}`,
+    shareLinkedInBtn: `https://www.linkedin.com/sharing/share-offsite/?url=${encUrl}`,
+  };
+  Object.entries(links).forEach(([id, href]) => {
+    const a = document.getElementById(id);
+    if (a) a.href = href;
+  });
+  const input = document.getElementById('shareUrlInput');
+  if (input) input.value = url;
+}
+
+function openShareAppModal() {
+  const modal = document.getElementById('shareAppModal');
+  if (!modal) return;
+  _refreshShareLinks();
+  modal.classList.add('open');
+}
+
+function closeShareAppModal() {
+  const modal = document.getElementById('shareAppModal');
+  if (modal) modal.classList.remove('open');
+}
+
+function setupShareAppModal() {
+  document.getElementById('shareAppBtn')?.addEventListener('click', openShareAppModal);
+  document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
+    const input = document.getElementById('shareUrlInput');
+    const url = input?.value || window.location.href;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const tmp = document.createElement('textarea');
+        tmp.value = url;
+        tmp.style.position = 'fixed';
+        tmp.style.opacity = '0';
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+      }
+      showToast(t('msgLinkCopied'), 'ok');
+    } catch (_) {
+      showToast(t('msgCopyFailed'), 'warn');
+    }
+  });
+}
+
 
 let _livePreviewTimer = null;
 
@@ -1432,9 +1505,9 @@ function _previewSettingsHash() {
     s.thicknessScale, s.imageOffsetY, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
     s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
-    s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
+    s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
-    s.showMapOverlay, s.mapOverlayOpacity,
+    s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
   ].join('|');
 }
 
@@ -2168,7 +2241,7 @@ function setupSettingsListeners() {
   }
 
   // Font style checkboxes (camera name + EXIF) and map overlay toggle
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showDecoLine', 'showExifInfo', 'showLocation', 'showMapOverlay'].forEach(id => {
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation', 'showMapOverlay'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
@@ -2207,6 +2280,9 @@ function setupSettingsListeners() {
 
   // Location position radios
   document.querySelectorAll('input[name="locationPos"]').forEach(r => {
+    r.addEventListener('change', applySettings);
+  });
+  document.querySelectorAll('input[name="mapOverlayPos"]').forEach(r => {
     r.addEventListener('change', applySettings);
   });
 
@@ -2769,6 +2845,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMainResize();
   setupCardSize();
   setupCustomizePanel();
+  setupShareAppModal();
   setupPreviewQuality();
   setupHistoryControls();
   setupKeyboardShortcuts();
@@ -2776,9 +2853,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('langToggleBtn')?.addEventListener('click', () => {
     setLang(currentLang === 'en' ? 'ja' : 'en');
     rerenderCards();
+    _refreshShareLinks();
   });
   updateUI();
   updatePreviewViewModifiedState();
+  _refreshShareLinks();
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);

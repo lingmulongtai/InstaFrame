@@ -191,16 +191,21 @@ const FrameEngine = (() => {
   function drawMapOverlay(ctx, mapImg, settings, { sB, tB, W, H }) {
     const opacity = (typeof settings.mapOverlayOpacity === 'number')
       ? Math.min(1, Math.max(0, settings.mapOverlayOpacity)) : 0.7;
+    const posRaw = settings.mapOverlayPosition || 'bottom-right';
+    const pos = ['bottom-right', 'top-right', 'top-left', 'bottom-left'].includes(posRaw)
+      ? posRaw : 'bottom-right';
 
     // Target size: ~28% of the shorter side, capped at 320px
     const shortSide = Math.min(W, H);
     const ovW = Math.min(320, Math.round(shortSide * 0.28));
     const ovH = Math.round(ovW * (mapImg.naturalHeight / mapImg.naturalWidth));
 
-    // Position: bottom-right corner with a small inset
+    // Position: corner with a small inset
     const inset = Math.round(shortSide * 0.025);
-    const ox = sB + W - ovW - inset;
-    const oy = tB + H - ovH - inset;
+    const isRight = pos === 'bottom-right' || pos === 'top-right';
+    const isBottom = pos === 'bottom-right' || pos === 'bottom-left';
+    const ox = isRight ? (sB + W - ovW - inset) : (sB + inset);
+    const oy = isBottom ? (tB + H - ovH - inset) : (tB + inset);
 
     ctx.save();
     // Clip to rounded rect
@@ -236,16 +241,13 @@ const FrameEngine = (() => {
       cameraNameItalic = false,
       exifItalic       = false,
       showShotOn       = true,
-      showDecoLine     = true,
       showExifInfo     = true,
-      cameraNameOnly   = false,   // hide EXIF line + deco, show only "Shot on"
       showLocation     = false,
       locationPosition = 'below-exif',
     } = settings;
 
-    const effectiveShowShotOn   = cameraNameOnly ? true  : showShotOn;
-    const effectiveShowExifInfo = cameraNameOnly ? false : showExifInfo;
-    const effectiveShowDecoLine = cameraNameOnly ? false : showDecoLine;
+    const showShotOnLabel = !!showShotOn;
+    const effectiveShowExifInfo = !!showExifInfo;
     const effectiveShowLocation = showLocation && !!(exif.location);
 
     const isDark  = isColorDark(frameColor);
@@ -280,45 +282,47 @@ const FrameEngine = (() => {
     ctx.save();
     ctx.textBaseline = 'middle';
 
-    // Line 1: Shot on + Camera
-    if (effectiveShowShotOn) {
-      const cam = [exif.make, exif.model].filter(Boolean).join(' ');
-      if (cam) {
-        const label = 'Shot on';
-        ctx.font = labelFont;
-        const lw = ctx.measureText(label + '  ').width;
-        ctx.font = camFont;
-        const cw = ctx.measureText(cam).width;
-        const x0 = centerX - (lw + cw) / 2;
+    // Line 1: Camera (with optional "Shot on" label only)
+    const cam = [exif.make, exif.model].filter(Boolean).join(' ');
+    if (cam) {
+      const label = 'Shot on';
+      const labelText = showShotOnLabel ? (label + '  ') : '';
+      ctx.font = labelFont;
+      const lw = showShotOnLabel ? ctx.measureText(labelText).width : 0;
+      ctx.font = camFont;
+      const cw = ctx.measureText(cam).width;
+      const x0 = centerX - (lw + cw) / 2;
 
+      if (showShotOnLabel) {
         ctx.textAlign = 'left';
         ctx.font      = labelFont;
         ctx.fillStyle = muted;
-        ctx.fillText(label + '  ', x0, line1Y);
+        ctx.fillText(labelText, x0, line1Y);
+      }
 
-        ctx.font      = camFont;
-        ctx.fillStyle = primary;
-        ctx.fillText(cam, x0 + lw, line1Y);
+      ctx.textAlign = 'left';
+      ctx.font      = camFont;
+      ctx.fillStyle = primary;
+      ctx.fillText(cam, x0 + lw, line1Y);
 
-        // Location beside camera name (cam-right / cam-left)
-        if (effectiveShowLocation && (locationPosition === 'cam-right' || locationPosition === 'cam-left')) {
-          const locFont = `300 ${Math.round(soSize * 0.82)}px ${stack}`;
-          ctx.font      = locFont;
-          ctx.fillStyle = muted;
-          const pinSize = soSize * 0.52;
-          const sidePad = canvasW * 0.04;
+      // Location beside camera name (cam-right / cam-left)
+      if (effectiveShowLocation && (locationPosition === 'cam-right' || locationPosition === 'cam-left')) {
+        const locFont = `300 ${Math.round(soSize * 0.82)}px ${stack}`;
+        ctx.font      = locFont;
+        ctx.fillStyle = muted;
+        const pinSize = soSize * 0.52;
+        const sidePad = canvasW * 0.04;
 
-          if (locationPosition === 'cam-right') {
-            ctx.textAlign = 'right';
-            ctx.fillText(exif.location, canvasW - sidePad, line1Y);
-            const tw = ctx.measureText(exif.location).width;
-            drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted, settings.locationIconStyle);
-          } else {
-            const pinCx = sidePad + pinSize * 0.6;
-            drawLocationPin(ctx, pinCx, line1Y, pinSize, muted, settings.locationIconStyle);
-            ctx.textAlign = 'left';
-            ctx.fillText(exif.location, sidePad + pinSize * 1.5, line1Y);
-          }
+        if (locationPosition === 'cam-right') {
+          ctx.textAlign = 'right';
+          ctx.fillText(exif.location, canvasW - sidePad, line1Y);
+          const tw = ctx.measureText(exif.location).width;
+          drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted, settings.locationIconStyle);
+        } else {
+          const pinCx = sidePad + pinSize * 0.6;
+          drawLocationPin(ctx, pinCx, line1Y, pinSize, muted, settings.locationIconStyle);
+          ctx.textAlign = 'left';
+          ctx.fillText(exif.location, sidePad + pinSize * 1.5, line1Y);
         }
       }
     }
@@ -352,16 +356,6 @@ const FrameEngine = (() => {
       drawLocationPin(ctx, startX + pinSize * 0.6, line3Y, pinSize, muted, settings.locationIconStyle);
       ctx.textAlign = 'left';
       ctx.fillText(exif.location, startX + pinSize * 1.5, line3Y);
-    }
-
-    // Decorative separator line
-    if (effectiveShowDecoLine) {
-      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
-      ctx.lineWidth   = 1;
-      ctx.beginPath();
-      ctx.moveTo(canvasW * 0.35, imageBottom + bottomAreaHeight * 0.22);
-      ctx.lineTo(canvasW * 0.65, imageBottom + bottomAreaHeight * 0.22);
-      ctx.stroke();
     }
 
     ctx.restore();

@@ -41,10 +41,13 @@
         <span class="logo-sub" data-i18n="appSubtitle">EXIF photo frame generator</span>
       </div>
       <div class="sidebar-actions">
-        <button id="langToggleBtn" class="icon-btn lang-toggle-btn" type="button" data-i18n-attr="title" data-i18n="langToggleTitle" title="Toggle language">EN/JA</button>
         <button id="customizeBtn" class="icon-btn" data-i18n-attr="title" data-i18n="customize" title="Customize">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
         </button>
+        <button id="shareAppBtn" class="icon-btn" type="button" data-i18n-attr="title" data-i18n="shareAppTitle" title="Share app">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 16V3"/><path d="m7 8 5-5 5 5"/></svg>
+        </button>
+        <button id="langToggleBtn" class="icon-btn lang-toggle-btn" type="button" data-i18n-attr="title" data-i18n="langToggleTitle" title="Toggle language">EN/JA</button>
       </div>
     </div>
 
@@ -345,9 +348,9 @@
           </div>
         </div>
 
-        <!-- Shot-on Font Size -->
+        <!-- Camera Model Font Size -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="shotOnFontSize">Shot size</div>
+          <div class="setting-label" data-i18n="shotOnFontSize">Camera model size</div>
           <div class="setting-control">
             <div class="range-wrap">
               <input type="range" id="shotOnFontRange" min="0.5" max="2.0" step="0.1" value="1.0">
@@ -405,14 +408,6 @@
                 <input type="checkbox" id="showShotOn" checked>
                 <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
                 <span class="ios-toggle-label" data-i18n="showShotOn">Show "Shot on"</span>
-              </label>
-              <label class="ios-toggle">
-                <input type="checkbox" id="showDecoLine" checked>
-                <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
-                <span class="ios-toggle-label">
-                  <span data-i18n="showDecoLine">Decorative Line</span>
-                  <span class="tooltip-anchor">?<span class="tooltip-box" data-i18n="decoLineTooltip">A thin horizontal rule drawn between the photo and the text area</span></span>
-                </span>
               </label>
               <label class="ios-toggle">
                 <input type="checkbox" id="showExifInfo" checked>
@@ -488,6 +483,29 @@
             <div class="range-wrap">
               <input type="range" id="mapOverlayOpacityRange" min="10" max="100" step="5" value="70">
               <span class="range-val" id="mapOverlayOpacityVal">70%</span>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row" id="mapOverlayPositionRow" style="display:none;">
+          <div class="setting-label" data-i18n="mapOverlayPosition">Map position</div>
+          <div class="setting-control">
+            <div class="ratio-pills">
+              <div class="ratio-pill">
+                <input type="radio" name="mapOverlayPos" id="mapov-br" value="bottom-right" checked>
+                <label for="mapov-br" data-i18n="mapPosBottomRight">Bottom Right</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="mapOverlayPos" id="mapov-tr" value="top-right">
+                <label for="mapov-tr" data-i18n="mapPosTopRight">Top Right</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="mapOverlayPos" id="mapov-tl" value="top-left">
+                <label for="mapov-tl" data-i18n="mapPosTopLeft">Top Left</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="mapOverlayPos" id="mapov-bl" value="bottom-left">
+                <label for="mapov-bl" data-i18n="mapPosBottomLeft">Bottom Left</label>
+              </div>
             </div>
           </div>
         </div>
@@ -794,6 +812,29 @@
     <div class="map-modal-footer">
       <span id="mapPickerCoords" class="map-picker-coords" data-i18n="mapClickHint">Click on the map to select a location</span>
       <button class="btn btn-primary btn-sm" onclick="confirmMapLocation()" data-i18n="mapConfirm">Set Location</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Share App Modal ───────────────────────────────────────────────────────── -->
+<div class="map-modal" id="shareAppModal" onclick="if(event.target===this)closeShareAppModal()">
+  <div class="map-modal-content share-modal-content">
+    <div class="map-modal-header">
+      <span class="map-modal-title" data-i18n="shareAppTitle">Share this app</span>
+      <button class="map-modal-close" onclick="closeShareAppModal()" title="Close">×</button>
+    </div>
+    <div class="share-modal-body">
+      <p class="share-modal-sub" data-i18n="shareAppSub">Share InstaFrame with your friends.</p>
+      <div class="share-grid">
+        <a class="btn btn-secondary btn-sm" id="shareXBtn" target="_blank" rel="noopener noreferrer">X / Twitter</a>
+        <a class="btn btn-secondary btn-sm" id="shareFacebookBtn" target="_blank" rel="noopener noreferrer">Facebook</a>
+        <a class="btn btn-secondary btn-sm" id="shareLineBtn" target="_blank" rel="noopener noreferrer">LINE</a>
+        <a class="btn btn-secondary btn-sm" id="shareLinkedInBtn" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+      </div>
+      <div class="share-copy-row">
+        <input id="shareUrlInput" class="setting-text-input" readonly>
+        <button class="btn btn-primary btn-sm" id="copyShareUrlBtn" data-i18n="copyLink">Copy link</button>
+      </div>
     </div>
   </div>
 </div>
