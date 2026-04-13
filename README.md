@@ -71,7 +71,7 @@ InstaFrame reads metadata (camera, lens, focal length, aperture, shutter speed, 
 2. Drop photos/videos into the preview area.
 3. Adjust settings in the left panel.
 4. *(Optional)* Click the map button (📍) in the EXIF panel to pick a location.
-5. *(Optional)* Enable **Location** + **Map Overlay** and set a Mapbox token in **Customize** for line-art map compositing.
+5. *(Optional)* Enable **Location** + **Map Overlay** for line-art map compositing.
 6. Click **Apply to All**.
 7. Click **Download All** to export a ZIP.
 
@@ -81,11 +81,8 @@ InstaFrame reads metadata (camera, lens, focal length, aperture, shutter speed, 
 
 The map overlay feature uses the [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/).
 
-1. Create a free account at [mapbox.com](https://account.mapbox.com/)
-2. Copy your public access token (`pk.eyJ1…`)
-3. In InstaFrame → **Elements** → enable **Location** and **Map Overlay**
-4. Open **Customize** and paste your token into the **Mapbox Token** field
-5. The token is saved locally in your browser (`localStorage`) and never uploaded
+1. In InstaFrame → **Elements** → enable **Location** and **Map Overlay**
+2. Map tiles are fetched automatically when location coordinates are available
 
 ---
 
@@ -173,7 +170,7 @@ MIT
 
 ### マップオーバーレイ（Passage風）
 - 設定の「要素」→「位置情報」+「マップオーバーレイ」をオン
-- [Mapbox](https://mapbox.com/)の公開アクセストークン（`pk.eyJ1…`）を入力
+- 位置情報がある場合に、Passage風マップを自動取得して合成
 - ミニマルなライトスタイルのマップタイルを取得し、写真の右下にオーバーレイ合成
 - 不透明度（10〜100%）を調整可能
 
@@ -202,7 +199,7 @@ MIT
 2. 画像・動画をプレビュー領域へドロップ。
 3. 左側パネルで設定を調整。
 4. *(任意)* EXIFパネルのマップボタン（📍）で位置を選択。
-5. *(任意)* 「位置情報」+「マップオーバーレイ」を有効にしてMapboxトークンを入力。
+5. *(任意)* 「位置情報」+「マップオーバーレイ」を有効化。
 6. **すべてに適用** を実行。
 7. **まとめてダウンロード** でZIP保存。
 
@@ -212,11 +209,8 @@ MIT
 
 マップオーバーレイ機能は [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) を使用します。
 
-1. [mapbox.com](https://account.mapbox.com/) で無料アカウントを作成
-2. 公開アクセストークン（`pk.eyJ1…`）をコピー
-3. InstaFrame の **要素** 設定 → **位置情報** と **マップオーバーレイ** を有効化
-4. **Mapboxトークン** 欄にトークンを貼り付け
-5. トークンはブラウザのローカルストレージに保存され、外部送信されません
+1. InstaFrame の **要素** 設定 → **位置情報** と **マップオーバーレイ** を有効化
+2. 位置座標がある場合にマップ画像を自動取得して合成
 
 ---
 
@@ -242,7 +236,7 @@ InstaFrame/
 | [exifr](https://github.com/MikeKovarik/exifr) | EXIF / メタデータ取得 |
 | [JSZip](https://stuk.github.io/jszip/) | ブラウザ内ZIP生成 |
 | [Leaflet.js](https://leafletjs.com/) | インタラクティブマップ位置選択 |
-| [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) | マップオーバーレイ（無料トークン必要） |
+| [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) | マップオーバーレイ（位置座標が必要） |
 | Canvas 2D API + MediaRecorder API | 描画と動画エンコード |
 | Google Fonts | タイポグラフィ |
 
