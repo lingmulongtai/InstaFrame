@@ -429,12 +429,27 @@ const FrameEngine = (() => {
   }
 
   function applyPostProcess(src, settings) {
-    const { frameColor = '#F0F0F0', outerPadding = 0, aspectRatio = 'original' } = settings;
+    const {
+      frameColor = '#F0F0F0',
+      outerPadding = 0,
+      aspectRatio = 'original',
+      aspectOrientation = 'auto',
+    } = settings;
     let W = src.width, H = src.height;
 
     let tW = W, tH = H;
     if (aspectRatio && aspectRatio !== 'original') {
-      const [aw, ah] = aspectRatio.split(':').map(Number);
+      let [aw, ah] = aspectRatio.split(':').map(Number);
+      if (Number.isFinite(aw) && Number.isFinite(ah) && aw > 0 && ah > 0) {
+        const sourceLandscape = W >= H;
+        if (
+          (aspectOrientation === 'portrait' && aw > ah) ||
+          (aspectOrientation === 'landscape' && aw < ah) ||
+          (aspectOrientation === 'auto' && ((sourceLandscape && aw < ah) || (!sourceLandscape && aw > ah)))
+        ) {
+          [aw, ah] = [ah, aw];
+        }
+      }
       const tr = aw / ah, sr = W / H;
       if (tr > sr) { tW = Math.round(H * tr); tH = H; }
       else if (tr < sr) { tW = W; tH = Math.round(W / tr); }

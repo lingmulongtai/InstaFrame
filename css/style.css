@@ -240,6 +240,7 @@ html, body {
   white-space: nowrap;
 }
 .customize-sep { height: 1px; background: var(--border); margin: 8px 0; }
+.customize-panel .oss-support { padding: 2px 0 0; }
 
 /* Accent colour presets */
 .accent-swatches { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }

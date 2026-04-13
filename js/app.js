@@ -31,6 +31,7 @@ const state = {
     locationIconStyle:   'pin',     // 'pin' | 'dot' | 'compass' | 'globe'
     outerPadding:        0,
     aspectRatio:         'original',
+    aspectOrientation:   'auto',
     // ── Map overlay ──────────────────────────────────────────────
     showMapOverlay:      false,
     mapOverlayOpacity:   0.7,
@@ -125,12 +126,8 @@ function _trackMapboxLoad() {
   } catch {}
 }
 
-/** Return the effective Mapbox token to use: user token → default (if within limit) → null. */
+/** Return the effective Mapbox token to use: default (if within limit) → null. */
 function getMapboxToken() {
-  try {
-    const userToken = localStorage.getItem('instaframe_mapbox_token') || '';
-    if (userToken) return userToken;
-  } catch {}
   const usage = _getMapboxUsage();
   if (usage.count >= MAPBOX_MONTHLY_LIMIT) return null;
   return DEFAULT_MAPBOX_TOKEN;
@@ -777,6 +774,10 @@ function restoreSettings() {
     const r = document.querySelector(`input[name="aspectRatio"][value="${saved.aspectRatio}"]`);
     if (r) r.checked = true;
   }
+  if (saved.aspectOrientation) {
+    const r = document.querySelector(`input[name="aspectOrientation"][value="${saved.aspectOrientation}"]`);
+    if (r) r.checked = true;
+  }
 
   // ── Export settings ──────────────────────────────────────────────────────
   // Photo format
@@ -887,6 +888,8 @@ function applySettings() {
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
+  const orientationRadio = document.querySelector('input[name="aspectOrientation"]:checked');
+  state.settings.aspectOrientation = orientationRadio ? orientationRadio.value : 'auto';
 
   // Export settings (photo only — video is handled separately)
   const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
@@ -958,6 +961,8 @@ function _syncDomWithStateSettings() {
   if (locPos) locPos.checked = true;
   const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
   if (ratio) ratio.checked = true;
+  const orientation = document.querySelector(`input[name="aspectOrientation"][value="${s.aspectOrientation || 'auto'}"]`);
+  if (orientation) orientation.checked = true;
   const photoFmt = document.querySelector(`input[name="exportPhotoFormat"][value="${s.exportPhotoFormat}"]`);
   if (photoFmt) photoFmt.checked = true;
   const videoFmt = document.querySelector(`input[name="exportVideoFormat"][value="${s.exportVideoFormat}"]`);
@@ -1422,7 +1427,7 @@ function _previewSettingsHash() {
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
     s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
     s.showShotOn, s.showDecoLine, s.showExifInfo, s.cameraNameOnly,
-    s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio,
+    s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity,
   ].join('|');
 }
@@ -2056,15 +2061,6 @@ function setupSettingsListeners() {
     if (el) el.addEventListener('change', applySettings);
   });
 
-  // Custom Mapbox token in customize panel
-  const customTokenEl = document.getElementById('customMapboxToken');
-  if (customTokenEl) {
-    customTokenEl.addEventListener('input', () => {
-      try { localStorage.setItem('instaframe_mapbox_token', customTokenEl.value.trim()); } catch (_) {}
-      _mapImgCache.clear(); // clear cache so new token is used
-    });
-  }
-
   // Live EXIF panel inputs: apply immediately on each change
   ['live-exif-make', 'live-exif-model', 'live-exif-lens', 'live-exif-fl', 'live-exif-fn', 'live-exif-et', 'live-exif-iso', 'live-exif-location']
     .forEach(id => {
@@ -2112,6 +2108,9 @@ function setupSettingsListeners() {
 
   // Aspect ratio radios
   document.querySelectorAll('input[name="aspectRatio"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
+  });
+  document.querySelectorAll('input[name="aspectOrientation"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
   });
 
@@ -2441,13 +2440,6 @@ function setupCustomizePanel() {
   const effectiveAccent = savedAccent || '#0891b2';
   _applyAccentColor(effectiveAccent);
   _activateSwatch(effectiveAccent);
-
-  // ── Mapbox token (customize panel) ────────────────────────────────────────
-  try {
-    const savedToken = localStorage.getItem('instaframe_mapbox_token') || '';
-    const ctEl = document.getElementById('customMapboxToken');
-    if (ctEl && savedToken) ctEl.value = savedToken;
-  } catch {}
 
 }
 
