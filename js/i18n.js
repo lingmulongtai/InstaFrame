@@ -226,16 +226,25 @@ function detectInitialLang() {
     if (locale) langCandidates.push(locale);
   }
 
-  const normalized = langCandidates
-    .filter(Boolean)
-    .map(v => String(v).toLowerCase());
+  const validCandidates = langCandidates.filter(Boolean);
+  const normalized = validCandidates.map(v => String(v).toLowerCase());
   if (normalized.some(v => v.startsWith('ja'))) return 'ja';
-  if (normalized.some(v => /[-_]jp($|[-_])/.test(v))) return 'ja';
+  const hasJapanRegion = validCandidates.some(v => {
+    const raw = String(v);
+    if (typeof Intl !== 'undefined' && Intl.Locale) {
+      try {
+        const region = new Intl.Locale(raw).region;
+        if (region && region.toUpperCase() === 'JP') return true;
+      } catch (_) {}
+    }
+    return /(^|[-_])jp($|[-_])/i.test(raw);
+  });
+  if (hasJapanRegion) return 'ja';
 
   const tz = typeof Intl !== 'undefined' && Intl.DateTimeFormat
     ? String(Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase()
     : '';
-  if (tz.includes('asia/tokyo')) return 'ja';
+  if (tz.includes('asia/tokyo') || tz.includes('tokyo')) return 'ja';
 
   return 'en';
 }
