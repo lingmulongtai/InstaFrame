@@ -146,7 +146,19 @@ html, body {
   align-items: center;
   gap: 6px;
 }
-.logo { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; color: var(--text); }
+.logo {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 15px;
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+.logo-main { font-weight: 700; }
+.logo-by {
+  font-weight: 400;
+  font-style: italic;
+}
 .logo-sub {
   display: block;
   font-size: 10px;
@@ -1116,10 +1128,16 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
 .preview-exif-location-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.preview-exif-location-row input { width: 100%; min-width: 0; }
+.preview-exif-location-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: 4px;
 }
-.preview-exif-location-row input { flex: 1; min-width: 0; }
 
 .preview-exif-geo-btn {
   background: rgba(255,255,255,0.1);
