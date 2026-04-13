@@ -925,14 +925,14 @@ function applyExifEdit(id) {
 }
 
 // ─── Live EXIF Panel (left edge of preview, desktop only) ─────────────────────
-function _selectedItem() {
+function getSelectedPreviewItem() {
   return (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
     || state.items[0]
     || null;
 }
 
 function updateLiveExifPanel() {
-  const item = _selectedItem();
+  const item = getSelectedPreviewItem();
   const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
   if (!item) {
     setVal('live-exif-make', '');
@@ -966,10 +966,11 @@ function toggleLiveExifPanel() {
 }
 
 function applyLiveExifEdit() {
-  const item = _selectedItem();
+  const item = getSelectedPreviewItem();
   if (!item) return;
   const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
 
+  if (!item.exif) item.exif = {};
   item.exif.make         = getVal('live-exif-make');
   item.exif.model        = getVal('live-exif-model');
   item.exif.lensModel    = getVal('live-exif-lens');
