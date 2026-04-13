@@ -105,6 +105,10 @@ const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 
+// ─── Video canvas preview loop ────────────────────────────────────────────────
+let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
+let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
+
 // ─── Mapbox token & usage tracking ────────────────────────────────────────────
 const DEFAULT_MAPBOX_TOKEN   = 'pk.eyJ1IjoibGluZ211bG9uZ3RhaSIsImEiOiJjbW53cHp3eHoxbDZhMnBtbzB3b3huemZwIn0.kX4B2BumC8txS9rZw41a-Q';
 const MAPBOX_USAGE_KEY       = 'instaframe_mb_usage';
@@ -360,16 +364,39 @@ async function addFiles(files) {
     // Pre-warm image cache so the first live preview is fast
     if (!video) _loadPreviewImage(item).catch(() => {});
 
-    // Generate thumbnail for video cards asynchronously
+    // Generate framed thumbnail for video cards asynchronously
     if (video) {
       FrameEngine.captureVideoFrame(file)
-        .then(img => {
+        .then(async img => {
+          // Render a framed preview at thumbnail resolution
+          const framed = await FrameEngine.renderFrameWhenReady(
+            img, item.exif, state.settings, { maxPreviewPx: 400 });
           const previewDiv = document.getElementById(`preview-${item.id}`);
           if (!previewDiv) return;
-          const thumb = previewDiv.querySelector('img.thumb-orig');
-          if (thumb && img) thumb.src = img.src;
+          // Create a small canvas thumbnail (same pattern as photo items)
+          const maxW = 200, maxH = 200;
+          const scale = Math.min(maxW / framed.width, maxH / framed.height);
+          let tc = previewDiv.querySelector('canvas.thumb-framed');
+          if (!tc) {
+            tc = document.createElement('canvas');
+            tc.className = 'thumb-framed';
+            previewDiv.insertBefore(tc, previewDiv.firstChild);
+          }
+          tc.width  = Math.round(framed.width  * scale);
+          tc.height = Math.round(framed.height * scale);
+          tc.getContext('2d').drawImage(framed, 0, 0, tc.width, tc.height);
+          const origThumb = previewDiv.querySelector('img.thumb-orig');
+          if (origThumb) origThumb.style.display = 'none';
         })
-        .catch(() => {});
+        .catch(() => {
+          // Fallback: show raw captured frame
+          FrameEngine.captureVideoFrame(file).then(img => {
+            const previewDiv = document.getElementById(`preview-${item.id}`);
+            if (!previewDiv) return;
+            const thumb = previewDiv.querySelector('img.thumb-orig');
+            if (thumb && img) thumb.src = img.src;
+          }).catch(() => {});
+        });
     }
   }
 
@@ -1449,12 +1476,24 @@ function setupVideoPreviewBar() {
   const seekRange    = document.getElementById('videoSeekRange');
   const currentEl    = document.getElementById('videoCurrentTime');
   const durationEl   = document.getElementById('videoDuration');
+  const muteBtn      = document.getElementById('videoMuteBtn');
+  const volIcon      = document.getElementById('videoVolIcon');
+  const muteIcon     = document.getElementById('videoMuteIcon');
+  const volumeRange  = document.getElementById('videoVolumeRange');
+  const speedSelect  = document.getElementById('videoSpeedSelect');
   if (!video || !playPauseBtn || !seekRange) return;
 
   function syncPlayPauseIcon() {
     const paused = video.paused || video.ended;
     if (playIcon)  playIcon.style.display  = paused ? '' : 'none';
     if (pauseIcon) pauseIcon.style.display = paused ? 'none' : '';
+  }
+
+  function syncMuteIcon() {
+    const muted = video.muted || video.volume === 0;
+    if (volIcon)  volIcon.style.display  = muted ? 'none' : '';
+    if (muteIcon) muteIcon.style.display = muted ? '' : 'none';
+    if (volumeRange) volumeRange.value = video.muted ? '0' : String(video.volume);
   }
 
   playPauseBtn.addEventListener('click', e => {
@@ -1467,16 +1506,46 @@ function setupVideoPreviewBar() {
     }
   });
 
+  // Volume: slider adjusts level, mute button toggles
+  if (muteBtn) {
+    muteBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      video.muted = !video.muted;
+      syncMuteIcon();
+    });
+  }
+  if (volumeRange) {
+    volumeRange.addEventListener('mousedown', e => e.stopPropagation());
+    volumeRange.addEventListener('touchstart', e => e.stopPropagation());
+    volumeRange.addEventListener('input', () => {
+      video.volume = parseFloat(volumeRange.value);
+      video.muted  = video.volume === 0;
+      syncMuteIcon();
+    });
+  }
+
+  // Playback speed: preview only (not applied to export)
+  if (speedSelect) {
+    speedSelect.addEventListener('mousedown', e => e.stopPropagation());
+    speedSelect.addEventListener('change', () => {
+      video.playbackRate = parseFloat(speedSelect.value);
+    });
+  }
+
   video.addEventListener('play',   syncPlayPauseIcon);
   video.addEventListener('pause',  syncPlayPauseIcon);
   video.addEventListener('ended',  syncPlayPauseIcon);
+  video.addEventListener('volumechange', syncMuteIcon);
 
   video.addEventListener('loadedmetadata', () => {
     if (durationEl) durationEl.textContent = _formatVideoTime(video.duration);
     seekRange.max   = String(video.duration || 100);
     seekRange.value = '0';
     if (currentEl) currentEl.textContent = _formatVideoTime(0);
+    // Reset speed to 1× on new video
+    if (speedSelect) { speedSelect.value = '1'; video.playbackRate = 1; }
     syncPlayPauseIcon();
+    syncMuteIcon();
   });
 
   let _seeking = false;
@@ -1484,6 +1553,27 @@ function setupVideoPreviewBar() {
   video.addEventListener('timeupdate', () => {
     if (!_seeking) seekRange.value = String(video.currentTime);
     if (currentEl) currentEl.textContent = _formatVideoTime(video.currentTime);
+  });
+
+  // Redraw canvas immediately on seek (even when paused)
+  video.addEventListener('seeking', () => {
+    const item = getSelectedPreviewItem();
+    if (item && item.isVideo && _videoPreviewItemId === item.id) {
+      // Draw one frame right now without waiting for next rAF
+      const canvas  = document.getElementById('livePreviewCanvas');
+      const pane    = document.getElementById('dropZone');
+      if (canvas && pane && video.videoWidth) {
+        const layout  = FrameEngine.computeVideoFrameLayout(video.videoWidth, video.videoHeight, state.settings);
+        const dpr     = window.devicePixelRatio || 1;
+        const scaleX  = canvas.width  / layout.canvasW;
+        const scaleY  = canvas.height / layout.canvasH;
+        const ctx     = canvas.getContext('2d');
+        ctx.save();
+        ctx.scale(scaleX, scaleY);
+        FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
+        ctx.restore();
+      }
+    }
   });
 
   seekRange.addEventListener('mousedown', e => {
@@ -1651,6 +1741,107 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   pane.classList.add('has-preview');
 }
 
+// ─── Canvas-based Video Preview ──────────────────────────────────────────────
+
+function _stopVideoCanvasPreview() {
+  if (_videoPreviewRAF) {
+    cancelAnimationFrame(_videoPreviewRAF);
+    _videoPreviewRAF = null;
+  }
+  _videoPreviewItemId = null;
+}
+
+/**
+ * Start a requestAnimationFrame loop that continuously renders the framed video
+ * (with EXIF text overlay) onto livePreviewCanvas.
+ * The hidden <video> element is used purely as a data/audio source.
+ */
+function _startVideoCanvasPreview(item) {
+  if (_videoPreviewItemId === item.id) return; // already running for this item
+  _stopVideoCanvasPreview();
+  _videoPreviewItemId = item.id;
+
+  const video  = document.getElementById('livePreviewVideo');
+  const canvas = document.getElementById('livePreviewCanvas');
+  const pane   = document.getElementById('dropZone');
+  if (!video || !canvas || !pane) return;
+
+  let _lastLayout = null; // cache layout between frames to avoid redundant recalcs
+
+  function draw() {
+    if (_videoPreviewItemId !== item.id) return; // stopped or superseded
+
+    if (!video.videoWidth || !video.videoHeight) {
+      // Video metadata not yet loaded — draw loading placeholder
+      const areaW = Math.max(pane.clientWidth  - 40, 80);
+      const areaH = Math.max(pane.clientHeight - 40, 60);
+      const dpr   = window.devicePixelRatio || 1;
+      if (canvas.style.display === 'none' || canvas.style.display === '') {
+        canvas.width  = Math.round(areaW * dpr);
+        canvas.height = Math.round(areaH * dpr);
+        canvas.style.width  = areaW + 'px';
+        canvas.style.height = areaH + 'px';
+        canvas.style.display = 'block';
+        const ctx = canvas.getContext('2d');
+        const fc  = state.settings.frameColor || '#F0F0F0';
+        ctx.fillStyle = fc;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Subtle "loading" pulse text
+        const isDark = FrameEngine.isColorDark(fc);
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)';
+        ctx.font = `${Math.round(14 * dpr)}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
+      }
+      _videoPreviewRAF = requestAnimationFrame(draw);
+      return;
+    }
+
+    const layout = FrameEngine.computeVideoFrameLayout(
+      video.videoWidth, video.videoHeight, state.settings
+    );
+
+    const dpr   = window.devicePixelRatio || 1;
+    const areaW = Math.max(pane.clientWidth  - 40, 80);
+    const areaH = Math.max(pane.clientHeight - 40, 60);
+    const ratio = layout.canvasH / layout.canvasW;
+
+    let dispW = Math.min(areaW, Math.round(areaH / ratio));
+    let dispH = Math.round(dispW * ratio);
+    if (dispH > areaH) { dispH = areaH; dispW = Math.round(areaH / ratio); }
+    dispW = Math.max(dispW, 80);
+    dispH = Math.max(dispH, 60);
+
+    const targetW = Math.round(dispW * dpr);
+    const targetH = Math.round(dispH * dpr);
+
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width        = targetW;
+      canvas.height       = targetH;
+      canvas.style.width  = dispW + 'px';
+      canvas.style.height = dispH + 'px';
+      _lastLayout = null; // layout changed
+    }
+
+    const firstShow = canvas.style.display === 'none' || canvas.style.display === '';
+    if (firstShow) canvas.style.opacity = '0';
+    canvas.style.display = 'block';
+    if (firstShow) { void canvas.offsetWidth; canvas.style.opacity = '1'; }
+
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.scale(targetW / layout.canvasW, targetH / layout.canvasH);
+    FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
+    ctx.restore();
+
+    applyPreviewTransform();
+    _videoPreviewRAF = requestAnimationFrame(draw);
+  }
+
+  draw();
+}
+
 async function renderLivePreview() {
   const pane    = document.getElementById('dropZone');
   const canvas  = document.getElementById('livePreviewCanvas');
@@ -1668,23 +1859,28 @@ async function renderLivePreview() {
   const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
              || state.items[0];
 
-  // ── Video: show native <video> element ─────────────────────────────────────
+  // ── Video: canvas-based framed preview ────────────────────────────────────
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
-    canvas.style.display = 'none';
+    // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
+      _stopVideoCanvasPreview();
       if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
       liveVideo.src     = liveVideo._objUrl;
       liveVideo.load();
     }
-    liveVideo.style.display = 'block';
+    // Video element stays hidden; canvas shows the framed video
+    liveVideo.style.display = 'none';
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
     pane.classList.add('has-video');
+    _startVideoCanvasPreview(item);
     return;
   }
+  // Switching away from video — stop the canvas loop
+  _stopVideoCanvasPreview();
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
 
@@ -1869,6 +2065,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
+    _stopVideoCanvasPreview();
     const dropZone = document.getElementById('dropZone');
     if (dropZone) {
       dropZone.classList.remove('has-preview');
@@ -2059,7 +2256,6 @@ function setupDropZone() {
   // Allow dragging from anywhere in the preview area (canvas or background margin)
   zone.addEventListener('mousedown', e => {
     if (!zone.classList.contains('has-preview')) return;
-    if (zone.classList.contains('has-video')) return;  // no pan when video is showing
     // Skip if the click landed on an interactive overlay element
     if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     _panDragging = true;
@@ -2094,7 +2290,6 @@ function setupDropZone() {
 
   zone.addEventListener('touchstart', e => {
     if (!zone.classList.contains('has-preview')) return;
-    if (zone.classList.contains('has-video')) return;  // no pan/pinch when video is showing
     // Skip if touch started on an interactive overlay element
     if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     if (e.touches.length === 2) {
@@ -2447,6 +2642,22 @@ function setupKeyboardShortcuts() {
       if (state.selectedItemId != null) {
         e.preventDefault();
         removeItem(state.selectedItemId);
+      }
+    }
+    // Space: toggle video play/pause when a video is in preview
+    if (key === ' ') {
+      const item = getSelectedPreviewItem();
+      if (item && item.isVideo) {
+        e.preventDefault();
+        const video = document.getElementById('livePreviewVideo');
+        if (video) {
+          if (video.paused || video.ended) {
+            if (video.ended) video.currentTime = 0;
+            video.play().catch(() => {});
+          } else {
+            video.pause();
+          }
+        }
       }
     }
   });
