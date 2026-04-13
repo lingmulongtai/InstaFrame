@@ -268,7 +268,9 @@ const FrameEngine = (() => {
     const camWeight   = cameraNameBold ? '700' : '500';
     const camStyle    = cameraNameItalic ? 'italic ' : '';
     const labelFont   = `${camStyle}${labelWeight} ${soSize}px ${stack}`;
-    const camFont    = `${camStyle}${camWeight} ${soSize}px ${stack}`;
+    const camFont     = `${camStyle}${camWeight} ${soSize}px ${stack}`;
+    const makerFont   = `${camStyle}400 ${soSize}px ${stack}`;
+    const makerColor  = mixHexColor(primary, muted, 0.5);
     const exStyle    = exifItalic ? 'italic ' : '';
     const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
 
@@ -283,15 +285,20 @@ const FrameEngine = (() => {
     ctx.textBaseline = 'middle';
 
     // Line 1: Camera (with optional "Shot on" label only)
-    const cam = [exif.make, exif.model].filter(Boolean).join(' ');
-    if (cam) {
+    const camModel = String(exif.model || '').trim();
+    const camMake  = String(exif.make || '').trim();
+    if (camModel || camMake) {
       const label = 'Shot on';
       const labelText = showShotOnLabel ? (label + '  ') : '';
+      const makerGap = (camModel && camMake) ? ' ' : '';
       ctx.font = labelFont;
       const lw = showShotOnLabel ? ctx.measureText(labelText).width : 0;
       ctx.font = camFont;
-      const cw = ctx.measureText(cam).width;
-      const x0 = centerX - (lw + cw) / 2;
+      const modelW = camModel ? ctx.measureText(camModel).width : 0;
+      const gapW = makerGap ? ctx.measureText(makerGap).width : 0;
+      ctx.font = makerFont;
+      const makeW = camMake ? ctx.measureText(camMake).width : 0;
+      const x0 = centerX - (lw + modelW + gapW + makeW) / 2;
 
       if (showShotOnLabel) {
         ctx.textAlign = 'left';
@@ -303,7 +310,12 @@ const FrameEngine = (() => {
       ctx.textAlign = 'left';
       ctx.font      = camFont;
       ctx.fillStyle = primary;
-      ctx.fillText(cam, x0 + lw, line1Y);
+      if (camModel) ctx.fillText(camModel, x0 + lw, line1Y);
+      if (camMake) {
+        ctx.font = makerFont;
+        ctx.fillStyle = makerColor;
+        ctx.fillText(camMake, x0 + lw + modelW + gapW, line1Y);
+      }
 
       // Location beside camera name (cam-right / cam-left)
       if (effectiveShowLocation && (locationPosition === 'cam-right' || locationPosition === 'cam-left')) {
@@ -495,6 +507,14 @@ const FrameEngine = (() => {
     const g = parseInt(c.slice(2, 4), 16);
     const b = parseInt(c.slice(4, 6), 16);
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
+  }
+
+  function mixHexColor(a, b, t = 0.5) {
+    const ta = Math.min(1, Math.max(0, Number(t)));
+    const p = (hex, i) => parseInt((hex || '#000000').replace('#', '').slice(i, i + 2), 16) || 0;
+    const ch = i => Math.round((1 - ta) * p(a, i) + ta * p(b, i));
+    const toHex = v => v.toString(16).padStart(2, '0');
+    return `#${toHex(ch(0))}${toHex(ch(2))}${toHex(ch(4))}`;
   }
 
   function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92 } = {}) {

@@ -842,7 +842,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .preview-history-wrap {
   position: absolute;
   right: 12px;
-  bottom: 12px;
+  top: 12px;
   display: flex;
   gap: 6px;
   z-index: 10;
@@ -1189,11 +1189,6 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   margin-top: 2px;
 }
 .preview-exif-apply-btn:hover { background: rgba(6,121,143,0.88); }
-
-/* Hide on mobile — per-card EXIF editor is used on mobile */
-@media (max-width: 768px) {
-  .preview-exif-wrap { display: none !important; }
-}
 
 /* ── Map picker modal ─────────────────────────────────────────────────────────── */
 .map-modal {
@@ -1925,9 +1920,26 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
   /* Preview controls */
   .preview-quality-wrap { bottom: 8px; left: 8px; }
-  .preview-history-wrap { right: 8px; bottom: 8px; }
+  .preview-history-wrap { right: 8px; top: 8px; }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
+  .preview-exif-wrap {
+    display: block !important;
+    left: 8px;
+    top: 8px;
+    right: 52px;
+    max-width: calc(100% - 60px);
+  }
+  .preview-exif-drawer {
+    width: min(236px, calc(100vw - 68px));
+    max-height: calc(100% - 16px);
+  }
+  .preview-exif-content { max-height: 240px; }
+  .preview-exif-grid {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .preview-exif-grid label { margin-top: 2px; }
   #zoomRange { height: 60px; }
   .zoom-btn  { width: 20px; height: 20px; font-size: 14px; }
 
