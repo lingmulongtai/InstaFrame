@@ -71,7 +71,7 @@ InstaFrame reads metadata (camera, lens, focal length, aperture, shutter speed, 
 2. Drop photos/videos into the preview area.
 3. Adjust settings in the left panel.
 4. *(Optional)* Click the map button (📍) in the EXIF panel to pick a location.
-5. *(Optional)* Enable **Location** + **Map Overlay** and enter a Mapbox token for line-art map compositing.
+5. *(Optional)* Enable **Location** + **Map Overlay** and set a Mapbox token in **Customize** for line-art map compositing.
 6. Click **Apply to All**.
 7. Click **Download All** to export a ZIP.
 
@@ -84,7 +84,7 @@ The map overlay feature uses the [Mapbox Static Images API](https://docs.mapbox.
 1. Create a free account at [mapbox.com](https://account.mapbox.com/)
 2. Copy your public access token (`pk.eyJ1…`)
 3. In InstaFrame → **Elements** → enable **Location** and **Map Overlay**
-4. Paste your token into the **Mapbox Token** field
+4. Open **Customize** and paste your token into the **Mapbox Token** field
 5. The token is saved locally in your browser (`localStorage`) and never uploaded
 
 ---

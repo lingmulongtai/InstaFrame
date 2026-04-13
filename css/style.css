@@ -974,12 +974,16 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .preview-exif-wrap {
   position: absolute;
   left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 46px;
+  transform: none;
   z-index: 10;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, top 0.24s ease, transform 0.24s ease;
+}
+.preview-exif-wrap.exif-open {
+  top: 50%;
+  transform: translateY(-50%);
 }
 .preview-area.has-preview .preview-exif-wrap {
   opacity: 1;
@@ -1035,11 +1039,22 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   flex-direction: column;
   gap: 9px;
   padding: 0 12px 12px;
+  max-height: 360px;
+  opacity: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: max-height 0.22s ease, opacity 0.16s ease, padding 0.22s ease, margin 0.22s ease;
 }
 .preview-exif-content::-webkit-scrollbar { width: 3px; }
 .preview-exif-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
-.preview-exif-wrap:not(.exif-open) .preview-exif-content { display: none; }
+.preview-exif-wrap:not(.exif-open) .preview-exif-content {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
 
 .preview-exif-collapse-btn {
   background: none;
@@ -1157,7 +1172,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .map-modal {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: 2600;
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
   display: none;
@@ -1954,4 +1969,5 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .map-picker-container {
   flex: 1;
   min-height: 280px;
+  background: #e5e7eb;
 }
