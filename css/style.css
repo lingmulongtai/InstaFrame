@@ -418,6 +418,59 @@ html, body {
   margin: 8px 14px 0;
 }
 
+.oss-support {
+  padding: 12px 14px 14px;
+}
+.oss-support-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 10px;
+  padding: 10px;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.oss-support-link > svg:first-child {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  opacity: 0.88;
+}
+.oss-support-link > svg:last-child {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+.oss-support-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.oss-support-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.oss-support-sub {
+  font-size: 10.5px;
+  color: var(--text-2);
+  line-height: 1.35;
+}
+.oss-support-link:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.oss-support-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, white);
+  outline-offset: 2px;
+}
+
 .setting-row {
   display: flex;
   align-items: center;
