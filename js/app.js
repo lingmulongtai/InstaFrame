@@ -724,8 +724,6 @@ function restoreSettings() {
   if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
   const mapOvRow    = document.getElementById('mapOverlayRow');
   if (mapOvRow) mapOvRow.style.display = (saved.showLocation) ? '' : 'none';
-  const mapOvSetRow = document.getElementById('mapOverlaySettingsRow');
-  if (mapOvSetRow) mapOvSetRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
   if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
   const locIconRow  = document.getElementById('locationIconRow');
@@ -774,12 +772,6 @@ function restoreSettings() {
     const opVal = document.getElementById('mapOverlayOpacityVal');
     if (opVal) opVal.textContent = pct + '%';
   }
-  // Restore Mapbox token from localStorage
-  try {
-    const token = localStorage.getItem('instaframe_mapbox_token');
-    if (token) { const el = document.getElementById('mapboxToken'); if (el) el.value = token; }
-  } catch (_) {}
-
   // Aspect ratio
   if (saved.aspectRatio) {
     const r = document.querySelector(`input[name="aspectRatio"][value="${saved.aspectRatio}"]`);
@@ -883,21 +875,13 @@ function applySettings() {
   // Map overlay settings
   state.settings.showMapOverlay    = document.getElementById('showMapOverlay')?.checked ?? false;
   state.settings.mapOverlayOpacity = parseInt(document.getElementById('mapOverlayOpacityRange')?.value || '70', 10) / 100;
-  // Save Mapbox token separately (not in state.settings to keep it out of settings history)
-  const tokenEl = document.getElementById('mapboxToken');
-  if (tokenEl && tokenEl.value.trim()) {
-    try { localStorage.setItem('instaframe_mapbox_token', tokenEl.value.trim()); } catch (_) {}
-  }
-
   // Show/hide location position row, map overlay rows, and location icon row
   const locPosRow      = document.getElementById('locationPositionRow');
   const mapOvRow       = document.getElementById('mapOverlayRow');
-  const mapOvSetRow    = document.getElementById('mapOverlaySettingsRow');
   const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
   const locIconRow     = document.getElementById('locationIconRow');
   if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (mapOvSetRow) mapOvSetRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
   if (locIconRow) locIconRow.style.display = state.settings.showLocation ? '' : 'none';
   if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
 
@@ -968,6 +952,7 @@ function _syncDomWithStateSettings() {
   setChecked('showDecoLine', s.showDecoLine);
   setChecked('showExifInfo', s.showExifInfo);
   setChecked('showLocation', s.showLocation);
+  setChecked('showMapOverlay', s.showMapOverlay);
 
   const locPos = document.querySelector(`input[name="locationPos"][value="${s.locationPosition}"]`);
   if (locPos) locPos.checked = true;
@@ -1017,6 +1002,10 @@ function _syncDomWithStateSettings() {
 
   const locPosRow = document.getElementById('locationPositionRow');
   if (locPosRow) locPosRow.style.display = s.showLocation ? '' : 'none';
+  const mapOvRow = document.getElementById('mapOverlayRow');
+  if (mapOvRow) mapOvRow.style.display = s.showLocation ? '' : 'none';
+  const mapOvOpRow = document.getElementById('mapOverlayOpacityRow');
+  if (mapOvOpRow) mapOvOpRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
   const locIconRow = document.getElementById('locationIconRow');
   if (locIconRow) locIconRow.style.display = s.showLocation ? '' : 'none';
 }
@@ -1093,20 +1082,47 @@ function toggleLiveExifPanel() {
   if (open) updateLiveExifPanel();
 }
 
+let _liveExifApplyTimer = null;
+function scheduleLiveExifEditApply() {
+  clearTimeout(_liveExifApplyTimer);
+  _liveExifApplyTimer = setTimeout(applyLiveExifEdit, 100);
+}
+
 function applyLiveExifEdit() {
   const item = getSelectedPreviewItem();
   if (!item) return;
   const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
 
+  const nextExif = {
+    make:         getVal('live-exif-make'),
+    model:        getVal('live-exif-model'),
+    lensModel:    getVal('live-exif-lens'),
+    focalLength:  getVal('live-exif-fl'),
+    fNumber:      getVal('live-exif-fn'),
+    exposureTime: getVal('live-exif-et'),
+    iso:          getVal('live-exif-iso'),
+    location:     getVal('live-exif-location'),
+  };
+
+  const prevExif = item.exif || {};
+  const changed =
+    prevExif.make !== nextExif.make ||
+    prevExif.model !== nextExif.model ||
+    prevExif.lensModel !== nextExif.lensModel ||
+    prevExif.focalLength !== nextExif.focalLength ||
+    prevExif.fNumber !== nextExif.fNumber ||
+    prevExif.exposureTime !== nextExif.exposureTime ||
+    prevExif.iso !== nextExif.iso ||
+    prevExif.location !== nextExif.location;
+  if (!changed) return;
+
   if (!item.exif) item.exif = {};
-  item.exif.make         = getVal('live-exif-make');
-  item.exif.model        = getVal('live-exif-model');
-  item.exif.lensModel    = getVal('live-exif-lens');
-  item.exif.focalLength  = getVal('live-exif-fl');
-  item.exif.fNumber      = getVal('live-exif-fn');
-  item.exif.exposureTime = getVal('live-exif-et');
-  item.exif.iso          = getVal('live-exif-iso');
-  item.exif.location     = getVal('live-exif-location');
+  const locationChanged = prevExif.location !== nextExif.location;
+  Object.assign(item.exif, nextExif);
+  if (locationChanged) {
+    item.exif.latitude = null;
+    item.exif.longitude = null;
+  }
 
   // Sync the per-card EXIF editor inputs if they exist
   const syncCard = (suffix, val) => { const el = document.getElementById(`${suffix}-${item.id}`); if (el) el.value = val; };
@@ -1141,6 +1157,7 @@ async function getLiveDeviceLocation() {
       const name = await reverseGeocode(latitude, longitude);
       input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
       input.disabled = false;
+      applyLiveExifEdit();
     },
     () => { input.value = original; input.disabled = false; showToast('Could not get location', 'warn'); },
     { timeout: 10000 }
@@ -1156,6 +1173,10 @@ let _mapPickerLon    = null;
 async function openMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (!modal) return;
+  if (typeof L === 'undefined') {
+    showToast('Map library failed to load', 'error');
+    return;
+  }
   modal.classList.add('open');
 
   // Initialize Leaflet map in the next animation frame so the container
@@ -1186,6 +1207,7 @@ async function openMapPicker() {
 
   // Force Leaflet to recalculate size after modal becomes visible
   _mapPickerMap.invalidateSize();
+  setTimeout(() => { if (_mapPickerMap) _mapPickerMap.invalidateSize(); }, 120);
 
   // Pre-fill from current item's lat/lon if available
   const item = getSelectedPreviewItem();
@@ -1986,23 +2008,23 @@ function setupSettingsListeners() {
     if (el) el.addEventListener('change', applySettings);
   });
 
-  // Mapbox token input: save on blur
-  const mapboxTokenEl = document.getElementById('mapboxToken');
-  if (mapboxTokenEl) {
-    mapboxTokenEl.addEventListener('change', () => {
-      try { localStorage.setItem('instaframe_mapbox_token', mapboxTokenEl.value.trim()); } catch (_) {}
-      applySettings();
-    });
-  }
-
   // Custom Mapbox token in customize panel
   const customTokenEl = document.getElementById('customMapboxToken');
   if (customTokenEl) {
-    customTokenEl.addEventListener('change', () => {
+    customTokenEl.addEventListener('input', () => {
       try { localStorage.setItem('instaframe_mapbox_token', customTokenEl.value.trim()); } catch (_) {}
       _mapImgCache.clear(); // clear cache so new token is used
     });
   }
+
+  // Live EXIF panel inputs: apply immediately on each change
+  ['live-exif-make', 'live-exif-model', 'live-exif-lens', 'live-exif-fl', 'live-exif-fn', 'live-exif-et', 'live-exif-iso', 'live-exif-location']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', scheduleLiveExifEditApply);
+      el.addEventListener('change', scheduleLiveExifEditApply);
+    });
 
   // Frame background mode radios
   document.querySelectorAll('input[name="frameBackground"]').forEach(r => {
