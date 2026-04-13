@@ -62,6 +62,7 @@ const _settingsUndoStack = [];
 const _settingsRedoStack = [];
 let _historyLocked = false;
 let _updateMobileEmptyOverlay = null; // set by setupMobileTabs, called from updateUI
+const MAX_EDITABLE_RANGE_INPUT_LENGTH = 64;
 
 function _createSettingsSnapshot() {
   return {
@@ -2026,7 +2027,8 @@ function _clampRangeInputValue(el, rawValue) {
 
 function _extractNumericInputValue(text, allowedUnits = []) {
   const normalized = String(text ?? '').replace(',', '.');
-  if (normalized.length > 64) return null;
+  // Guard against excessively long pasted strings in editable range labels.
+  if (normalized.length > MAX_EDITABLE_RANGE_INPUT_LENGTH) return null;
   // Accept suffixes shown in UI labels so users can edit in-place without removing units.
   const m = normalized.match(/^\s*([+-]?\d+(?:\.\d+)?)\s*(%|×|px)?\s*$/i);
   if (!m) return null;
@@ -2036,6 +2038,12 @@ function _extractNumericInputValue(text, allowedUnits = []) {
   }
   const n = Number(m[1]);
   return Number.isFinite(n) ? n : null;
+}
+
+function _isDevHost() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
 }
 
 function setupSettingsListeners() {
@@ -2086,8 +2094,8 @@ function setupSettingsListeners() {
       const sel = document.getSelection();
       if (sel) {
         try { sel.selectAllChildren(valEl); } catch (err) {
-          if (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost') {
-            console.debug('Range value selection skipped:', err);
+          if (_isDevHost()) {
+            console.debug('Text selection failed for editable range value (visual-only fallback):', err);
           }
         }
       }
