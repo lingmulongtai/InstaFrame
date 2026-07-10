@@ -1470,7 +1470,7 @@ function _ensureLeafletStylesheet() {
   if (hasLeafletCss) return;
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+  link.href = 'vendor/leaflet/leaflet.css';
   link.setAttribute('data-leaflet-runtime', '1');
   document.head.appendChild(link);
 }
@@ -1492,17 +1492,12 @@ async function ensureLeafletLoaded() {
 
   _leafletLoadPromise = (async () => {
     _ensureLeafletStylesheet();
-    const sources = [
-      'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js',
-      'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-    ];
-    for (const src of sources) {
-      try {
-        await _loadLeafletScript(src);
-        if (typeof L !== 'undefined') return true;
-      } catch (_) {}
+    try {
+      await _loadLeafletScript('vendor/leaflet/leaflet.js');
+      return typeof L !== 'undefined';
+    } catch (_) {
+      return false;
     }
-    return typeof L !== 'undefined';
   })();
 
   const loaded = await _leafletLoadPromise;
