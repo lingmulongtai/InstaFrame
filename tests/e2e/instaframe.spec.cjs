@@ -35,8 +35,12 @@ test('EXIF edits remain item-specific and visual settings persist', async ({ pag
   await expect(page.locator('#live-exif-model')).toHaveValue('Edited Camera');
 
   await page.locator('label[for="text-color-dark"]').click();
+  await page.locator('#customizeBtn').click();
+  await page.locator('#mapboxTokenInput').fill('pk.test.signature');
+  await page.locator('#mapboxTokenInput').blur();
   await page.reload();
   await expect(page.locator('#text-color-dark')).toBeChecked();
+  await expect(page.locator('#mapboxTokenInput')).toHaveValue('pk.test.signature');
 });
 
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
