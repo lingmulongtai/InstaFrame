@@ -772,14 +772,52 @@ const FrameEngine = (() => {
    * @param {object}   [opts]
    * @param {function} [opts.onProgress]  called with 0..1 during encoding
    */
-  async function renderVideoFrameWhenReady(file, exif, settings, { onProgress, preferredMime, videoBitsPerSecond = 10_000_000 } = {}) {
-    // Try WebCodecs fast path first (Chrome 94+, Firefox 130+)
-    // Requires: VideoEncoder, VideoFrame, requestVideoFrameCallback, WebMMuxer CDN library
+  async function _fileHasAudioTrackHint(file) {
+    const sampleSize = 1024 * 1024;
+    const extension = String(file.name || '').split('.').pop().toLowerCase();
+    const mime = String(file.type || '').toLowerCase();
+    const isWebM = mime.includes('webm') || ['webm', 'mkv'].includes(extension);
+    const isMp4 = mime.includes('mp4') || mime.includes('quicktime') || ['mp4', 'mov', 'm4v', '3gp'].includes(extension);
+    const isAvi = mime.includes('avi') || extension === 'avi';
+    if (!isWebM && !isMp4 && !isAvi) return null;
+
+    const contains = (bytes, pattern) => {
+      outer: for (let index = 0; index <= bytes.length - pattern.length; index += 1) {
+        for (let offset = 0; offset < pattern.length; offset += 1) {
+          if (bytes[index + offset] !== pattern[offset]) continue outer;
+        }
+        return true;
+      }
+      return false;
+    };
+
+    try {
+      const head = new Uint8Array(await file.slice(0, sampleSize).arrayBuffer());
+      const samples = [head];
+      if (file.size > sampleSize) {
+        samples.push(new Uint8Array(await file.slice(Math.max(0, file.size - sampleSize)).arrayBuffer()));
+      }
+      if (isWebM) return samples.some(bytes => contains(bytes, [0x83, 0x81, 0x02])); // EBML TrackType = audio
+      if (isMp4) return samples.some(bytes => contains(bytes, [0x73, 0x6f, 0x75, 0x6e])); // MP4 handler "soun"
+      return samples.some(bytes => contains(bytes, [0x61, 0x75, 0x64, 0x73])); // AVI stream "auds"
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function renderVideoFrameWhenReady(file, exif, settings, {
+    onProgress,
+    preferredMime,
+    videoBitsPerSecond = 10_000_000,
+    preserveAudio = true,
+  } = {}) {
+    // The WebCodecs fast path currently muxes video only. Use it exclusively
+    // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
       && typeof VideoFrame !== 'undefined'
       && typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function'
       && (typeof WebMMuxer !== 'undefined' || typeof Muxer !== 'undefined');
-    if (canUseWebCodecs) {
+    if (!preserveAudio && canUseWebCodecs) {
       try {
         return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond });
       } catch (_) {
@@ -798,11 +836,23 @@ const FrameEngine = (() => {
       await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
     }
 
+    const sourceHasAudio = await _fileHasAudioTrackHint(file);
+
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
-      video.muted   = true;   // must be muted for autoplay; audio routed via AudioContext
+      video.muted   = true;   // must be muted for autoplay; source audio is captured separately
       video.preload = 'auto';
+      let audioContext = null;
+      let outputStream = null;
+      let sourceStream = null;
+
+      const cleanup = () => {
+        URL.revokeObjectURL(url);
+        if (outputStream) outputStream.getTracks().forEach(track => track.stop());
+        if (sourceStream) sourceStream.getTracks().forEach(track => track.stop());
+        if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
+      };
 
       video.onloadedmetadata = () => {
         const W = video.videoWidth;
@@ -840,35 +890,53 @@ const FrameEngine = (() => {
         const frameColor = settings.frameColor || '#F0F0F0';
         const duration   = video.duration || 0;
 
-        // ── Route audio through AudioContext so it's captured but not played ──
+        // ── Preserve the source audio without playing it on the page ──
         let audioTrack = null;
+        let captureStreamAvailable = false;
         try {
-          const actx = new (window.AudioContext || window.webkitAudioContext)();
-          const src  = actx.createMediaElementSource(video);
-          const dest = actx.createMediaStreamDestination();
-          src.connect(dest);   // route to MediaStream (recorded)
-          // NOT connecting to actx.destination keeps page muted
-          audioTrack = dest.stream.getAudioTracks()[0] || null;
+          const capture = video.captureStream || video.mozCaptureStream;
+          if (capture && sourceHasAudio !== false) {
+            captureStreamAvailable = true;
+            sourceStream = capture.call(video);
+            audioTrack = sourceStream.getAudioTracks()[0] || null;
+          }
+        } catch (_) { /* captureStream is not implemented consistently */ }
+
+        // Older browsers without HTMLMediaElement.captureStream use Web Audio.
+        try {
+          if (!audioTrack && !captureStreamAvailable && sourceHasAudio !== false) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.resume().catch(() => {});
+            const src  = audioContext.createMediaElementSource(video);
+            const dest = audioContext.createMediaStreamDestination();
+            src.connect(dest);   // route to MediaStream (recorded)
+            // NOT connecting to audioContext.destination keeps page muted
+            audioTrack = dest.stream.getAudioTracks()[0] || null;
+          }
         } catch (_) { /* no audio support or no audio track */ }
 
         // ── Build output stream: canvas video + original audio ──
-        const outStream = canvas.captureStream(30);
-        if (audioTrack) outStream.addTrack(audioTrack);
+        outputStream = canvas.captureStream(30);
+        if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
           ? [preferredMime, 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
           : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
         const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
-        const recorder = new MediaRecorder(outStream, {
+        const recorder = new MediaRecorder(outputStream, {
           mimeType,
           videoBitsPerSecond,
         });
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.onstop = () => {
-          URL.revokeObjectURL(url);
+          cleanup();
           resolve(new Blob(chunks, { type: mimeType }));
+        };
+        recorder.onerror = event => {
+          cleanup();
+          reject(event.error || new Error('Video recording failed'));
         };
 
         let rafId;
@@ -897,10 +965,10 @@ const FrameEngine = (() => {
         recorder.start(200);
         video.play()
           .then(() => { rafId = requestAnimationFrame(drawLoop); })
-          .catch(err => { recorder.stop(); URL.revokeObjectURL(url); reject(err); });
+          .catch(err => { recorder.stop(); cleanup(); reject(err); });
       };
 
-      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.onerror = () => { cleanup(); reject(new Error('Video load failed')); };
       video.src  = url;
       video.load();
     });

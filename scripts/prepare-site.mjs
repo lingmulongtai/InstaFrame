@@ -5,7 +5,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'dist');
 const files = ['index.html', 'photo-camera-svgrepo-com.svg'];
-const directories = ['css', 'js', 'assets'];
+const directories = ['css', 'js', 'assets', 'vendor'];
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });

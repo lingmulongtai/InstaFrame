@@ -5,6 +5,7 @@ playwright-report/
 test-results/
 blob-report/
 output/
+vendor/
 *.log
 
 # IDE and unrelated Android/Gradle state
