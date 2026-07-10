@@ -1,251 +1,150 @@
 # ✨ InstaFrame
 
-> Add cinematic EXIF frames to photos & videos — entirely in your browser.  
-> **100% local · no upload · no account · no tracking**
+写真・動画へEXIF情報付きのフレームを合成する、Web専用のブラウザアプリです。
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-0891b2?style=for-the-badge)](https://lingmulongtai.github.io/InstaFrame/)
+[![Web quality checks](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml/badge.svg)](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml)
 
----
+## プライバシー
 
-## Why InstaFrame?
+写真・動画のデコード、EXIF読み取り、フレーム描画、エンコード、ZIP生成はブラウザ内で行われます。メディアファイルそのものをInstaFrameのサーバーへアップロードする処理はありません。
 
-InstaFrame reads metadata (camera, lens, focal length, aperture, shutter speed, ISO) and renders a clean typographic frame in a modern "Shot on" style. You can also set a location with an interactive map and optionally overlay a Passage-style line-art map on the photo.
+位置情報機能だけは、ユーザーが確認画面で明示的に許可した場合に外部通信します。
 
-- 📸 Photo + 🎬 Video support
-- ⚡ Live preview with full-area drag-to-pan & pinch-zoom
-- 🗺️ Interactive map location picker (Leaflet.js)
-- 🖼️ Passage-style map overlay on exported images (Mapbox)
-- 🧩 Always-open EXIF editor panel with collapse toggle
-- 📦 Batch generate + ZIP download
-- 🌐 English / 日本語 UI
+| 操作 | 送信先 | 送信される情報 |
+|---|---|---|
+| 地名をオンライン検索 | Nominatim | 緯度・経度、表示言語 |
+| マップを表示 | OpenStreetMap | 表示範囲に対応するタイル番号 |
+| 端末位置を取得できない場合の地図初期位置 | ipapi | 接続元IPアドレス |
+| マップオーバーレイ生成 | Mapbox Static Images API | 緯度・経度、ズーム、公開アクセストークン |
 
----
-
-## Feature Highlights
-
-### Core workflow
-- Drag & drop JPEG / PNG / HEIC / WebP / MP4 / MOV / WebM
-- Tune frame + typography settings in the left panel
-- Preview instantly in the live view — drag anywhere in the preview (canvas or background) to pan; scroll to zoom
-- Export one-by-one or all at once
-
-### Live EXIF Editor Panel
-- The EXIF editor panel is open by default on the left side of the preview
-- Collapse it by clicking the header; click again to expand
-- Pick a GPS location from an interactive map with the 📍 button
-- Use the 🎯 button to get your current device location
-
-### Map Location Picker
-- Opens a Leaflet.js map in a modal
-- Automatically centers on your current position (browser geolocation → IP-based fallback)
-- Click anywhere on the map to drop a pin; confirm to reverse-geocode and set the location
-
-### Map Overlay (Passage style)
-- Enable **Map Overlay** in Elements settings alongside **Location**
-- Enter your [Mapbox](https://mapbox.com/) public access token (`pk.eyJ1…`)
-- A minimal light-style map tile is fetched and composited onto the bottom-right corner of the photo
-- Adjust overlay **Opacity** (10–100%) to taste
-
-### Frame & typography controls
-- Frame color / thickness / aspect ratio / outer padding
-- Font family + camera name style + EXIF style
-- Shot-on / EXIF / decorative line visibility
-- Line spacing + text vertical offset + location display
-
-### Export controls
-- Photo: JPEG / WebP / PNG + quality slider
-- Video: browser-supported formats (VP9 / VP8 / MP4) + bitrate
-
-### UX touches
-- Drag to pan from anywhere in the preview area (not just the image itself)
-- Progress bar during generation/ZIP
-- Full-screen preview modal with keyboard navigation
-- Preferences persisted via `localStorage`
-- Desktop + mobile responsive layout
-
----
-
-## Quick Start
-
-1. Open `index.html` in a modern browser, or use the live demo.
-2. Drop photos/videos into the preview area.
-3. Adjust settings in the left panel.
-4. *(Optional)* Click the map button (📍) in the EXIF panel to pick a location.
-5. *(Optional)* Enable **Location** + **Map Overlay** for line-art map compositing.
-6. Click **Apply to All**.
-7. Click **Download All** to export a ZIP.
-
----
-
-## Map Overlay Setup
-
-The map overlay feature uses the [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/).
-
-1. In InstaFrame → **Elements** → enable **Location** and **Map Overlay**
-2. Map tiles are fetched automatically when location coordinates are available
-
----
-
-## Project Structure
-
-```text
-InstaFrame/
-├── index.html          # Main app UI
-├── css/
-│   └── style.css       # Layout + component styling
-└── js/
-    ├── i18n.js         # EN/JA translations
-    ├── frame-engine.js # Frame rendering + video pipeline + map overlay drawing
-    └── app.js          # App state, preview, export, map picker, interactions
-```
-
----
-
-## Tech Stack
-
-| Library | Purpose |
-|---|---|
-| [exifr](https://github.com/MikeKovarik/exifr) | EXIF/metadata extraction |
-| [JSZip](https://stuk.github.io/jszip/) | ZIP export in browser |
-| [Leaflet.js](https://leafletjs.com/) | Interactive map location picker |
-| [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) | Map overlay tile (requires free token) |
-| Canvas 2D API + MediaRecorder API | Frame rendering + video encoding |
-| Google Fonts | Typography set |
-
-✅ No build step.  
-✅ No backend.  
-✅ Works by opening `index.html`.
-
----
-
-## License
-
-MIT
-
----
-
-# ✨ InstaFrame（日本語）
-
-> 写真・動画にEXIFフレームを追加する、ブラウザ完結アプリ。  
-> **完全ローカル処理 / アップロード不要 / アカウント不要 / トラッキングなし**
-
-[![Live Demo](https://img.shields.io/badge/Live-Demo-0891b2?style=for-the-badge)](https://lingmulongtai.github.io/InstaFrame/)
-
----
-
-## InstaFrame でできること
-
-写真・動画のメタデータ（メーカー / 機種 / レンズ / 焦点距離 / 絞り / SS / ISO）を読み取り、
-「Shot on」風のタイポグラフィ付きフレームを合成します。  
-マップ上での場所選択や、Passageアプリ風の線画マップオーバーレイにも対応しています。
-
-- 📸 写真 + 🎬 動画に対応
-- ⚡ プレビューエリア全体をドラッグ＆パン・ピンチズーム
-- 🗺️ Leaflet.jsによるインタラクティブなマップ位置選択
-- 🖼️ Passage風のラインマップオーバーレイ（Mapbox）
-- 🧩 常時展開のEXIF編集パネル（折りたたみ機能つき）
-- 📦 一括生成 + ZIPダウンロード
-- 🌐 日本語 / English UI
-
----
+- GPS付き写真を追加しただけでは外部通信しません。座標は端末内で文字列化されます。
+- 許可は「今回だけ」または「この端末で常に許可」から選択できます。
+- 許可は **カスタマイズ → プライバシー** から取り消せます。
+- Google FontsとJavaScriptライブラリはCDNから取得するため、アプリの読み込み自体には通常のWeb通信があります。
 
 ## 主な機能
 
-### 基本フロー
-- JPEG / PNG / HEIC / WebP / MP4 / MOV / WebM をドラッグ＆ドロップ
-- フレーム・文字設定を調整
-- ライブビューで即時確認（キャンバス外の余白部分もドラッグしてパン可能）
-- 個別または一括でエクスポート
+- 写真・動画のライブプレビューと一括処理
+- メーカー、機種、レンズ、焦点距離、絞り、シャッター速度、ISO、位置情報の編集
+- フレーム色、ぼかし背景、文字色（自動・明るい・暗い・カスタム）
+- プレビュー画質を変えても構図や文字位置が変わらない固定レイアウトレンダー
+- 4:5 Instagram投稿、3:4プロフィールグリッド、9:16ストーリーの用途付きプリセット
+- EXIF編集パネルのコンパクト・標準・大サイズ切り替え
+- JPEG / WebP / PNG出力、動画出力、複数ファイルのZIP保存
+- 日本語 / English、デスクトップ / モバイル対応
 
-### ライブEXIF編集パネル
-- デフォルトで開いた状態で左側に表示
-- ヘッダーをクリックで折りたたみ/展開
-- 📍 ボタンでマップから位置を選択
-- 🎯 ボタンでデバイスのGPSから現在地を取得
+## 対応形式
 
-### マップ位置選択
-- モーダルでLeaflet.jsのインタラクティブマップを表示
-- ブラウザのGeolocation API → IPアドレスベースの順で自動的に現在地付近を表示
-- マップをクリックしてピンを設置、確認すると逆ジオコードで地名をセット
+形式名だけではなく、実際のブラウザデコーダーがファイル内のコーデックへ対応している必要があります。
 
-### マップオーバーレイ（Passage風）
-- 設定の「要素」→「位置情報」+「マップオーバーレイ」をオン
-- 位置情報がある場合に、Passage風マップを自動取得して合成
-- ミニマルなライトスタイルのマップタイルを取得し、写真の右下にオーバーレイ合成
-- 不透明度（10〜100%）を調整可能
+| 入力 | 対応方針 | 検証 |
+|---|---|---|
+| JPEG | 標準対応 | Chromium E2EでEXIF読込、プレビュー、JPEG出力、ZIP出力を自動検証 |
+| PNG | 標準対応 | Canvas/Imageのブラウザ標準デコーダーを使用 |
+| WebP | 標準対応 | 対応ブラウザの標準デコーダーを使用 |
+| HEIC / HEIF | 条件付き | Safariなどネイティブ対応ブラウザのみ。未対応時は明示エラー |
+| WebM (VP8 / VP9) | 標準候補 | Chromium E2Eで写真とのプレビュー切り替えを自動検証 |
+| MP4 / MOV | 条件付き | H.264/AAC等のブラウザ・OSコーデック対応状況に依存 |
+| AVI / MKV / 3GP | 条件付き | コンテナと内部コーデックの両方をブラウザが再生できる場合のみ |
 
-### フレーム・文字設定
-- フレーム色 / 太さ / アスペクト比 / 外側余白
-- フォント / カメラ名スタイル / EXIFスタイル
-- Shot on・EXIF・装飾ラインの表示切替
-- 行間 / テキスト縦位置 / 位置情報表示
+未対応ファイルを選択した場合は、処理を黙って失敗させず、デコードできないことを画面に表示します。
 
-### エクスポート設定
-- 写真: JPEG / WebP / PNG + 画質
-- 動画: ブラウザ対応形式（VP9 / VP8 / MP4）+ ビットレート
+## プレビュー画質の設計
 
-### UX
-- プレビューエリアの余白部分からでもドラッグでパン可能
-- 生成・ZIP作成時の進捗表示
-- キーボード対応フルスクリーンプレビュー
-- `localStorage` への設定保存
-- デスクトップ / モバイル対応
+以前は画質ごとに元画像を600〜2400pxへ縮小してからフレームを再計算していたため、丸め誤差で文字位置が変化していました。現在は次の二層構造です。
 
----
+1. 構図、枠、文字座標を固定された2400pxの論理解像度で一度だけ計算
+2. 下書き・標準・高画質・最高画質は、表示キャンバスのピクセル密度だけを変更
 
-## 使い方
+そのため画質変更はシャープさだけに影響し、アスペクト比、余白、文字位置には影響しません。
 
-1. `index.html` をブラウザで開く（またはLive Demo）。
-2. 画像・動画をプレビュー領域へドロップ。
-3. 左側パネルで設定を調整。
-4. *(任意)* EXIFパネルのマップボタン（📍）で位置を選択。
-5. *(任意)* 「位置情報」+「マップオーバーレイ」を有効化。
-6. **すべてに適用** を実行。
-7. **まとめてダウンロード** でZIP保存。
+## Mapboxトークン管理
 
----
+ブラウザ用の公開トークンはソースから見えることが前提です。秘密トークンは絶対に配置しないでください。
 
-## マップオーバーレイのセットアップ
+1. Mapboxでデフォルトトークンではない専用の公開トークンを作成します。
+2. 必要最小限の読み取りスコープだけを付与します。
+3. MapboxのAccess Tokens画面でAllowed URLを `https://lingmulongtai.github.io` に制限します。
+4. [js/config.js](js/config.js) の `publicToken` を専用トークンへ置き換えます。
+5. MapboxのStatistics画面でアカウント全体の使用量を監視します。
 
-マップオーバーレイ機能は [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) を使用します。
+アプリ側でも同じオリジンだけを許可し、端末ごとに1日100回・1か月1000回のソフト上限を設けています。ただし、クライアント側の上限は改変できるため、Mapbox側のURL制限と請求上限の代替にはなりません。URL制限はMapboxの[公式トークン管理ガイド](https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions)に従って設定してください。
 
-1. InstaFrame の **要素** 設定 → **位置情報** と **マップオーバーレイ** を有効化
-2. 位置座標がある場合にマップ画像を自動取得して合成
+## ローカル実行
 
----
+`index.html`を直接開くこともできますが、ブラウザのセキュリティ制限を避けるためローカルHTTPサーバーを推奨します。
 
-## ファイル構成
+```powershell
+python -m http.server 4173 --bind 127.0.0.1
+```
+
+その後 `http://127.0.0.1:4173` を開きます。Mapboxオーバーレイは本番ドメインに制限しているため、ローカルでは無効です。
+
+## 開発とテスト
+
+```powershell
+npm.cmd install
+npx.cmd playwright install chromium
+npm.cmd test
+```
+
+`npm test`は次を実行します。
+
+- JavaScript構文検査
+- ESLint
+- 純粋関数のユニットテスト
+- JPEG読込 → プレビュー → 書き出し
+- EXIF編集と設定保存
+- 複数JPEGのZIP出力
+- 日本語画質UIと固定レイアウト
+- GPS読込時に同意前の位置情報通信がないこと
+- モバイル表示とEXIF編集パネル
+- 写真 / WebM動画のプレビュー切り替え
+
+## デプロイ
+
+GitHub Pagesワークフローは構文・Lint・ユニットテスト後に `dist/` を生成し、次のWeb公開物だけをデプロイします。
+
+- `index.html`
+- `css/`
+- `js/`
+- `assets/`（存在する場合）
+- ファビコンSVG
+
+IDE設定、テスト、Node.js依存関係、READMEなどは公開アーティファクトに含めません。Pull Requestと`main`へのpushでは、別のCIがChromium E2Eまで実行します。
+
+## 構成
 
 ```text
 InstaFrame/
-├── index.html          # メインUI
-├── css/
-│   └── style.css       # レイアウト・UIスタイル
-└── js/
-    ├── i18n.js         # 日英翻訳
-    ├── frame-engine.js # フレーム描画・動画処理・マップオーバーレイ描画
-    └── app.js          # 状態管理・プレビュー・マップ選択・書き出し
+├── index.html
+├── css/style.css
+├── js/
+│   ├── core-utils.js
+│   ├── config.js
+│   ├── i18n.js
+│   ├── frame-engine.js
+│   └── app.js
+├── tests/
+│   ├── unit/
+│   └── e2e/
+├── scripts/prepare-site.mjs
+├── playwright.config.cjs
+├── eslint.config.mjs
+└── .github/workflows/
+    ├── ci.yml
+    └── pages.yml
 ```
 
----
+## License
 
-## 使用技術
-
-| ライブラリ | 用途 |
-|---|---|
-| [exifr](https://github.com/MikeKovarik/exifr) | EXIF / メタデータ取得 |
-| [JSZip](https://stuk.github.io/jszip/) | ブラウザ内ZIP生成 |
-| [Leaflet.js](https://leafletjs.com/) | インタラクティブマップ位置選択 |
-| [Mapbox Static Images API](https://docs.mapbox.com/api/maps/static-images/) | マップオーバーレイ（位置座標が必要） |
-| Canvas 2D API + MediaRecorder API | 描画と動画エンコード |
-| Google Fonts | タイポグラフィ |
-
-✅ ビルド不要  
-✅ バックエンド不要  
-✅ `index.html` を開くだけで動作
+[MIT](LICENSE)
 
 ---
 
-## ライセンス
+## English summary
 
-MIT
+InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. Preview quality changes raster density without recalculating layout, so typography and composition remain stable.
+
+Run `npm install`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. GitHub Pages deploys an allowlisted `dist/` artifact only.
