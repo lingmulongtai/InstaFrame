@@ -1,4 +1,6 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { createJpeg, createWebm } = require('./fixtures.cjs');
 
 async function uploadJpegs(page, count = 1, gps = false) {
@@ -12,6 +14,31 @@ async function uploadJpegs(page, count = 1, gps = false) {
   await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
 }
 
+async function createBrowserRaster(page, mimeType) {
+  const result = await page.evaluate(type => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 64;
+    const context = canvas.getContext('2d');
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, '#ff5a5f');
+    gradient.addColorStop(1, '#2563eb');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL(type, 0.9);
+    return { actualType: dataUrl.slice(5, dataUrl.indexOf(';')), base64: dataUrl.split(',')[1] };
+  }, mimeType);
+  expect(result.actualType).toBe(mimeType);
+  return Buffer.from(result.base64, 'base64');
+}
+
+async function loadAudioVideoFixture() {
+  return {
+    buffer: await fs.readFile(path.resolve(__dirname, 'audio-fixture.webm')),
+    mimeType: 'video/webm',
+  };
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
@@ -23,6 +50,49 @@ test('JPEG upload renders a preview and exports a framed image', async ({ page }
   await page.locator('#dl-btn-1').click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/photo-1_frame\.(jpg|jpeg)$/i);
+});
+
+test('PNG and WebP inputs decode into switchable previews', async ({ page }) => {
+  const [png, webp] = await Promise.all([
+    createBrowserRaster(page, 'image/png'),
+    createBrowserRaster(page, 'image/webp'),
+  ]);
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'photo.png', mimeType: 'image/png', buffer: png },
+    { name: 'photo.webp', mimeType: 'image/webp', buffer: webp },
+  ]);
+
+  await expect(page.locator('#preview-1')).toBeVisible();
+  await expect(page.locator('#preview-2')).toBeVisible();
+  await page.locator('#preview-1').click();
+  await expect(page.locator('#livePreviewCanvas')).toHaveAttribute('data-composition-width', /\d+/);
+  await page.locator('#preview-2').click();
+  await expect(page.locator('#livePreviewCanvas')).toHaveAttribute('data-composition-width', /\d+/);
+  await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
+  await expect(page.locator('#status-badge-2 .status-dot')).not.toHaveClass(/error/);
+});
+
+test('JPEG, PNG, and WebP exports have the requested file signatures', async ({ page }) => {
+  await uploadJpegs(page);
+  const formats = [
+    { id: 'fmt-jpeg', extension: /\.jpg$/i, verify: bytes => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff },
+    { id: 'fmt-png', extension: /\.png$/i, verify: bytes => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+    { id: 'fmt-webp', extension: /\.webp$/i, verify: bytes => bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP' },
+  ];
+
+  for (const format of formats) {
+    await page.locator(`label[for="${format.id}"]`).click();
+    await expect(page.locator(`#${format.id}`)).toBeChecked();
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#dl-btn-1').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(format.extension);
+    const filePath = await download.path();
+    expect(filePath).toBeTruthy();
+    const bytes = await fs.readFile(filePath);
+    expect(bytes.length).toBeGreaterThan(100);
+    expect(format.verify(bytes)).toBe(true);
+  }
 });
 
 test('EXIF edits remain item-specific and visual settings persist', async ({ page }) => {
@@ -187,4 +257,93 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   await expect(page.locator('#previewVideoBar')).toBeVisible();
   await page.locator('#preview-1').click();
   await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+});
+
+test('WebM input exports a decodable framed video', async ({ page }) => {
+  test.skip(process.platform === 'win32', 'Headless Chromium on Windows intermittently crashes while recording canvas video');
+  await page.locator('#fileInput').setInputFiles({
+    name: 'clip.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/clip_frame\.(webm|mp4)$/i);
+  const filePath = await download.path();
+  const bytes = await fs.readFile(filePath);
+  expect(bytes.length).toBeGreaterThan(100);
+
+  const mediaInfo = await page.evaluate(async ({ base64, mimeType }) => {
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+    const video = document.createElement('video');
+    video.src = url;
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = () => reject(new Error('Exported video could not be decoded'));
+    });
+    const info = { duration: video.duration, width: video.videoWidth, height: video.videoHeight };
+    URL.revokeObjectURL(url);
+    return info;
+  }, {
+    base64: bytes.toString('base64'),
+    mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
+  });
+  expect(mediaInfo.duration).toBeGreaterThan(0);
+  expect(mediaInfo.width).toBeGreaterThan(0);
+  expect(mediaInfo.height).toBeGreaterThan(0);
+});
+
+test('video export preserves an input audio track', async ({ page }) => {
+  test.skip(process.platform === 'win32', 'Headless Chromium on Windows crashes while recording a canvas stream with audio');
+  const fixture = await loadAudioVideoFixture();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'clip-with-audio.webm',
+    mimeType: fixture.mimeType,
+    buffer: fixture.buffer,
+  });
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/clip-with-audio_frame\.(webm|mp4)$/i);
+  const filePath = await download.path();
+  const bytes = await fs.readFile(filePath);
+  expect(bytes.length).toBeGreaterThan(100);
+
+  const mediaInfo = await page.evaluate(async ({ base64, mimeType }) => {
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    const blob = new Blob([bytes], { type: mimeType });
+    const video = document.createElement('video');
+    video.muted = true;
+    video.src = URL.createObjectURL(blob);
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = () => reject(new Error('Exported video could not be decoded'));
+    });
+    await video.play();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const captured = video.captureStream();
+    const info = {
+      duration: video.duration,
+      videoTracks: captured.getVideoTracks().length,
+      audioTracks: captured.getAudioTracks().length,
+    };
+    video.pause();
+    captured.getTracks().forEach(track => track.stop());
+    URL.revokeObjectURL(video.src);
+    return info;
+  }, {
+    base64: bytes.toString('base64'),
+    mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
+  });
+  expect(mediaInfo.duration).toBeGreaterThan(0);
+  expect(mediaInfo.videoTracks).toBeGreaterThan(0);
+  expect(mediaInfo.audioTracks).toBeGreaterThan(0);
 });
