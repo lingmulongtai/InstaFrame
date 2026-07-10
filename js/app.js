@@ -23,6 +23,8 @@ const state = {
     cameraNameBold:      false,
     cameraNameItalic:    false,
     exifItalic:          false,
+    textColorMode:       'auto',    // 'auto' | 'light' | 'dark' | 'custom'
+    textColor:           '#FFFFFF',
     showShotOn:          true,
     showExifInfo:        true,
     cameraNameOnly:      false,
@@ -109,34 +111,148 @@ let   _renderSeq     = 0;         // increments on each render to cancel stale o
 let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
 let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
 
-// ─── Mapbox token & usage tracking ────────────────────────────────────────────
-const DEFAULT_MAPBOX_TOKEN   = 'pk.eyJ1IjoibGluZ211bG9uZ3RhaSIsImEiOiJjbW53cHp3eHoxbDZhMnBtbzB3b3huemZwIn0.kX4B2BumC8txS9rZw41a-Q';
-const MAPBOX_USAGE_KEY       = 'instaframe_mb_usage';
-const MAPBOX_MONTHLY_LIMIT   = 50000;
+// ─── Location privacy consent ─────────────────────────────────────────────────
+let _sessionLocationNetworkConsent = false;
+let _locationConsentResolver = null;
+let _locationPrivacyPreviousFocus = null;
+
+function _openLocationPrivacyModal() {
+  _locationPrivacyPreviousFocus = document.activeElement;
+  document.getElementById('locationPrivacyModal')?.classList.add('open');
+  document.getElementById('locationPrivacyOnceBtn')?.focus();
+}
+
+function _closeLocationPrivacyModal() {
+  document.getElementById('locationPrivacyModal')?.classList.remove('open');
+  if (_locationPrivacyPreviousFocus?.focus) _locationPrivacyPreviousFocus.focus();
+  _locationPrivacyPreviousFocus = null;
+}
+
+function hasLocationNetworkConsent() {
+  return _sessionLocationNetworkConsent || loadPrefs().locationNetworkConsent === 'always';
+}
+
+function updateLocationPrivacyStatus() {
+  const status = document.getElementById('locationPrivacyStatus');
+  if (!status) return;
+  const always = loadPrefs().locationNetworkConsent === 'always';
+  status.textContent = t(always ? 'privacyAccessAlways' : (_sessionLocationNetworkConsent ? 'privacyAccessSession' : 'privacyAccessOff'));
+  const usageStatus = document.getElementById('mapboxUsageStatus');
+  const config = window.INSTAFRAME_CONFIG?.mapbox;
+  if (usageStatus && config) {
+    const usage = _getMapboxUsage();
+    usageStatus.textContent = tf('mapboxUsageStatus', {
+      day: usage.dayCount,
+      dayLimit: config.dailyRequestLimitPerDevice,
+      month: usage.monthCount,
+      monthLimit: config.monthlyRequestLimitPerDevice,
+    });
+  }
+}
+
+function _finishLocationConsent(allowed, persist = false) {
+  _sessionLocationNetworkConsent = !!allowed;
+  const prefs = loadPrefs();
+  if (allowed && persist) prefs.locationNetworkConsent = 'always';
+  else if (!allowed) {
+    delete prefs.locationNetworkConsent;
+    const mapToggle = document.getElementById('showMapOverlay');
+    if (mapToggle) mapToggle.checked = false;
+    state.settings.showMapOverlay = false;
+    _mapImgCache.clear();
+    saveSettings();
+    scheduleLivePreview();
+  }
+  savePrefs(prefs);
+  _closeLocationPrivacyModal();
+  updateLocationPrivacyStatus();
+  if (_locationConsentResolver) {
+    const resolve = _locationConsentResolver;
+    _locationConsentResolver = null;
+    resolve(!!allowed);
+  }
+}
+
+function _cancelLocationConsent() {
+  _closeLocationPrivacyModal();
+  if (_locationConsentResolver) {
+    const resolve = _locationConsentResolver;
+    _locationConsentResolver = null;
+    resolve(false);
+  }
+}
+
+function requestLocationNetworkConsent() {
+  if (hasLocationNetworkConsent()) return Promise.resolve(true);
+  const modal = document.getElementById('locationPrivacyModal');
+  if (!modal) return Promise.resolve(false);
+  _openLocationPrivacyModal();
+  return new Promise(resolve => { _locationConsentResolver = resolve; });
+}
+
+function openLocationPrivacyManager() {
+  _openLocationPrivacyModal();
+  updateLocationPrivacyStatus();
+}
+
+function setupLocationPrivacy() {
+  document.getElementById('manageLocationPrivacyBtn')?.addEventListener('click', openLocationPrivacyManager);
+  document.getElementById('locationPrivacyOnceBtn')?.addEventListener('click', () => _finishLocationConsent(true, false));
+  document.getElementById('locationPrivacyAlwaysBtn')?.addEventListener('click', () => _finishLocationConsent(true, true));
+  document.getElementById('locationPrivacyRevokeBtn')?.addEventListener('click', () => _finishLocationConsent(false));
+  document.getElementById('locationPrivacyCancelBtn')?.addEventListener('click', _cancelLocationConsent);
+  document.getElementById('locationPrivacyCloseBtn')?.addEventListener('click', _cancelLocationConsent);
+  const modal = document.getElementById('locationPrivacyModal');
+  modal?.addEventListener('click', event => {
+    if (event.target === modal) _cancelLocationConsent();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal?.classList.contains('open')) _cancelLocationConsent();
+  });
+  document.addEventListener('instaframe:languagechange', updateLocationPrivacyStatus);
+  updateLocationPrivacyStatus();
+}
+
+// ─── Mapbox token & client-side usage guard ───────────────────────────────────
+const MAPBOX_USAGE_KEY = 'instaframe_mb_usage_v2';
+let _mapboxUnavailableNotified = false;
 
 function _getMapboxUsage() {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const month = day.slice(0, 7);
   try {
-    const data = JSON.parse(localStorage.getItem(MAPBOX_USAGE_KEY) || '{}');
-    const now  = new Date();
-    const month = `${now.getFullYear()}-${now.getMonth()}`;
-    if (data.month !== month) return { count: 0, month };
-    return data;
-  } catch { return { count: 0, month: '' }; }
+    const saved = JSON.parse(localStorage.getItem(MAPBOX_USAGE_KEY) || '{}');
+    return {
+      day,
+      month,
+      dayCount: saved.day === day ? Number(saved.dayCount) || 0 : 0,
+      monthCount: saved.month === month ? Number(saved.monthCount) || 0 : 0,
+    };
+  } catch {
+    return { day, month, dayCount: 0, monthCount: 0 };
+  }
 }
 
 function _trackMapboxLoad() {
   try {
     const usage = _getMapboxUsage();
-    usage.count += 1;
+    usage.dayCount += 1;
+    usage.monthCount += 1;
     localStorage.setItem(MAPBOX_USAGE_KEY, JSON.stringify(usage));
+    updateLocationPrivacyStatus();
   } catch {}
 }
 
-/** Return the effective Mapbox token to use: default (if within limit) → null. */
 function getMapboxToken() {
+  if (!hasLocationNetworkConsent()) return null;
+  const config = window.INSTAFRAME_CONFIG?.mapbox;
+  if (!config?.publicToken) return null;
+  const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
+  if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
   const usage = _getMapboxUsage();
-  if (usage.count >= MAPBOX_MONTHLY_LIMIT) return null;
-  return DEFAULT_MAPBOX_TOKEN;
+  if (usage.dayCount >= config.dailyRequestLimitPerDevice || usage.monthCount >= config.monthlyRequestLimitPerDevice) return null;
+  return config.publicToken;
 }
 
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
@@ -144,7 +260,13 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
   if (_mapImgCache.has(key)) return _mapImgCache.get(key);
   const token = getMapboxToken();
-  if (!token) return null;
+  if (!token) {
+    if (!_mapboxUnavailableNotified && hasLocationNetworkConsent()) {
+      _mapboxUnavailableNotified = true;
+      showToast(t('msgMapboxUnavailable'), 'warn');
+    }
+    return null;
+  }
   const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
   return new Promise(resolve => {
     const img = new Image();
@@ -269,10 +391,9 @@ async function readExif(file) {
       if (lat != null && lon != null) {
         latitude  = lat;
         longitude = lon;
-        // Kick off reverse geocoding asynchronously; returns raw coords initially
-        location = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
-        // Store coords for later reverse-geocoding
-        reverseGeocode(lat, lon).then(name => { if (name) location = name; }).catch(() => {});
+        // Keep GPS extraction fully local. Place-name lookup is opt-in from the
+        // EXIF editor and never starts automatically when a file is imported.
+        location = InstaFrameCore.formatCoordinateLabel(lat, lon);
       }
     }
 
@@ -306,13 +427,16 @@ function gpsToDecimal(dms, ref) {
 
 const _geocodeCache = {};
 async function reverseGeocode(lat, lon) {
-  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  if (!hasLocationNetworkConsent()) return null;
+  const language = currentLang === 'ja' ? 'ja' : 'en';
+  const key = `${language}:${lat.toFixed(3)},${lon.toFixed(3)}`;
   if (_geocodeCache[key]) return _geocodeCache[key];
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-      { headers: { 'Accept-Language': 'en' } }
+      { headers: { 'Accept-Language': language } }
     );
+    if (!res.ok) return null;
     const data = await res.json();
     const a = data.address || {};
     const city    = a.city || a.town || a.village || a.county || '';
@@ -358,11 +482,21 @@ async function addFiles(files) {
     };
     state.items.push(item);
     renderItem(item);
-    // Auto-select first item added for live preview
-    if (state.items.length === 1) selectItem(item.id);
 
     // Pre-warm image cache so the first live preview is fast
-    if (!video) _loadPreviewImage(item).catch(() => {});
+    if (!video) {
+      try {
+        await _loadPreviewImage(item);
+      } catch {
+        item.status = 'error';
+        item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+        updateItemStatus(item);
+        showToast(item.errorMsg, 'error');
+      }
+    }
+
+    // Auto-select first item added for live preview
+    if (state.items.length === 1) selectItem(item.id);
 
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
@@ -395,7 +529,12 @@ async function addFiles(files) {
             if (!previewDiv) return;
             const thumb = previewDiv.querySelector('img.thumb-orig');
             if (thumb && img) thumb.src = img.src;
-          }).catch(() => {});
+          }).catch(() => {
+            item.status = 'error';
+            item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+            updateItemStatus(item);
+            showToast(item.errorMsg, 'error');
+          });
         });
     }
   }
@@ -725,6 +864,17 @@ function restoreSettings() {
     if (el) el.value = saved.fontFamily;
   }
 
+  if (saved.textColorMode) {
+    const mode = document.querySelector(`input[name="textColorMode"][value="${saved.textColorMode}"]`);
+    if (mode) mode.checked = true;
+  }
+  if (saved.textColor) {
+    const picker = document.getElementById('textColorPicker');
+    if (picker) picker.value = InstaFrameCore.normalizeHexColor(saved.textColor, '#FFFFFF');
+  }
+  const textPicker = document.getElementById('textColorPicker');
+  if (textPicker) textPicker.disabled = (saved.textColorMode || 'auto') !== 'custom';
+
   // Checkboxes
   [
     ['cameraNameBold',   saved.cameraNameBold],
@@ -733,7 +883,7 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showExifInfo',     saved.showExifInfo],
     ['showLocation',     saved.showLocation],
-    ['showMapOverlay',   saved.showMapOverlay],
+    ['showMapOverlay',   saved.showMapOverlay && hasLocationNetworkConsent()],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -888,6 +1038,11 @@ function applySettings() {
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
   state.settings.imageOffsetY     = parseFloat(document.getElementById('imageOffsetRange').value);
   state.settings.fontFamily       = document.getElementById('fontFamily').value;
+  const textColorMode = document.querySelector('input[name="textColorMode"]:checked');
+  state.settings.textColorMode = textColorMode ? textColorMode.value : 'auto';
+  state.settings.textColor = InstaFrameCore.normalizeHexColor(document.getElementById('textColorPicker')?.value, '#FFFFFF');
+  const textColorPicker = document.getElementById('textColorPicker');
+  if (textColorPicker) textColorPicker.disabled = state.settings.textColorMode !== 'custom';
   state.settings.shotOnFontScale  = parseFloat(document.getElementById('shotOnFontRange').value);
   state.settings.exifFontScale    = parseFloat(document.getElementById('exifFontRange').value);
   state.settings.lineGapScale     = parseFloat(document.getElementById('lineGapRange').value);
@@ -986,6 +1141,7 @@ function _syncDomWithStateSettings() {
   setVal('textOffsetRange', s.textOffsetY);
   setVal('outerPaddingRange', s.outerPadding);
   setVal('fontFamily', s.fontFamily);
+  setVal('textColorPicker', s.textColor || '#FFFFFF');
   setVal('photoQualityRange', s.exportPhotoQuality);
 
   setChecked('cameraNameBold', s.cameraNameBold);
@@ -995,6 +1151,11 @@ function _syncDomWithStateSettings() {
   setChecked('showExifInfo', s.showExifInfo);
   setChecked('showLocation', s.showLocation);
   setChecked('showMapOverlay', s.showMapOverlay);
+
+  const textColorMode = document.querySelector(`input[name="textColorMode"][value="${s.textColorMode || 'auto'}"]`);
+  if (textColorMode) textColorMode.checked = true;
+  const textColorPicker = document.getElementById('textColorPicker');
+  if (textColorPicker) textColorPicker.disabled = (s.textColorMode || 'auto') !== 'custom';
 
   const locPos = document.querySelector(`input[name="locationPos"][value="${s.locationPosition}"]`);
   if (locPos) locPos.checked = true;
@@ -1193,8 +1354,46 @@ function applyLiveExifEdit() {
   scheduleLivePreview();
 }
 
+function _applyResolvedLocation(item, latitude, longitude, label) {
+  if (!item) return;
+  if (!item.exif) item.exif = {};
+  item.exif.latitude = latitude;
+  item.exif.longitude = longitude;
+  item.exif.location = label || InstaFrameCore.formatCoordinateLabel(latitude, longitude);
+  const input = document.getElementById('live-exif-location');
+  if (input) input.value = item.exif.location;
+  const cardInput = document.getElementById(`exif-location-${item.id}`);
+  if (cardInput) cardInput.value = item.exif.location;
+  item.status = 'pending';
+  item.canvas = null;
+  _invalidateItemCache(item.id);
+  updateItemStatus(item);
+  updateItemPreview(item);
+  updateUI();
+  scheduleLivePreview();
+}
+
+async function resolveLiveExifLocation() {
+  const item = getSelectedPreviewItem();
+  const latitude = item?.exif?.latitude;
+  const longitude = item?.exif?.longitude;
+  if (latitude == null || longitude == null) {
+    showToast(t('msgNoLocationCoordinates'), 'warn');
+    return;
+  }
+  if (!await requestLocationNetworkConsent()) return;
+  const name = await reverseGeocode(latitude, longitude);
+  if (!name) {
+    showToast(t('msgLocationLookupFailed'), 'warn');
+    return;
+  }
+  _applyResolvedLocation(item, latitude, longitude, name);
+  showToast(t('msgLocationResolved'), 'success');
+}
+
 async function getLiveDeviceLocation() {
-  if (!navigator.geolocation) { showToast('Geolocation not supported', 'warn'); return; }
+  if (!navigator.geolocation) { showToast(t('msgGeolocationUnsupported'), 'warn'); return; }
+  if (!await requestLocationNetworkConsent()) return;
   const input = document.getElementById('live-exif-location');
   if (!input) return;
   const original = input.value;
@@ -1204,11 +1403,10 @@ async function getLiveDeviceLocation() {
     async (pos) => {
       const { latitude, longitude } = pos.coords;
       const name = await reverseGeocode(latitude, longitude);
-      input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
       input.disabled = false;
-      applyLiveExifEdit();
+      _applyResolvedLocation(getSelectedPreviewItem(), latitude, longitude, name || InstaFrameCore.formatCoordinateLabel(latitude, longitude));
     },
-    () => { input.value = original; input.disabled = false; showToast('Could not get location', 'warn'); },
+    () => { input.value = original; input.disabled = false; showToast(t('msgGeolocationFailed'), 'warn'); },
     { timeout: 10000 }
   );
 }
@@ -1268,9 +1466,10 @@ async function ensureLeafletLoaded() {
 async function openMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (!modal) return;
+  if (!await requestLocationNetworkConsent()) return;
   const leafletReady = await ensureLeafletLoaded();
   if (!leafletReady || typeof L === 'undefined') {
-    showToast('Map library failed to load', 'error');
+    showToast(t('msgMapLoadFailed'), 'error');
     return;
   }
   modal.classList.add('open');
@@ -1338,6 +1537,7 @@ async function openMapPicker() {
 }
 
 async function _fetchIpLocation() {
+  if (!hasLocationNetworkConsent()) return;
   try {
     const res  = await fetch('https://ipapi.co/json/');
     const data = await res.json();
@@ -1354,14 +1554,14 @@ function closeMapPicker() {
 
 async function confirmMapLocation() {
   if (_mapPickerLat == null || _mapPickerLon == null) {
-    showToast('Please click on the map to select a location', 'warn');
+    showToast(t('msgMapSelectLocation'), 'warn');
     return;
   }
   const lat = _mapPickerLat, lon = _mapPickerLon;
 
   // Resolve location name via reverse geocoding
   const name = await reverseGeocode(lat, lon);
-  const locStr = name || `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+  const locStr = name || InstaFrameCore.formatCoordinateLabel(lat, lon);
 
   // Update live EXIF panel input
   const locInput = document.getElementById('live-exif-location');
@@ -1369,22 +1569,7 @@ async function confirmMapLocation() {
 
   // Store lat/lon on the current item's exif and apply
   const item = getSelectedPreviewItem();
-  if (item) {
-    if (!item.exif) item.exif = {};
-    item.exif.latitude  = lat;
-    item.exif.longitude = lon;
-    item.exif.location  = locStr;
-    // Sync card EXIF editor if open
-    const cardLocEl = document.getElementById(`exif-location-${item.id}`);
-    if (cardLocEl) cardLocEl.value = locStr;
-    item.status = 'pending';
-    item.canvas = null;
-    _invalidateItemCache(item.id);
-    updateItemStatus(item);
-    updateItemPreview(item);
-    updateUI();
-    scheduleLivePreview();
-  }
+  if (item) _applyResolvedLocation(item, lat, lon, locStr);
 
   closeMapPicker();
 }
@@ -1645,26 +1830,19 @@ function selectItem(id) {
 }
 
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
+const PREVIEW_LAYOUT_LONG_EDGE = 2400;
 
 /**
- * Stable hash of all settings that affect the canvas output.
- * Also encodes a quantised maxPreviewPx so quality-tier changes invalidate the cache.
+ * Stable hash of settings that affect composition. Preview quality is excluded:
+ * it changes backing-store density only, never layout geometry.
  */
 function _previewSettingsHash() {
-  const s  = state.settings;
-  const pq = loadPrefs().previewQuality || 'auto';
-  const maxPx = pq === 'draft'  ? 600
-              : pq === 'normal' ? 1200
-              : pq === 'high'   ? 1800
-              : pq === 'max'    ? 2400
-              : previewZoom <= 1.0 ? 900
-              : previewZoom <= 1.5 ? 1200
-              : previewZoom <= 2.0 ? 1800 : 2400;
-  return [maxPx,
+  const s = state.settings;
+  return ['stable-layout-v2',
     s.frameColor, s.frameBackground, s.blurRadius, s.blurStyle, s.blurBrightness,
     s.thicknessScale, s.imageOffsetY, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
-    s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
+    s.cameraNameBold, s.cameraNameItalic, s.exifItalic, s.textColorMode, s.textColor,
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
@@ -1710,7 +1888,8 @@ async function _loadPreviewImage(item) {
 
 /** Draw a rendered frame canvas into the live-preview canvas, DPR-aware. */
 function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
-  const dpr   = window.devicePixelRatio || 1;
+  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+  const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
   const areaW = Math.max(pane.clientWidth  - 40, 80);
   const areaH = Math.max(pane.clientHeight - 40, 60);
   const ratio = src.height / src.width;
@@ -1721,10 +1900,13 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   dispW = Math.max(dispW, 80);
   dispH = Math.max(dispH, 60);
 
-  canvas.width        = Math.round(dispW * dpr);
-  canvas.height       = Math.round(dispH * dpr);
+  canvas.width        = Math.round(dispW * backingScale);
+  canvas.height       = Math.round(dispH * backingScale);
   canvas.style.width  = dispW + 'px';
   canvas.style.height = dispH + 'px';
+  canvas.dataset.previewQuality = quality;
+  canvas.dataset.compositionWidth = String(src.width);
+  canvas.dataset.compositionHeight = String(src.height);
 
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = true;
@@ -1775,10 +1957,11 @@ function _startVideoCanvasPreview(item) {
       // Video metadata not yet loaded — draw loading placeholder
       const areaW = Math.max(pane.clientWidth  - 40, 80);
       const areaH = Math.max(pane.clientHeight - 40, 60);
-      const dpr   = window.devicePixelRatio || 1;
+      const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+      const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
       if (canvas.style.display === 'none' || canvas.style.display === '') {
-        canvas.width  = Math.round(areaW * dpr);
-        canvas.height = Math.round(areaH * dpr);
+        canvas.width  = Math.round(areaW * backingScale);
+        canvas.height = Math.round(areaH * backingScale);
         canvas.style.width  = areaW + 'px';
         canvas.style.height = areaH + 'px';
         canvas.style.display = 'block';
@@ -1789,7 +1972,7 @@ function _startVideoCanvasPreview(item) {
         // Subtle "loading" pulse text
         const isDark = FrameEngine.isColorDark(fc);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)';
-        ctx.font = `${Math.round(14 * dpr)}px system-ui, sans-serif`;
+        ctx.font = `${Math.round(14 * backingScale)}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
@@ -1802,7 +1985,8 @@ function _startVideoCanvasPreview(item) {
       video.videoWidth, video.videoHeight, state.settings
     );
 
-    const dpr   = window.devicePixelRatio || 1;
+    const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+    const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
     const areaW = Math.max(pane.clientWidth  - 40, 80);
     const areaH = Math.max(pane.clientHeight - 40, 60);
     const ratio = layout.canvasH / layout.canvasW;
@@ -1813,8 +1997,8 @@ function _startVideoCanvasPreview(item) {
     dispW = Math.max(dispW, 80);
     dispH = Math.max(dispH, 60);
 
-    const targetW = Math.round(dispW * dpr);
-    const targetH = Math.round(dispH * dpr);
+    const targetW = Math.round(dispW * backingScale);
+    const targetH = Math.round(dispH * backingScale);
 
     if (canvas.width !== targetW || canvas.height !== targetH) {
       canvas.width        = targetW;
@@ -1909,11 +2093,6 @@ async function renderLivePreview() {
   try {
     const img = await _loadPreviewImage(item);
 
-    const pq = loadPrefs().previewQuality || 'auto';
-    const maxPreviewPx = pq === 'draft'  ? 600
-      : pq === 'normal' ? 1200 : pq === 'high' ? 1800 : pq === 'max' ? 2400
-      : Math.min(2400, Math.round(1200 * previewZoom));
-
     // Pre-fetch map overlay image if enabled and coordinates are available
     let mapOverlayImg = null;
     if (state.settings.showMapOverlay && state.settings.showLocation &&
@@ -1922,7 +2101,7 @@ async function renderLivePreview() {
     }
 
     const rendered = await FrameEngine.renderFrameWhenReady(
-      img, item.exif, state.settings, { maxPreviewPx, mapOverlayImg });
+      img, item.exif, state.settings, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg });
 
     if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
@@ -2041,7 +2220,6 @@ function updateItemPreview(item) {
 
 function updateUI() {
   const hasItems = state.items.length > 0;
-  const hasDone  = state.items.some(i => i.status === 'done');
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
@@ -2049,7 +2227,7 @@ function updateUI() {
   const counter = document.getElementById('imageCounter');
 
   if (genBtn)  genBtn.disabled  = !hasItems;
-  if (dlBtn)   dlBtn.disabled   = !hasDone;
+  if (dlBtn)   dlBtn.disabled   = !hasItems;
   if (clrBtn)  clrBtn.disabled  = !hasItems;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
@@ -2515,10 +2693,28 @@ function setupSettingsListeners() {
     });
   }
 
-  // Font style checkboxes (camera name + EXIF) and map overlay toggle
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation', 'showMapOverlay'].forEach(id => {
+  // Font style and visibility controls
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
+  });
+
+  document.querySelectorAll('input[name="textColorMode"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
+  });
+  const textColorPicker = document.getElementById('textColorPicker');
+  textColorPicker?.addEventListener('input', () => {
+    const custom = document.getElementById('text-color-custom');
+    if (custom) custom.checked = true;
+    applySettings();
+  });
+
+  const mapOverlayToggle = document.getElementById('showMapOverlay');
+  mapOverlayToggle?.addEventListener('change', async () => {
+    if (mapOverlayToggle.checked && !await requestLocationNetworkConsent()) {
+      mapOverlayToggle.checked = false;
+    }
+    applySettings();
   });
 
   // Live EXIF panel inputs: apply immediately on each change
@@ -2529,6 +2725,7 @@ function setupSettingsListeners() {
       el.addEventListener('input', scheduleLiveExifEditApply);
       el.addEventListener('change', scheduleLiveExifEditApply);
     });
+  document.getElementById('resolveLocationNameBtn')?.addEventListener('click', resolveLiveExifLocation);
 
   // Frame background mode radios
   document.querySelectorAll('input[name="frameBackground"]').forEach(r => {
@@ -2563,7 +2760,13 @@ function setupSettingsListeners() {
 
   // Aspect ratio radios
   document.querySelectorAll('input[name="aspectRatio"]').forEach(radio => {
-    radio.addEventListener('change', applySettings);
+    radio.addEventListener('change', () => {
+      if (radio.checked && ['4:5', '3:4', '9:16'].includes(radio.value)) {
+        const portrait = document.getElementById('aspect-orientation-portrait');
+        if (portrait) portrait.checked = true;
+      }
+      applySettings();
+    });
   });
   document.querySelectorAll('input[name="aspectOrientation"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
@@ -2700,7 +2903,13 @@ function updateCustomColorBtn(color) {
 }
 
 // ─── Preview Quality Popup ────────────────────────────────────────────────────
-const QUALITY_LABELS = { auto: 'Auto', draft: 'Draft', normal: 'Normal', high: 'High', max: 'Max' };
+const QUALITY_I18N_KEYS = {
+  auto: 'previewQualityAutoShort',
+  draft: 'previewQualityDraftShort',
+  normal: 'previewQualityNormalShort',
+  high: 'previewQualityHighShort',
+  max: 'previewQualityMaxShort',
+};
 
 function setupPreviewQuality() {
   const btn   = document.getElementById('previewQualityBtn');
@@ -2731,17 +2940,18 @@ function setupPreviewQuality() {
       popup.classList.remove('open');
     }
   });
+  document.addEventListener('instaframe:languagechange', refreshPreviewQualityTranslation);
 }
 
 function _applyQualitySelection(q, popup, label) {
   popup.querySelectorAll('.pq-option').forEach(o => o.classList.toggle('active', o.dataset.q === q));
-  if (label) label.textContent = QUALITY_LABELS[q] || 'Auto';
+  if (label) label.textContent = t(QUALITY_I18N_KEYS[q] || QUALITY_I18N_KEYS.auto);
   updatePreviewViewModifiedState();
 }
 
 function setPreviewQuality(q, options = {}) {
   const { schedule = false } = options;
-  const quality = QUALITY_LABELS[q] ? q : 'auto';
+  const quality = InstaFrameCore.normalizePreviewQuality(q);
   const prefs = loadPrefs();
   prefs.previewQuality = quality;
   savePrefs(prefs);
@@ -2750,6 +2960,13 @@ function setPreviewQuality(q, options = {}) {
   if (popup) _applyQualitySelection(quality, popup, label);
   else updatePreviewViewModifiedState();
   if (schedule) scheduleLivePreview();
+}
+
+function refreshPreviewQualityTranslation() {
+  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+  const popup = document.getElementById('previewQualityPopup');
+  const label = document.getElementById('previewQualityLabel');
+  if (popup) _applyQualitySelection(quality, popup, label);
 }
 
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────
@@ -2821,6 +3038,10 @@ function applyTheme(theme) {
 function applyLayout(layout) {
   document.documentElement.setAttribute('data-layout', layout || 'left');
 }
+function applyEditorSize(size) {
+  const normalized = ['compact', 'comfortable', 'large'].includes(size) ? size : 'comfortable';
+  document.documentElement.setAttribute('data-editor-size', normalized);
+}
 
 function rerenderCards() {
   const grid = document.getElementById('imageGrid');
@@ -2872,6 +3093,17 @@ function setupCustomizePanel() {
     r.addEventListener('change', () => {
       applyLayout(r.value);
       const p = loadPrefs(); p.layout = r.value; savePrefs(p);
+    });
+  });
+
+  // ── EXIF editor size ───────────────────────────────────────────────────────
+  const savedEditorSize = prefs.editorSize || 'comfortable';
+  applyEditorSize(savedEditorSize);
+  document.querySelectorAll('input[name="editorSizeChoice"]').forEach(r => {
+    if (r.value === savedEditorSize) r.checked = true;
+    r.addEventListener('change', () => {
+      applyEditorSize(r.value);
+      const p = loadPrefs(); p.editorSize = r.value; savePrefs(p);
     });
   });
 
@@ -3101,6 +3333,7 @@ function setupCardSize() {
   const p = loadPrefs();
   applyTheme(p.theme || 'soft-white');
   applyLayout(p.layout || 'left');
+  applyEditorSize(p.editorSize || 'comfortable');
   _applyAccentColor(p.accentColor || '#0891b2');
 })();
 
@@ -3137,6 +3370,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMainResize();
   setupCardSize();
   setupCustomizePanel();
+  setupLocationPrivacy();
   setupShareAppModal();
   setupPreviewQuality();
   setupHistoryControls();

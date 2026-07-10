@@ -1,0 +1,21 @@
+{
+  "name": "instaframe-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Privacy-conscious browser EXIF frame generator for photos and videos",
+  "scripts": {
+    "check:syntax": "node --check js/core-utils.js && node --check js/config.js && node --check js/i18n.js && node --check js/frame-engine.js && node --check js/app.js",
+    "lint": "eslint js tests scripts playwright.config.cjs",
+    "test:unit": "node --test tests/unit/*.test.cjs",
+    "test:e2e": "playwright test",
+    "test": "npm run check:syntax && npm run lint && npm run test:unit && npm run test:e2e",
+    "build:site": "node scripts/prepare-site.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "eslint": "10.6.0",
+    "globals": "17.7.0",
+    "jpeg-js": "0.4.4",
+    "piexifjs": "1.0.6"
+  }
+}

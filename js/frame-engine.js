@@ -244,15 +244,26 @@ const FrameEngine = (() => {
       showExifInfo     = true,
       showLocation     = false,
       locationPosition = 'below-exif',
+      textColorMode    = 'auto',
+      textColor        = '#FFFFFF',
     } = settings;
 
     const showShotOnLabel = !!showShotOn;
     const effectiveShowExifInfo = !!showExifInfo;
     const effectiveShowLocation = showLocation && !!(exif.location);
 
-    const isDark  = isColorDark(frameColor);
-    const primary = isDark ? '#E8E8E8' : '#111111';
-    const muted   = isDark ? '#999999' : '#888888';
+    const backgroundIsDark = detectTextBackgroundDark(ctx, layout, settings);
+    let primary;
+    if (textColorMode === 'light') primary = '#F7F7F7';
+    else if (textColorMode === 'dark') primary = '#111111';
+    else if (textColorMode === 'custom') {
+      primary = typeof InstaFrameCore !== 'undefined'
+        ? InstaFrameCore.normalizeHexColor(textColor, '#FFFFFF')
+        : textColor;
+    } else {
+      primary = backgroundIsDark ? '#F7F7F7' : '#111111';
+    }
+    const muted = mixHexColor(primary, backgroundIsDark ? '#FFFFFF' : '#000000', 0.38);
 
     const stack  = FONT_STACKS[fontFamily] || `'${fontFamily}', Arial, sans-serif`;
     const baseFs = canvasW * 0.022;
@@ -371,6 +382,32 @@ const FrameEngine = (() => {
     }
 
     ctx.restore();
+  }
+
+  /** Estimate the luminance behind the text block for automatic contrast. */
+  function detectTextBackgroundDark(ctx, layout, settings) {
+    if (settings.frameBackground !== 'blur') return isColorDark(layout.frameColor || '#F0F0F0');
+    try {
+      const sample = document.createElement('canvas');
+      sample.width = 8;
+      sample.height = 4;
+      const sampleCtx = sample.getContext('2d', { willReadFrequently: true });
+      const coordinateScale = layout.canvasW ? ctx.canvas.width / layout.canvasW : 1;
+      const sy = Math.max(0, Math.round(layout.imageBottom * coordinateScale));
+      const sh = Math.max(1, Math.min(ctx.canvas.height - sy, Math.round(layout.bottomAreaHeight * coordinateScale)));
+      sampleCtx.drawImage(ctx.canvas, 0, sy, ctx.canvas.width, sh, 0, 0, sample.width, sample.height);
+      const pixels = sampleCtx.getImageData(0, 0, sample.width, sample.height).data;
+      let luminance = 0;
+      let weight = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const alpha = pixels[i + 3] / 255;
+        luminance += (0.2126 * pixels[i] + 0.7152 * pixels[i + 1] + 0.0722 * pixels[i + 2]) * alpha;
+        weight += alpha;
+      }
+      return weight ? (luminance / weight) < 145 : (settings.blurBrightness ?? 80) < 105;
+    } catch {
+      return (settings.blurBrightness ?? 80) < 105;
+    }
   }
 
   function drawLocationPin(ctx, cx, cy, size, color, style) {

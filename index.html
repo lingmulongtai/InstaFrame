@@ -22,9 +22,6 @@
   <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/webm-muxer@5/build/webm-muxer.js"></script>
-  <!-- Leaflet.js — map location picker -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLcE=" crossorigin=""></script>
 </head>
 <body>
 <div class="app-shell">
@@ -118,6 +115,38 @@
             </label>
           </div>
         </div>
+        <div class="customize-row">
+          <span class="customize-row-label" data-i18n="editorSizeLabel">EXIF Editor</span>
+          <div class="pill-group">
+            <label class="pill-option">
+              <input type="radio" name="editorSizeChoice" value="compact">
+              <span data-i18n="editorSizeCompact">Compact</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="editorSizeChoice" value="comfortable" checked>
+              <span data-i18n="editorSizeComfortable">Comfortable</span>
+            </label>
+            <label class="pill-option">
+              <input type="radio" name="editorSizeChoice" value="large">
+              <span data-i18n="editorSizeLarge">Large</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="customize-sep"></div>
+
+      <div class="customize-section">
+        <div class="customize-label" data-i18n="privacyTitle">Privacy</div>
+        <div class="privacy-setting-card">
+          <div>
+            <div class="privacy-setting-title" data-i18n="locationNetworkTitle">Online location services</div>
+            <div class="privacy-setting-status" id="locationPrivacyStatus">Off</div>
+            <div class="privacy-setting-status" id="mapboxUsageStatus"></div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" id="manageLocationPrivacyBtn" data-i18n="privacyManage">Manage</button>
+        </div>
+        <div class="customize-row-hint" data-i18n="privacyShortNotice">Photos stay on this device. Location tools may send coordinates to external map services only after consent.</div>
       </div>
 
       <div class="customize-sep"></div>
@@ -254,9 +283,17 @@
                 <input type="radio" name="aspectRatio" id="ratio-1-1" value="1:1">
                 <label for="ratio-1-1">1:1</label>
               </div>
-              <div class="ratio-pill">
+              <div class="ratio-pill ratio-pill-featured">
                 <input type="radio" name="aspectRatio" id="ratio-4-5" value="4:5">
-                <label for="ratio-4-5">4:5</label>
+                <label for="ratio-4-5"><span>4:5</span><small data-i18n="ratioInstagramPost">Instagram post</small></label>
+              </div>
+              <div class="ratio-pill ratio-pill-social">
+                <input type="radio" name="aspectRatio" id="ratio-3-4" value="3:4">
+                <label for="ratio-3-4"><span>3:4</span><small data-i18n="ratioInstagramGrid">Profile grid</small></label>
+              </div>
+              <div class="ratio-pill ratio-pill-social">
+                <input type="radio" name="aspectRatio" id="ratio-9-16" value="9:16">
+                <label for="ratio-9-16"><span>9:16</span><small data-i18n="ratioInstagramStory">Story</small></label>
               </div>
               <div class="ratio-pill">
                 <input type="radio" name="aspectRatio" id="ratio-16-9" value="16:9">
@@ -324,6 +361,34 @@
           <div class="setting-label" data-i18n="fontFamily">Font</div>
           <div class="setting-control">
             <select id="fontFamily" class="font-select"><!-- filled by JS --></select>
+          </div>
+        </div>
+
+        <!-- Text Color -->
+        <div class="setting-row">
+          <div class="setting-label" data-i18n="textColor">Text Color</div>
+          <div class="setting-control">
+            <div class="text-color-controls">
+              <div class="ratio-pills">
+                <div class="ratio-pill">
+                  <input type="radio" name="textColorMode" id="text-color-auto" value="auto" checked>
+                  <label for="text-color-auto" data-i18n="textColorAuto">Auto</label>
+                </div>
+                <div class="ratio-pill">
+                  <input type="radio" name="textColorMode" id="text-color-light" value="light">
+                  <label for="text-color-light" data-i18n="textColorLight">Light</label>
+                </div>
+                <div class="ratio-pill">
+                  <input type="radio" name="textColorMode" id="text-color-dark" value="dark">
+                  <label for="text-color-dark" data-i18n="textColorDark">Dark</label>
+                </div>
+                <div class="ratio-pill text-color-custom-pill">
+                  <input type="radio" name="textColorMode" id="text-color-custom" value="custom">
+                  <label for="text-color-custom" data-i18n="colorCustom">Custom</label>
+                </div>
+              </div>
+              <input type="color" id="textColorPicker" value="#FFFFFF" aria-label="Custom text color">
+            </div>
           </div>
         </div>
 
@@ -623,7 +688,8 @@
       <div class="preview-empty" id="previewEmpty">
         <div class="preview-empty-icon">📷</div>
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
-        <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · HEIC · MP4 · MOV</div>
+        <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · WebP · MP4 · WebM</div>
+        <div class="preview-empty-format-note" data-i18n="formatSupportNote">HEIC/HEIF and MOV depend on your browser codec support.</div>
         <div class="preview-empty-mobile-hint" id="previewMobileHint" data-i18n="previewMobileHint">Tap here to import photos</div>
       </div>
       <div class="preview-history-wrap" id="previewHistoryWrap">
@@ -632,16 +698,16 @@
       </div>
       <!-- Quality button (bottom-left, shown only when preview is active) -->
       <div class="preview-quality-wrap" id="previewQualityWrap">
-        <button class="preview-quality-btn" id="previewQualityBtn" title="Preview quality">
+        <button class="preview-quality-btn" id="previewQualityBtn" data-i18n-attr="title" data-i18n="previewQualityTitle" title="Preview quality">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 3.5V2.5M8 3.5V2.5M12 3.5V2.5"/><path d="M4 8.5h2M6 7l2 1.5L6 10"/></svg>
           <span id="previewQualityLabel">Auto</span>
         </button>
         <div class="preview-quality-popup" id="previewQualityPopup">
-          <div class="pq-option active" data-q="auto">Auto (zoom-adaptive)</div>
-          <div class="pq-option" data-q="draft">Draft (600px)</div>
-          <div class="pq-option" data-q="normal">Normal (1200px)</div>
-          <div class="pq-option" data-q="high">High (1800px)</div>
-          <div class="pq-option" data-q="max">Max (2400px)</div>
+          <div class="pq-option active" data-q="auto" data-i18n="previewQualityAuto">Auto (zoom-adaptive)</div>
+          <div class="pq-option" data-q="draft" data-i18n="previewQualityDraft">Draft</div>
+          <div class="pq-option" data-q="normal" data-i18n="previewQualityNormal">Normal</div>
+          <div class="pq-option" data-q="high" data-i18n="previewQualityHigh">High</div>
+          <div class="pq-option" data-q="max" data-i18n="previewQualityMax">Max</div>
         </div>
       </div>
       <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
@@ -673,6 +739,9 @@
               <div class="preview-exif-location-row">
                 <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
                 <div class="preview-exif-location-actions">
+                  <button type="button" class="preview-exif-map-btn" id="resolveLocationNameBtn" title="" data-i18n-attr="title" data-i18n="resolveLocationName">
+                    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="m10 10 3 3"/><path d="M3 7h8M7 3c1.4 1.5 1.4 6.5 0 8M7 3C5.6 4.5 5.6 9.5 7 11"/></svg>
+                  </button>
                   <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
                   </button>
@@ -832,6 +901,8 @@
 </nav>
 
 <!-- Scripts -->
+<script src="js/core-utils.js"></script>
+<script src="js/config.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/frame-engine.js"></script>
 <script src="js/app.js"></script>
@@ -847,6 +918,32 @@
     <div class="map-modal-footer">
       <span id="mapPickerCoords" class="map-picker-coords" data-i18n="mapClickHint">Click on the map to select a location</span>
       <button class="btn btn-primary btn-sm" onclick="confirmMapLocation()" data-i18n="mapConfirm">Set Location</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Location privacy consent ───────────────────────────────────────────── -->
+<div class="map-modal privacy-modal" id="locationPrivacyModal" role="dialog" aria-modal="true" aria-labelledby="locationPrivacyModalTitle">
+  <div class="map-modal-content privacy-modal-content">
+    <div class="map-modal-header">
+      <span class="map-modal-title" id="locationPrivacyModalTitle" data-i18n="privacyConsentTitle">Allow online location services?</span>
+      <button type="button" class="map-modal-close" id="locationPrivacyCloseBtn" data-i18n-attr="title" data-i18n="close">×</button>
+    </div>
+    <div class="privacy-modal-body">
+      <p data-i18n="privacyConsentLead">Your photos and videos are never uploaded. If you continue, location data may be sent to the services below.</p>
+      <ul>
+        <li data-i18n="privacyConsentGeocode">Nominatim: latitude/longitude for place-name lookup</li>
+        <li data-i18n="privacyConsentMap">OpenStreetMap: map tiles; ipapi only if device location is unavailable</li>
+        <li data-i18n="privacyConsentMapbox">Mapbox: latitude/longitude when generating a map overlay</li>
+      </ul>
+      <p class="privacy-modal-note" data-i18n="privacyConsentChoice">Choose one-time access or remember the choice on this device. You can revoke it from Customize.</p>
+    </div>
+    <div class="privacy-modal-actions">
+      <button type="button" class="btn btn-danger btn-sm" id="locationPrivacyRevokeBtn" data-i18n="privacyDisable">Disable</button>
+      <span class="privacy-modal-spacer"></span>
+      <button type="button" class="btn btn-secondary btn-sm" id="locationPrivacyCancelBtn" data-i18n="privacyCancel">Cancel</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="locationPrivacyOnceBtn" data-i18n="privacyAllowOnce">Allow once</button>
+      <button type="button" class="btn btn-primary btn-sm" id="locationPrivacyAlwaysBtn" data-i18n="privacyAllowAlways">Always allow</button>
     </div>
   </div>
 </div>
