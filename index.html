@@ -146,6 +146,14 @@
           </div>
           <button type="button" class="btn btn-secondary btn-sm" id="manageLocationPrivacyBtn" data-i18n="privacyManage">Manage</button>
         </div>
+        <div class="mapbox-token-setting">
+          <label for="mapboxTokenInput" data-i18n="mapboxTokenLabel">Your Mapbox public token</label>
+          <div class="mapbox-token-row">
+            <input type="password" id="mapboxTokenInput" class="customize-token-input" placeholder="pk.…" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn btn-secondary btn-sm" id="clearMapboxTokenBtn" data-i18n="mapboxTokenClear">Clear</button>
+          </div>
+          <div class="customize-row-hint" id="mapboxTokenStatus" data-i18n="mapboxTokenNotConfigured">Not configured. Map overlay stays off.</div>
+        </div>
         <div class="customize-row-hint" data-i18n="privacyShortNotice">Photos stay on this device. Location tools may send coordinates to external map services only after consent.</div>
       </div>
 

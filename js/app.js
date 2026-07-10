@@ -148,6 +148,12 @@ function updateLocationPrivacyStatus() {
       monthLimit: config.monthlyRequestLimitPerDevice,
     });
   }
+  const tokenStatus = document.getElementById('mapboxTokenStatus');
+  if (tokenStatus) {
+    tokenStatus.textContent = t(_isValidMapboxPublicToken(loadPrefs().mapboxPublicToken)
+      ? 'mapboxTokenConfigured'
+      : 'mapboxTokenNotConfigured');
+  }
 }
 
 function _finishLocationConsent(allowed, persist = false) {
@@ -210,12 +216,48 @@ function setupLocationPrivacy() {
     if (event.key === 'Escape' && modal?.classList.contains('open')) _cancelLocationConsent();
   });
   document.addEventListener('instaframe:languagechange', updateLocationPrivacyStatus);
+
+  const tokenInput = document.getElementById('mapboxTokenInput');
+  if (tokenInput) tokenInput.value = loadPrefs().mapboxPublicToken || '';
+  tokenInput?.addEventListener('change', () => {
+    const value = tokenInput.value.trim();
+    if (value && !_isValidMapboxPublicToken(value)) {
+      showToast(t('msgMapboxTokenInvalid'), 'warn');
+      tokenInput.value = loadPrefs().mapboxPublicToken || '';
+      return;
+    }
+    const prefs = loadPrefs();
+    if (value) prefs.mapboxPublicToken = value;
+    else {
+      delete prefs.mapboxPublicToken;
+      const mapToggle = document.getElementById('showMapOverlay');
+      if (mapToggle) mapToggle.checked = false;
+      state.settings.showMapOverlay = false;
+      saveSettings();
+      scheduleLivePreview();
+    }
+    savePrefs(prefs);
+    _mapboxUnavailableNotified = false;
+    _mapImgCache.clear();
+    updateLocationPrivacyStatus();
+    showToast(t(value ? 'msgMapboxTokenSaved' : 'msgMapboxTokenCleared'), 'success');
+  });
+  document.getElementById('clearMapboxTokenBtn')?.addEventListener('click', () => {
+    if (tokenInput) {
+      tokenInput.value = '';
+      tokenInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
   updateLocationPrivacyStatus();
 }
 
 // ─── Mapbox token & client-side usage guard ───────────────────────────────────
 const MAPBOX_USAGE_KEY = 'instaframe_mb_usage_v2';
 let _mapboxUnavailableNotified = false;
+
+function _isValidMapboxPublicToken(token) {
+  return /^pk\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(String(token || '').trim());
+}
 
 function _getMapboxUsage() {
   const now = new Date();
@@ -247,12 +289,17 @@ function _trackMapboxLoad() {
 function getMapboxToken() {
   if (!hasLocationNetworkConsent()) return null;
   const config = window.INSTAFRAME_CONFIG?.mapbox;
-  if (!config?.publicToken) return null;
-  const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
-  if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
+  const userToken = loadPrefs().mapboxPublicToken;
+  const hasUserToken = _isValidMapboxPublicToken(userToken);
+  const siteToken = config?.publicToken;
+  if (!hasUserToken && !_isValidMapboxPublicToken(siteToken)) return null;
+  if (!hasUserToken) {
+    const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
+    if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
+  }
   const usage = _getMapboxUsage();
   if (usage.dayCount >= config.dailyRequestLimitPerDevice || usage.monthCount >= config.monthlyRequestLimitPerDevice) return null;
-  return config.publicToken;
+  return hasUserToken ? userToken.trim() : siteToken;
 }
 
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
@@ -2713,6 +2760,10 @@ function setupSettingsListeners() {
   mapOverlayToggle?.addEventListener('change', async () => {
     if (mapOverlayToggle.checked && !await requestLocationNetworkConsent()) {
       mapOverlayToggle.checked = false;
+    }
+    if (mapOverlayToggle.checked && !getMapboxToken()) {
+      mapOverlayToggle.checked = false;
+      showToast(t('msgMapboxUnavailable'), 'warn');
     }
     applySettings();
   });

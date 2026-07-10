@@ -63,13 +63,17 @@
 
 ブラウザ用の公開トークンはソースから見えることが前提です。秘密トークンは絶対に配置しないでください。
 
+リポジトリにはトークンを同梱していません。通常の利用者は **カスタマイズ → プライバシー** へ自分のMapbox公開トークンを入力できます。値はそのブラウザの`localStorage`だけに保存されます。未設定時はマップオーバーレイを有効化できません。
+
+サイト管理者が共通トークンを提供する場合は、次の手順が必要です。
+
 1. Mapboxでデフォルトトークンではない専用の公開トークンを作成します。
 2. 必要最小限の読み取りスコープだけを付与します。
 3. MapboxのAccess Tokens画面でAllowed URLを `https://lingmulongtai.github.io` に制限します。
-4. [js/config.js](js/config.js) の `publicToken` を専用トークンへ置き換えます。
+4. [js/config.js](js/config.js) の空の `publicToken` を、制限確認済みの専用トークンへ置き換えます。
 5. MapboxのStatistics画面でアカウント全体の使用量を監視します。
 
-アプリ側でも同じオリジンだけを許可し、端末ごとに1日100回・1か月1000回のソフト上限を設けています。ただし、クライアント側の上限は改変できるため、Mapbox側のURL制限と請求上限の代替にはなりません。URL制限はMapboxの[公式トークン管理ガイド](https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions)に従って設定してください。
+共通トークンにはアプリ側でも同じオリジンだけを許可し、共通・利用者トークンの両方に端末ごと1日100回・1か月1000回のソフト上限を設けています。ただし、クライアント側の上限は改変できるため、Mapbox側のURL制限と請求上限の代替にはなりません。URL制限はMapboxの[公式トークン管理ガイド](https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions)に従って設定してください。
 
 ## ローカル実行
 
@@ -145,6 +149,6 @@ InstaFrame/
 
 ## English summary
 
-InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. Preview quality changes raster density without recalculating layout, so typography and composition remain stable.
+InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Preview quality changes raster density without recalculating layout, so typography and composition remain stable.
 
 Run `npm install`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. GitHub Pages deploys an allowlisted `dist/` artifact only.

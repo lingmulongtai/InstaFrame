@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const core = require('../../js/core-utils.js');
 
 test('preview quality changes backing density without changing a layout input', () => {
@@ -27,4 +29,10 @@ test('custom text colors are normalized safely', () => {
   assert.equal(core.normalizeHexColor('#abc'), '#AABBCC');
   assert.equal(core.normalizeHexColor('#123456'), '#123456');
   assert.equal(core.normalizeHexColor('red', '#FFFFFF'), '#FFFFFF');
+});
+
+test('the repository ships without an unrestricted Mapbox token', () => {
+  const config = fs.readFileSync(path.resolve(__dirname, '../../js/config.js'), 'utf8');
+  assert.match(config, /publicToken:\s*''/);
+  assert.doesNotMatch(config, /publicToken:\s*'pk\./);
 });

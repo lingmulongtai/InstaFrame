@@ -1,10 +1,10 @@
 /**
- * Public runtime configuration. Browser tokens are visible by design. Protect
- * the Mapbox token in the Mapbox dashboard with matching URL restrictions.
+ * Public runtime configuration. Keep publicToken empty until a dedicated token
+ * has URL restrictions configured in the Mapbox dashboard.
  */
 window.INSTAFRAME_CONFIG = Object.freeze({
   mapbox: Object.freeze({
-    publicToken: 'pk.eyJ1IjoibGluZ211bG9uZ3RhaSIsImEiOiJjbW53cHp3eHoxbDZhMnBtbzB3b3huemZwIn0.kX4B2BumC8txS9rZw41a-Q',
+    publicToken: '',
     allowedOrigins: Object.freeze([
       'https://lingmulongtai.github.io',
     ]),
