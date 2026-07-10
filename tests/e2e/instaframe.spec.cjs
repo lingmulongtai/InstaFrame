@@ -220,6 +220,27 @@ test('GPS import sends no coordinates until explicit consent', async ({ page }) 
   expect(locationRequests.some(url => url.includes('nominatim'))).toBe(true);
 });
 
+test('map picker loads its UI library locally after consent', async ({ page }) => {
+  const requests = [];
+  page.on('request', request => {
+    if (/leaflet|tile\.openstreetmap|ipapi/.test(request.url())) requests.push(request.url());
+  });
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.route('https://ipapi.co/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({}),
+  }));
+  await uploadJpegs(page);
+  await page.locator('button[onclick="openMapPicker()"]').click();
+  await expect(page.locator('#locationPrivacyModal')).toHaveClass(/open/);
+  await page.locator('#locationPrivacyOnceBtn').click();
+  await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.js'))).toBe(true);
+  expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.css'))).toBe(true);
+  expect(requests.some(url => /cdn\.jsdelivr\.net.*leaflet|unpkg\.com.*leaflet/.test(url))).toBe(false);
+});
+
 test('unsupported browser codecs fail visibly instead of silently', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'unsupported.heic',
