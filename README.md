@@ -99,10 +99,12 @@ npm.cmd test
 - JavaScript構文検査
 - ESLint
 - 純粋関数のユニットテスト
+- axeによるCritical / Seriousアクセシビリティ検査
 - JPEG読込 → プレビュー → 書き出し
 - PNG / WebPの実ファイル読込 → プレビュー → 各形式での書き出しとファイル署名
 - EXIF編集と設定保存
 - 複数JPEGのZIP出力
+- 大量バッチのメモリ警告と書き出しキャンセル
 - 日本語画質UIと固定レイアウト
 - GPS読込時に同意前の位置情報通信がないこと
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと

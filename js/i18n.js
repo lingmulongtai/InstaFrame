@@ -100,6 +100,8 @@ const I18N = {
     msgGenerating: 'Generating frames…',
     msgDone: 'All frames generated!',
     msgDownloading: 'Creating ZIP…',
+    msgExportCancelled: 'Export cancelled. Pending items were kept.',
+    msgLargeBatch: 'Large batch detected. Processing may use substantial device memory.',
     msgNoImages: 'Please add at least one image first.',
     msgNoPending: 'All images already processed. Add new images or regenerate.',
     msgLinkCopied: 'Link copied!',
@@ -301,6 +303,8 @@ const I18N = {
     msgGenerating: 'フレームを生成中…',
     msgDone: 'すべてのフレームが生成されました！',
     msgDownloading: 'ZIPを作成中…',
+    msgExportCancelled: '書き出しをキャンセルしました。未処理の項目は保持されています。',
+    msgLargeBatch: '大きなバッチです。端末メモリを多く使用する場合があります。',
     msgNoImages: '先に画像を追加してください。',
     msgNoPending: 'すべての画像が処理済みです。新しい画像を追加するか再生成してください。',
     msgLinkCopied: 'リンクをコピーしました',
@@ -472,7 +476,9 @@ function applyTranslations() {
     const key = el.getAttribute('data-i18n');
     const attr = el.getAttribute('data-i18n-attr');
     if (attr) {
-      el.setAttribute(attr, t(key));
+      attr.split(',').map(name => name.trim()).filter(Boolean).forEach(name => {
+        el.setAttribute(name, t(key));
+      });
     } else {
       el.textContent = t(key);
     }
