@@ -1033,3 +1033,5 @@ const FrameEngine = (() => {
 
   return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
 })();
+
+if (typeof window !== 'undefined') window.FrameEngine = FrameEngine;

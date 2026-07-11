@@ -23,6 +23,7 @@
   <script src="vendor/jszip.min.js"></script>
 </head>
 <body>
+<h1 class="sr-only" data-i18n="appTitleMain">InstaFrame</h1>
 <div class="app-shell">
 
   <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
@@ -37,13 +38,13 @@
         <span class="logo-sub" data-i18n="appSubtitle">EXIF photo frame generator</span>
       </div>
       <div class="sidebar-actions">
-        <button id="customizeBtn" class="icon-btn" data-i18n-attr="title" data-i18n="customize" title="Customize">
+        <button id="customizeBtn" class="icon-btn" data-i18n-attr="title,aria-label" data-i18n="customize" title="Customize">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
         </button>
-        <button id="shareAppBtn" class="icon-btn" type="button" data-i18n-attr="title" data-i18n="shareAppTitle" title="Share app">
+        <button id="shareAppBtn" class="icon-btn" type="button" data-i18n-attr="title,aria-label" data-i18n="shareAppTitle" title="Share app">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 16V3"/><path d="m7 8 5-5 5 5"/></svg>
         </button>
-        <button id="langToggleBtn" class="icon-btn lang-toggle-btn" type="button" data-i18n-attr="title" data-i18n="langToggleTitle" title="Toggle language">EN/JA</button>
+        <button id="langToggleBtn" class="icon-btn lang-toggle-btn" type="button" data-i18n-attr="title,aria-label" data-i18n="langToggleTitle" title="Toggle language">EN/JA</button>
       </div>
     </div>
 
@@ -82,16 +83,16 @@
           <div class="customize-row" style="margin-top:6px;">
             <span class="customize-row-label" data-i18n="accentLabel">Accent</span>
             <div class="accent-swatches" id="accentSwatches">
-              <button class="accent-swatch" data-color="#2563eb" style="background:#2563eb" title="Blue"></button>
-              <button class="accent-swatch" data-color="#7c3aed" style="background:#7c3aed" title="Purple"></button>
-              <button class="accent-swatch" data-color="#db2777" style="background:#db2777" title="Pink"></button>
-              <button class="accent-swatch" data-color="#059669" style="background:#059669" title="Green"></button>
-              <button class="accent-swatch" data-color="#d97706" style="background:#d97706" title="Amber"></button>
-              <button class="accent-swatch active" data-color="#0891b2" style="background:#0891b2" title="Cyan"></button>
-              <button type="button" id="accentCustomBtn" class="color-option-custom" title="Custom color">
-                <input type="color" id="accentColorPicker" value="#0891b2">
+              <button class="accent-swatch" data-color="#2563eb" style="background:#2563eb" title="Blue" aria-label="Blue accent"></button>
+              <button class="accent-swatch" data-color="#7c3aed" style="background:#7c3aed" title="Purple" aria-label="Purple accent"></button>
+              <button class="accent-swatch" data-color="#db2777" style="background:#db2777" title="Pink" aria-label="Pink accent"></button>
+              <button class="accent-swatch" data-color="#059669" style="background:#059669" title="Green" aria-label="Green accent"></button>
+              <button class="accent-swatch" data-color="#d97706" style="background:#d97706" title="Amber" aria-label="Amber accent"></button>
+              <button class="accent-swatch active" data-color="#08798f" style="background:#08798f" title="Cyan" aria-label="Cyan accent"></button>
+              <label id="accentCustomBtn" class="color-option-custom" title="Custom color">
+                <input type="color" id="accentColorPicker" value="#08798f">
                 <span class="rainbow-icon"></span>
-              </button>
+              </label>
             </div>
           </div>
         </div>
@@ -215,10 +216,10 @@
                 <span class="color-swatch black"></span>
               </label>
               <!-- Custom color: single rainbow button (picker inside = no artifact) -->
-              <button type="button" id="customColorBtn" class="color-option-custom" title="Custom Color">
+              <label id="customColorBtn" class="color-option-custom" title="Custom Color">
                 <input type="color" id="customColorPicker" value="#e8c49a">
                 <span class="rainbow-icon" id="customColorIcon"></span>
-              </button>
+              </label>
             </div>
           </div>
         </div>
@@ -720,39 +721,39 @@
       <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
       <div class="preview-exif-wrap exif-open" id="previewExifWrap">
         <div class="preview-exif-drawer" id="previewExifDrawer">
-          <div class="preview-exif-drawer-header" onclick="toggleLiveExifPanel()">
+          <div class="preview-exif-drawer-header" role="button" tabindex="0" aria-expanded="true" onclick="toggleLiveExifPanel()">
             <div class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</div>
-            <button class="preview-exif-collapse-btn" id="previewExifCollapseBtn" title="Toggle EXIF panel" tabindex="-1">
+            <span class="preview-exif-collapse-btn" id="previewExifCollapseBtn" aria-hidden="true">
               <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>
-            </button>
+            </span>
           </div>
           <div class="preview-exif-content" id="previewExifContent">
             <div class="preview-exif-grid">
-              <label data-i18n="cameraMake">Camera Make</label>
+              <label for="live-exif-make" data-i18n="cameraMake">Camera Make</label>
               <input id="live-exif-make" placeholder="e.g. FUJIFILM">
-              <label data-i18n="cameraModel">Camera Model</label>
+              <label for="live-exif-model" data-i18n="cameraModel">Camera Model</label>
               <input id="live-exif-model" placeholder="e.g. X-T5">
-              <label data-i18n="lensModel">Lens</label>
+              <label for="live-exif-lens" data-i18n="lensModel">Lens</label>
               <input id="live-exif-lens" placeholder="e.g. XF35mmF1.4 R">
-              <label data-i18n="focalLength">Focal Length</label>
+              <label for="live-exif-fl" data-i18n="focalLength">Focal Length</label>
               <input id="live-exif-fl" placeholder="35">
-              <label data-i18n="fNumber">Aperture</label>
+              <label for="live-exif-fn" data-i18n="fNumber">Aperture</label>
               <input id="live-exif-fn" placeholder="1.4">
-              <label data-i18n="exposureTime">Shutter</label>
+              <label for="live-exif-et" data-i18n="exposureTime">Shutter</label>
               <input id="live-exif-et" placeholder="1/250">
-              <label data-i18n="iso">ISO</label>
+              <label for="live-exif-iso" data-i18n="iso">ISO</label>
               <input id="live-exif-iso" placeholder="400">
-              <label data-i18n="location">Location</label>
+              <label for="live-exif-location" data-i18n="location">Location</label>
               <div class="preview-exif-location-row">
                 <input id="live-exif-location" placeholder="e.g. Tokyo, Japan">
                 <div class="preview-exif-location-actions">
-                  <button type="button" class="preview-exif-map-btn" id="resolveLocationNameBtn" title="" data-i18n-attr="title" data-i18n="resolveLocationName">
+                  <button type="button" class="preview-exif-map-btn" id="resolveLocationNameBtn" title="" data-i18n-attr="title,aria-label" data-i18n="resolveLocationName">
                     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="m10 10 3 3"/><path d="M3 7h8M7 3c1.4 1.5 1.4 6.5 0 8M7 3C5.6 4.5 5.6 9.5 7 11"/></svg>
                   </button>
-                  <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title" data-i18n="getLocation">
+                  <button class="preview-exif-geo-btn" onclick="getLiveDeviceLocation()" title="" data-i18n-attr="title,aria-label" data-i18n="getLocation">
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><path d="M8 1v2M8 12v3M1 7h2M13 7h2"/></svg>
                   </button>
-                  <button class="preview-exif-map-btn" onclick="openMapPicker()" title="" data-i18n-attr="title" data-i18n="pickOnMap">
+                  <button class="preview-exif-map-btn" onclick="openMapPicker()" title="" data-i18n-attr="title,aria-label" data-i18n="pickOnMap">
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l-4 2-4-2v10l4 2 4-2 4 2V4l-4-2z"/><path d="M6 4v10M10 2v10"/></svg>
                   </button>
                 </div>
@@ -764,9 +765,9 @@
       <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
       <div class="preview-zoom-bar" id="previewZoomBar">
         <span class="zoom-label" id="zoomLabel">100%</span>
-        <button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>
-        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100" orient="vertical">
-        <button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>
+        <button class="zoom-btn" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">+</button>
+        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100" orient="vertical" aria-label="Preview zoom">
+        <button class="zoom-btn" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">−</button>
       </div>
       <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
       <!-- Video playback bar (bottom center, shown only when a video is being previewed) -->
@@ -782,7 +783,7 @@
         <span class="video-time-label" id="videoDuration">0:00</span>
         <!-- Volume control -->
         <div class="video-volume-wrap">
-          <button class="video-ctrl-btn video-mute-btn" id="videoMuteBtn" title="Mute/Unmute">
+          <button class="video-ctrl-btn video-mute-btn" id="videoMuteBtn" title="Mute/Unmute" aria-label="Mute or unmute video">
             <svg id="videoVolIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
               <path d="M8 2.5L4.5 5.5H2v5h2.5L8 13.5V2.5z"/>
               <path d="M10.5 5a4 4 0 0 1 0 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
@@ -793,10 +794,10 @@
               <line x1="15" y1="6" x2="11" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
           </button>
-          <input type="range" class="video-volume-range" id="videoVolumeRange" min="0" max="1" step="0.05" value="1" title="Volume">
+          <input type="range" class="video-volume-range" id="videoVolumeRange" min="0" max="1" step="0.05" value="1" title="Volume" aria-label="Video volume">
         </div>
         <!-- Playback speed (preview only, not applied to export) -->
-        <select id="videoSpeedSelect" class="video-speed-select" title="Playback speed">
+        <select id="videoSpeedSelect" class="video-speed-select" title="Playback speed" aria-label="Video playback speed">
           <option value="0.25">¼×</option>
           <option value="0.5">½×</option>
           <option value="1" selected>1×</option>
@@ -848,16 +849,17 @@
             </svg>
             <input type="range" id="cardSizeRange" min="120" max="320" step="20" value="200">
           </div>
-          <span class="section-counter" id="imageCounter"></span>
+          <span class="section-counter" id="imageCounter" aria-live="polite"></span>
           <button class="btn btn-secondary btn-sm" id="addMoreBtn" data-i18n="addMore">+ Add</button>
         </div>
       </div>
 
       <!-- Export progress bar (shown during generation / ZIP creation) -->
-      <div id="exportProgress" class="export-progress" style="display:none;">
+      <div id="exportProgress" class="export-progress" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="display:none;">
         <div class="export-progress-header">
           <span id="exportProgressLabel" class="export-progress-label">Processing…</span>
           <span id="exportProgressPct" class="export-progress-pct">0%</span>
+          <button type="button" class="export-progress-cancel" id="cancelExportBtn" data-i18n="privacyCancel" aria-label="Cancel export">Cancel</button>
         </div>
         <div class="export-progress-track">
           <div id="exportProgressFill" class="export-progress-fill"></div>
@@ -915,11 +917,11 @@
 <script src="js/app.js"></script>
 
 <!-- ─── Map Location Picker Modal ───────────────────────────────────────────── -->
-<div class="map-modal" id="mapPickerModal" onclick="if(event.target===this)closeMapPicker()">
+<div class="map-modal" id="mapPickerModal" role="dialog" aria-modal="true" aria-labelledby="mapPickerModalTitle" onclick="if(event.target===this)closeMapPicker()">
   <div class="map-modal-content">
     <div class="map-modal-header">
-      <span class="map-modal-title" data-i18n="pickOnMap">Pick Location on Map</span>
-      <button class="map-modal-close" onclick="closeMapPicker()" title="Close">×</button>
+      <span class="map-modal-title" id="mapPickerModalTitle" data-i18n="pickOnMap">Pick Location on Map</span>
+      <button class="map-modal-close" id="mapPickerCloseBtn" onclick="closeMapPicker()" data-i18n-attr="title,aria-label" data-i18n="close" title="Close">×</button>
     </div>
     <div id="mapPickerContainer" class="map-picker-container"></div>
     <div class="map-modal-footer">
@@ -956,11 +958,11 @@
 </div>
 
 <!-- ─── Share App Modal ───────────────────────────────────────────────────────── -->
-<div class="map-modal" id="shareAppModal" onclick="if(event.target===this)closeShareAppModal()">
+<div class="map-modal" id="shareAppModal" role="dialog" aria-modal="true" aria-labelledby="shareAppModalTitle" onclick="if(event.target===this)closeShareAppModal()">
   <div class="map-modal-content share-modal-content">
     <div class="map-modal-header">
-      <span class="map-modal-title" data-i18n="shareAppTitle">Share this app</span>
-      <button class="map-modal-close" onclick="closeShareAppModal()" title="Close">×</button>
+      <span class="map-modal-title" id="shareAppModalTitle" data-i18n="shareAppTitle">Share this app</span>
+      <button class="map-modal-close" id="shareAppCloseBtn" onclick="closeShareAppModal()" data-i18n-attr="title,aria-label" data-i18n="close" title="Close">×</button>
     </div>
     <div class="share-modal-body">
       <p class="share-modal-sub" data-i18n="shareAppSub">Share InstaFrame with your friends.</p>

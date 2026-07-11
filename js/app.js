@@ -106,6 +106,7 @@ const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
 const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
+let   _exportCancelRequested = false;
 
 // ─── Video canvas preview loop ────────────────────────────────────────────────
 let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
@@ -126,6 +127,42 @@ function _closeLocationPrivacyModal() {
   document.getElementById('locationPrivacyModal')?.classList.remove('open');
   if (_locationPrivacyPreviousFocus?.focus) _locationPrivacyPreviousFocus.focus();
   _locationPrivacyPreviousFocus = null;
+}
+
+function setupModalAccessibility() {
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return;
+    const modal = [...document.querySelectorAll('.map-modal.open')].at(-1);
+    if (!modal) return;
+    const focusable = [...modal.querySelectorAll(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element.getClientRects().length > 0);
+    if (!focusable.length) {
+      event.preventDefault();
+      modal.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
+function setupAccessibleFormNames() {
+  document.querySelectorAll('input, select, textarea').forEach(control => {
+    if (control.getAttribute('aria-label') || control.getAttribute('aria-labelledby')) return;
+    if (control.id && document.querySelector(`label[for="${control.id}"]`)) return;
+    const scope = control.closest('.setting-row, .customize-row, .preview-exif-grid, .video-volume-wrap, .preview-video-bar');
+    const visibleLabel = scope?.querySelector('.setting-label, .customize-row-label, label[data-i18n]');
+    const text = visibleLabel?.textContent?.trim();
+    control.setAttribute('aria-label', text || control.title || control.id || t('appTitleMain'));
+  });
 }
 
 function hasLocationNetworkConsent() {
@@ -513,6 +550,12 @@ async function addFiles(files) {
   );
   if (!accepted.length) return;
 
+  const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
+  const existingBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  if (accepted.length + state.items.length > 30 || incomingBytes + existingBytes > 512 * 1024 * 1024) {
+    showToast(t('msgLargeBatch'), 'warn');
+  }
+
   for (const file of accepted) {
     const video = isVideoFile(file);
     const exif  = video ? await readVideoMetadata(file) : await readExif(file);
@@ -679,10 +722,12 @@ async function generateAll() {
     return;
   }
 
+  _exportCancelRequested = false;
   setGlobalBusy(true);
   const total = pending.length;
 
   for (let idx = 0; idx < total; idx++) {
+    if (_exportCancelRequested) break;
     const item     = pending[idx];
     const basePct  = idx / total;
     const itemSlot = 1 / total;
@@ -699,9 +744,11 @@ async function generateAll() {
     });
   }
 
+  const cancelled = _exportCancelRequested;
   hideProgress();
   setGlobalBusy(false);
-  showToast(t('msgDone'), 'success');
+  _exportCancelRequested = false;
+  showToast(t(cancelled ? 'msgExportCancelled' : 'msgDone'), cancelled ? 'warn' : 'success');
 }
 
 async function regenerateItem(id) {
@@ -774,6 +821,7 @@ async function downloadAll() {
     return;
   }
 
+  _exportCancelRequested = false;
   setGlobalBusy(true);
 
   // Auto-generate any pending items first
@@ -781,6 +829,7 @@ async function downloadAll() {
   if (pending.length) {
     const total = pending.length;
     for (let idx = 0; idx < total; idx++) {
+      if (_exportCancelRequested) break;
       const item    = pending[idx];
       const basePct = idx / total;
       const slot    = 1 / total;
@@ -791,6 +840,14 @@ async function downloadAll() {
         showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
       });
     }
+  }
+
+  if (_exportCancelRequested) {
+    hideProgress();
+    setGlobalBusy(false);
+    _exportCancelRequested = false;
+    showToast(t('msgExportCancelled'), 'warn');
+    return;
   }
 
   const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
@@ -808,6 +865,7 @@ async function downloadAll() {
   const total = done.length;
 
   for (let i = 0; i < total; i++) {
+    if (_exportCancelRequested) break;
     const item = done[i];
     showProgress(`Packing ${i + 1} / ${total}  —  ${item.file.name}`, (i / total) * 0.7);
 
@@ -821,17 +879,36 @@ async function downloadAll() {
     }
   }
 
-  const zipBlob = await zip.generateAsync(
-    { type: 'blob' },
-    meta => showProgress(
-      `Creating ZIP…`,
-      0.7 + 0.3 * (meta.percent / 100)
-    )
-  );
+  if (_exportCancelRequested) {
+    hideProgress();
+    setGlobalBusy(false);
+    _exportCancelRequested = false;
+    showToast(t('msgExportCancelled'), 'warn');
+    return;
+  }
+
+  let zipBlob;
+  try {
+    zipBlob = await zip.generateAsync(
+      { type: 'blob' },
+      meta => {
+        if (_exportCancelRequested) throw new Error('EXPORT_CANCELLED');
+        showProgress(`Creating ZIP…`, 0.7 + 0.3 * (meta.percent / 100));
+      }
+    );
+  } catch (error) {
+    hideProgress();
+    setGlobalBusy(false);
+    const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
+    _exportCancelRequested = false;
+    showToast(t(cancelled ? 'msgExportCancelled' : 'msgCopyFailed'), cancelled ? 'warn' : 'error');
+    return;
+  }
 
   triggerDownload(zipBlob, 'instaframe_export.zip');
   hideProgress();
   setGlobalBusy(false);
+  _exportCancelRequested = false;
 }
 
 function triggerDownload(blob, filename) {
@@ -1336,6 +1413,7 @@ function toggleLiveExifPanel() {
   const wrap = document.getElementById('previewExifWrap');
   if (!wrap) return;
   const open = wrap.classList.toggle('exif-open');
+  document.querySelector('.preview-exif-drawer-header')?.setAttribute('aria-expanded', String(open));
   if (open) updateLiveExifPanel();
 }
 
@@ -1515,6 +1593,8 @@ async function openMapPicker() {
     return;
   }
   modal.classList.add('open');
+  modal._previousFocus = document.activeElement;
+  document.getElementById('mapPickerCloseBtn')?.focus();
 
   // Initialize Leaflet map in the next animation frame so the container
   // has a layout (width/height) before Leaflet tries to measure it.
@@ -1591,7 +1671,11 @@ async function _fetchIpLocation() {
 
 function closeMapPicker() {
   const modal = document.getElementById('mapPickerModal');
-  if (modal) modal.classList.remove('open');
+  if (modal) {
+    modal.classList.remove('open');
+    modal._previousFocus?.focus?.();
+    modal._previousFocus = null;
+  }
 }
 
 async function confirmMapLocation() {
@@ -1646,11 +1730,17 @@ function openShareAppModal() {
   if (!modal) return;
   _refreshShareLinks();
   modal.classList.add('open');
+  modal._previousFocus = document.activeElement;
+  document.getElementById('shareAppCloseBtn')?.focus();
 }
 
 function closeShareAppModal() {
   const modal = document.getElementById('shareAppModal');
-  if (modal) modal.classList.remove('open');
+  if (modal) {
+    modal.classList.remove('open');
+    modal._previousFocus?.focus?.();
+    modal._previousFocus = null;
+  }
 }
 
 function setupShareAppModal() {
@@ -2327,14 +2417,20 @@ function showProgress(label, pct) {
   const pctEl = document.getElementById('exportProgressPct');
   if (!wrap) return;
   setVisible(wrap, true);
+  const cancelBtn = document.getElementById('cancelExportBtn');
+  if (cancelBtn) cancelBtn.style.display = '';
   const p = Math.max(0, Math.min(1, pct));
   fill.style.width   = Math.round(p * 100) + '%';
+  wrap.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+  wrap.setAttribute('aria-valuetext', `${Math.round(p * 100)}% — ${label}`);
   lbl.textContent    = label;
   if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
 }
 
 function hideProgress() {
   setVisible(document.getElementById('exportProgress'), false);
+  const cancelBtn = document.getElementById('cancelExportBtn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────
@@ -2407,6 +2503,8 @@ function showToast(msg, type = 'info') {
     toast.id = 'toast';
     document.body.appendChild(toast);
   }
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
   toast.textContent = msg;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toast._timer);
@@ -3187,7 +3285,7 @@ function setupCustomizePanel() {
     });
   }
   // Restore saved accent (default to cyan)
-  const effectiveAccent = savedAccent || '#0891b2';
+  const effectiveAccent = savedAccent || '#08798f';
   _applyAccentColor(effectiveAccent);
   _activateSwatch(effectiveAccent);
 
@@ -3380,12 +3478,13 @@ function setupCardSize() {
   applyTheme(p.theme || 'soft-white');
   applyLayout(p.layout || 'left');
   applyEditorSize(p.editorSize || 'comfortable');
-  _applyAccentColor(p.accentColor || '#0891b2');
+  _applyAccentColor(p.accentColor || '#08798f');
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
   buildFontSelect();         // populate font select with popularity-ordered options
   applyTranslations();
+  setupAccessibleFormNames();
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
@@ -3417,6 +3516,13 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCardSize();
   setupCustomizePanel();
   setupLocationPrivacy();
+  setupModalAccessibility();
+  const exifHeader = document.querySelector('.preview-exif-drawer-header');
+  exifHeader?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleLiveExifPanel();
+  });
   setupShareAppModal();
   setupPreviewQuality();
   setupHistoryControls();
@@ -3433,6 +3539,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
+  document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
+    _exportCancelRequested = true;
+    showToast(t('msgExportCancelled'), 'warn');
+  });
   document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
 
   // Hide image section by default

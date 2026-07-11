@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { AxeBuilder } = require('@axe-core/playwright');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createJpeg, createWebm } = require('./fixtures.cjs');
@@ -41,6 +42,16 @@ async function loadAudioVideoFixture() {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
+});
+
+test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
+  const initial = await new AxeBuilder({ page }).analyze();
+  expect(initial.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  const consent = await new AxeBuilder({ page }).include('#locationPrivacyModal').analyze();
+  expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
 
 test('JPEG upload renders a preview and exports a framed image', async ({ page }) => {
@@ -119,6 +130,22 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await page.locator('#downloadAllBtn').click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/instaframe.*\.zip$/i);
+});
+
+test('batch generation can be cancelled while keeping pending items', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    window.FrameEngine.renderFrameWhenReady = async (...args) => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      return render(...args);
+    };
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await page.locator('#cancelExportBtn').click();
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
 test('Japanese preview quality labels change raster density without moving composition', async ({ page }) => {
@@ -239,6 +266,11 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.js'))).toBe(true);
   expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.css'))).toBe(true);
   expect(requests.some(url => /cdn\.jsdelivr\.net.*leaflet|unpkg\.com.*leaflet/.test(url))).toBe(false);
+  await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('[data-i18n="mapConfirm"]')).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
 });
 
 test('unsupported browser codecs fail visibly instead of silently', async ({ page }) => {
