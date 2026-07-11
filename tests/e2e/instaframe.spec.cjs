@@ -63,6 +63,20 @@ test('JPEG upload renders a preview and exports a framed image', async ({ page }
   expect(download.suggestedFilename()).toMatch(/photo-1_frame\.(jpg|jpeg)$/i);
 });
 
+test('core photo processing works when external network is blocked', async ({ page }) => {
+  await page.route('**/*', route => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.origin === 'http://127.0.0.1:4173') return route.continue();
+    return route.abort();
+  });
+  await page.reload();
+  await uploadJpegs(page);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/photo-1_frame\.(jpg|jpeg)$/i);
+});
+
 test('PNG and WebP inputs decode into switchable previews', async ({ page }) => {
   const [png, webp] = await Promise.all([
     createBrowserRaster(page, 'image/png'),
