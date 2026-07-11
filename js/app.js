@@ -154,6 +154,16 @@ function setupModalAccessibility() {
   });
 }
 
+function setupMapModalActions() {
+  document.getElementById('getDeviceLocationBtn')?.addEventListener('click', getLiveDeviceLocation);
+  document.getElementById('openMapPickerBtn')?.addEventListener('click', openMapPicker);
+  document.getElementById('mapPickerCloseBtn')?.addEventListener('click', closeMapPicker);
+  document.getElementById('confirmMapLocationBtn')?.addEventListener('click', confirmMapLocation);
+  document.getElementById('mapPickerModal')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeMapPicker();
+  });
+}
+
 function setupAccessibleFormNames() {
   document.querySelectorAll('input, select, textarea').forEach(control => {
     if (control.getAttribute('aria-label') || control.getAttribute('aria-labelledby')) return;
@@ -1745,6 +1755,10 @@ function closeShareAppModal() {
 
 function setupShareAppModal() {
   document.getElementById('shareAppBtn')?.addEventListener('click', openShareAppModal);
+  document.getElementById('shareAppCloseBtn')?.addEventListener('click', closeShareAppModal);
+  document.getElementById('shareAppModal')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeShareAppModal();
+  });
   document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
     const input = document.getElementById('shareUrlInput');
     const url = input?.value || window.location.href;
@@ -2272,10 +2286,10 @@ function renderItem(item) {
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="applyAndDownloadSingle(${item.id})">
+        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
         </button>
-        <button class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">
+        <button class="btn btn-sm btn-danger" data-action="remove">
           <span data-i18n="remove">${t('remove')}</span>
         </button>
       </div>
@@ -2286,6 +2300,8 @@ function renderItem(item) {
   card.querySelector('.card-preview').addEventListener('click', () => {
     selectItem(item.id);
   });
+  card.querySelector('[data-action="download"]')?.addEventListener('click', () => applyAndDownloadSingle(item.id));
+  card.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeItem(item.id));
 
   // Click card body (not buttons) → select for live preview
   card.addEventListener('click', e => {
@@ -3517,6 +3533,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCustomizePanel();
   setupLocationPrivacy();
   setupModalAccessibility();
+  setupMapModalActions();
   const exifHeader = document.querySelector('.preview-exif-drawer-header');
   exifHeader?.addEventListener('keydown', event => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
