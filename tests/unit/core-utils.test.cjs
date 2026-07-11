@@ -36,3 +36,10 @@ test('the repository ships without an unrestricted Mapbox token', () => {
   assert.match(config, /publicToken:\s*''/);
   assert.doesNotMatch(config, /publicToken:\s*'pk\./);
 });
+
+test('the published page has a self-only script CSP and no inline event handlers', () => {
+  const index = fs.readFileSync(path.resolve(__dirname, '../../index.html'), 'utf8');
+  assert.match(index, /Content-Security-Policy/);
+  assert.match(index, /script-src 'self'/);
+  assert.doesNotMatch(index, /\bon(?:click|change|input)=/i);
+});

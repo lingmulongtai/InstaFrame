@@ -259,7 +259,7 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
     body: JSON.stringify({}),
   }));
   await uploadJpegs(page);
-  await page.locator('button[onclick="openMapPicker()"]').click();
+  await page.locator('#openMapPickerBtn').click();
   await expect(page.locator('#locationPrivacyModal')).toHaveClass(/open/);
   await page.locator('#locationPrivacyOnceBtn').click();
   await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
