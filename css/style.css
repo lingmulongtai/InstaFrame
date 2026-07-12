@@ -396,6 +396,15 @@ html, body {
   outline-offset: 3px;
 }
 
+.settings-tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
 /* ── iOS-style toggle ────────────────────────────────────────────────────────── */
 .ios-toggle {
   display: flex;
