@@ -60,4 +60,6 @@ test('the published page has a self-only CSP with no inline handlers or styles',
   assert.doesNotMatch(index, /frame-ancestors/);
   assert.doesNotMatch(index, /\bon(?:click|change|input)=/i);
   assert.doesNotMatch(index, /\bstyle\s*=/i);
+  assert.match(index, /video\/3gpp/);
+  assert.match(index, /video\/x-m4v/);
 });
