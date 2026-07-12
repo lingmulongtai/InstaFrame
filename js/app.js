@@ -74,6 +74,7 @@ const MAX_FRAME_CACHE_PIXELS = 24_000_000;
 const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 16_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 8_000_000;
+const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const _vendorScriptLoads = new Map();
 const APP_ASSET_VERSION = (() => {
   try {
@@ -172,12 +173,17 @@ function updateHistoryButtons() {
 
 // ─── Preview caches ───────────────────────────────────────────────────────────
 const _imgCache      = new Map(); // item.id → { img: HTMLImageElement, objUrl: string }
+const _imgLoadEntries = new Map(); // item.id → { promise, controller }
+const _transientPreviewImages = new Map(); // one-shot decoded images too large for the LRU
 const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
 const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _exportCancelRequested = false;
 let   _activeExportController = null;
+let   _globalExportBusy = false;
+let   _activeVideoThumbnails = 0;
+const _videoThumbnailQueue = [];
 let   _exportProgressPreviousFocus = null;
 let   _lastProgressAnnouncement = -1;
 
@@ -658,6 +664,40 @@ function emptyExif() {
   return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'', latitude: null, longitude: null };
 }
 
+function _drainVideoThumbnailQueue() {
+  while (_activeVideoThumbnails < MAX_ACTIVE_VIDEO_THUMBNAILS && _videoThumbnailQueue.length) {
+    const entry = _videoThumbnailQueue.shift();
+    if (entry.item.thumbnailController?.signal.aborted) {
+      entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+      continue;
+    }
+    _activeVideoThumbnails += 1;
+    Promise.resolve()
+      .then(entry.task)
+      .then(entry.resolve, entry.reject)
+      .finally(() => {
+        _activeVideoThumbnails -= 1;
+        _drainVideoThumbnailQueue();
+      });
+  }
+}
+
+function _queueVideoThumbnail(item, task) {
+  return new Promise((resolve, reject) => {
+    _videoThumbnailQueue.push({ item, task, resolve, reject });
+    _drainVideoThumbnailQueue();
+  });
+}
+
+function _cancelQueuedVideoThumbnail(item) {
+  for (let index = _videoThumbnailQueue.length - 1; index >= 0; index -= 1) {
+    const entry = _videoThumbnailQueue[index];
+    if (entry.item !== item) continue;
+    _videoThumbnailQueue.splice(index, 1);
+    entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+  }
+}
+
 function gpsToDecimal(dms, ref) {
   if (!Array.isArray(dms) || dms.length < 3) return null;
   const [d, m, s] = dms;
@@ -739,6 +779,8 @@ async function addFiles(files) {
       canvas:    null,
       videoBlob: null,
       thumbnailController: video ? new AbortController() : null,
+      exportController: null,
+      exportRunToken: null,
       progress:  0,
       status:    'pending',
       errorMsg:  null,
@@ -747,10 +789,11 @@ async function addFiles(files) {
     state.items.push(item);
     renderItem(item);
 
-    // Pre-warm image cache so the first live preview is fast
-    if (!video) {
+    // Only the selected first photo benefits from pre-warming. Decoding every
+    // batch item eagerly can retain many full-resolution browser decoders.
+    if (!video && state.items.length === 1) {
       try {
-        await _loadPreviewImage(item);
+        await _loadPreviewImage(item, { retainUncached: true });
       } catch (error) {
         item.status = 'error';
         item.errorMsg = error?.code === 'MEDIA_RESOURCE_LIMIT'
@@ -766,13 +809,18 @@ async function addFiles(files) {
 
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
-      FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal })
-        .then(async img => {
+      _queueVideoThumbnail(item, async () => {
+        try {
+          const img = await FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal });
           // Render a framed preview at thumbnail resolution
           const framed = await FrameEngine.renderFrameWhenReady(
             img, item.exif, state.settings, { maxPreviewPx: 400 });
           const previewDiv = document.getElementById(`preview-${item.id}`);
-          if (!previewDiv) return;
+          if (!previewDiv) {
+            framed.width = 0;
+            framed.height = 0;
+            return;
+          }
           // Create a small canvas thumbnail (same pattern as photo items)
           const maxW = 200, maxH = 200;
           const scale = Math.min(maxW / framed.width, maxH / framed.height);
@@ -785,23 +833,26 @@ async function addFiles(files) {
           tc.width  = Math.round(framed.width  * scale);
           tc.height = Math.round(framed.height * scale);
           tc.getContext('2d').drawImage(framed, 0, 0, tc.width, tc.height);
+          framed.width = 0;
+          framed.height = 0;
           const origThumb = previewDiv.querySelector('img.thumb-orig');
           if (origThumb) origThumb.style.display = 'none';
-        })
-        .catch(error => {
+        } catch (error) {
           if (error?.name === 'AbortError') return;
           // Fallback: show raw captured frame
-          return FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal }).then(img => {
-            const previewDiv = document.getElementById(`preview-${item.id}`);
-            if (!previewDiv) return;
-            const thumb = previewDiv.querySelector('img.thumb-orig');
-            if (thumb && img) thumb.src = img.src;
-          }).catch(() => {
-            item.status = 'error';
-            item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
-            updateItemStatus(item);
-            showToast(item.errorMsg, 'error');
-          });
+          const img = await FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal });
+          const previewDiv = document.getElementById(`preview-${item.id}`);
+          if (!previewDiv) return;
+          const thumb = previewDiv.querySelector('img.thumb-orig');
+          if (thumb && img) thumb.src = img.src;
+        }
+      })
+        .catch(error => {
+          if (error?.name === 'AbortError') return;
+          item.status = 'error';
+          item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+          updateItemStatus(item);
+          showToast(item.errorMsg, 'error');
         })
         .finally(() => { item.thumbnailController = null; });
     }
@@ -857,7 +908,21 @@ async function clearAllItems(skipConfirm = false) {
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
 // onExternalProgress: optional (pct: 0..1) => void — for batch progress tracking
-async function generateItem(item, onExternalProgress = null, signal = null) {
+function _isCurrentItemExport(item, runToken, signal) {
+  return !signal.aborted && item.exportRunToken === runToken && state.items.includes(item);
+}
+
+async function generateItem(item, onExternalProgress = null, parentSignal = null) {
+  if (item.exportController || !state.items.includes(item)) return false;
+  const controller = new AbortController();
+  const runToken = {};
+  const abortFromParent = () => controller.abort();
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  if (parentSignal?.aborted) controller.abort();
+  item.exportController = controller;
+  item.exportRunToken = runToken;
+  const signal = controller.signal;
+  let shouldUpdate = true;
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
@@ -883,6 +948,9 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
       if (_retainedOutputBytes(item) + videoBlob.size > MAX_RETAINED_OUTPUT_BYTES) {
         throw _mediaResourceLimitError();
       }
+      if (!_isCurrentItemExport(item, runToken, signal)) {
+        throw new DOMException('Export cancelled', 'AbortError');
+      }
       item.videoBlob = videoBlob;
     } else {
       const img = await FrameEngine.loadImage(item.file);
@@ -899,9 +967,16 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
         rendered.height = 0;
         throw _mediaResourceLimitError();
       }
+      if (!_isCurrentItemExport(item, runToken, signal)) {
+        rendered.width = 0;
+        rendered.height = 0;
+        throw new DOMException('Export cancelled', 'AbortError');
+      }
       item.canvas = rendered;
       if (signal?.aborted) {
-        _releaseItemOutput(item);
+        item.canvas = null;
+        rendered.width = 0;
+        rendered.height = 0;
         throw new DOMException('Export cancelled', 'AbortError');
       }
       if (onExternalProgress) onExternalProgress(1);
@@ -909,19 +984,33 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
     item.status   = 'done';
     item.errorMsg = null;
   } catch (e) {
+    const isCurrent = item.exportRunToken === runToken && state.items.includes(item);
+    if (!isCurrent) shouldUpdate = false;
     const cancelled = e?.name === 'AbortError';
-    item.status   = cancelled ? 'pending' : 'error';
-    item.errorMsg = cancelled ? null : (e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit') : e.message);
-    if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
-    if (onExternalProgress) onExternalProgress(1);
+    if (isCurrent) {
+      item.status   = cancelled ? 'pending' : 'error';
+      item.errorMsg = cancelled ? null : (e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit') : e.message);
+      if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
+      if (onExternalProgress) onExternalProgress(1);
+    }
+  } finally {
+    parentSignal?.removeEventListener('abort', abortFromParent);
+    if (item.exportRunToken === runToken) {
+      item.exportController = null;
+      item.exportRunToken = null;
+    }
   }
 
-  updateItemStatus(item);
-  updateItemPreview(item);
-  updateUI();
+  if (shouldUpdate && state.items.includes(item)) {
+    updateItemStatus(item);
+    updateItemPreview(item);
+    updateUI();
+  }
+  return shouldUpdate && item.status === 'done';
 }
 
 async function generateAll() {
+  if (_globalExportBusy) return;
   const pending = state.items.filter(i => i.status === 'pending');
   if (!pending.length && state.items.length === 0) {
     showToast(t('msgNoImages'), 'warn');
@@ -966,13 +1055,15 @@ async function generateAll() {
 
 async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
-  if (!item) return;
+  if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
+  setGlobalBusy(true);
   item.status    = 'pending';
   _releaseItemOutput(item);
   const controller = new AbortController();
   _activeExportController = controller;
   showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
   await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
+  setGlobalBusy(false);
   hideProgress();
   if (_activeExportController === controller) _activeExportController = null;
 }
@@ -980,7 +1071,7 @@ async function regenerateItem(id) {
 // Apply frame (if needed) then download — used by per-item Download button
 async function applyAndDownloadSingle(id) {
   const item = state.items.find(i => i.id === id);
-  if (!item) return;
+  if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
 
   if (item.status !== 'done') {
     // Generate first
@@ -1037,6 +1128,7 @@ async function downloadSingle(id) {
 }
 
 async function downloadAll() {
+  if (_globalExportBusy) return;
   if (!state.items.length) {
     showToast(t('msgNoImages'), 'warn');
     return;
@@ -2275,6 +2367,9 @@ function _previewSettingsHash() {
 
 /** Drop all cached data for one item (call on remove + EXIF edit). */
 function _invalidateItemCache(itemId) {
+  _imgLoadEntries.get(itemId)?.controller.abort();
+  _imgLoadEntries.delete(itemId);
+  _transientPreviewImages.delete(itemId);
   const e = _imgCache.get(itemId);
   if (e) { URL.revokeObjectURL(e.objUrl); _imgCache.delete(itemId); }
   _imgFailed.delete(itemId);
@@ -2289,29 +2384,73 @@ function _invalidateItemCache(itemId) {
 
 function _releaseItemOutput(item) {
   if (!item) return;
+  item.exportController?.abort();
+  item.exportController = null;
+  item.exportRunToken = null;
   item.thumbnailController?.abort();
+  _cancelQueuedVideoThumbnail(item);
   item.thumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
   item.videoBlob = null;
 }
 
-/** Load image for an item, keeping the Object URL alive for re-use. */
-async function _loadPreviewImage(item) {
+/** Load image for an item, sharing in-flight decodes and keeping safe results for re-use. */
+async function _loadPreviewImage(item, { retainUncached = false } = {}) {
   if (_imgFailed.has(item.id)) throw new Error('Image load previously failed');
   const cached = _imgCache.get(item.id);
   if (cached) return cached.img;
+  const transient = _transientPreviewImages.get(item.id);
+  if (transient) {
+    _transientPreviewImages.delete(item.id);
+    return transient;
+  }
+  const existingLoad = _imgLoadEntries.get(item.id);
+  if (existingLoad) return existingLoad.promise;
 
+  const controller = new AbortController();
+  const promise = _decodePreviewImage(item, controller.signal, retainUncached)
+    .finally(() => {
+      if (_imgLoadEntries.get(item.id)?.promise === promise) _imgLoadEntries.delete(item.id);
+    });
+  _imgLoadEntries.set(item.id, { promise, controller });
+  return promise;
+}
+
+async function _decodePreviewImage(item, signal, retainUncached) {
   const objUrl = URL.createObjectURL(item.file);
   const img    = new Image();
-  img.src      = objUrl;
   await new Promise((resolve, reject) => {
-    img.onload  = resolve;
-    img.onerror = () => reject(new Error('Image load error'));
-    if (img.complete && img.naturalWidth) resolve();
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const abort = () => {
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');
+      URL.revokeObjectURL(objUrl);
+      fail(new DOMException('Image load cancelled', 'AbortError'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) { abort(); return; }
+    img.onload  = succeed;
+    img.onerror = () => fail(new Error('Image load error'));
+    img.src = objUrl;
+    if (img.complete && img.naturalWidth) succeed();
   }).catch(e => {
     URL.revokeObjectURL(objUrl);
-    _imgFailed.add(item.id);
+    if (e?.name !== 'AbortError') _imgFailed.add(item.id);
     throw e;
   });
 
@@ -2335,6 +2474,7 @@ async function _loadPreviewImage(item) {
   }
   if (imagePixels > MAX_PREVIEW_CACHE_PIXELS) {
     URL.revokeObjectURL(objUrl);
+    if (retainUncached) _transientPreviewImages.set(item.id, img);
     return img;
   }
   _imgCache.set(item.id, { img, objUrl });
@@ -2779,6 +2919,7 @@ function updateUI() {
 }
 
 function setGlobalBusy(busy) {
+  _globalExportBusy = busy;
   if (busy && !_exportProgressPreviousFocus) {
     const activeElement = document.activeElement;
     if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
@@ -2787,6 +2928,10 @@ function setGlobalBusy(busy) {
   document.getElementById('downloadAllBtn').disabled = busy;
   const clrBtn = document.getElementById('clearAllBtn');
   if (clrBtn) clrBtn.disabled = busy || state.items.length === 0;
+  state.items.forEach(item => {
+    const itemDownload = document.getElementById(`dl-btn-${item.id}`);
+    if (itemDownload) itemDownload.disabled = busy || item.status === 'processing';
+  });
 }
 
 // ─── Export progress bar ──────────────────────────────────────────────────────
@@ -4038,6 +4183,9 @@ document.addEventListener('DOMContentLoaded', () => {
     _activeExportController?.abort();
     _disposeLiveVideoSource();
     state.items.forEach(_releaseItemOutput);
+    for (const entry of _imgLoadEntries.values()) entry.controller.abort();
+    _imgLoadEntries.clear();
+    _transientPreviewImages.clear();
     for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
     _imgCache.clear();
     for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
