@@ -53,8 +53,62 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
 
   await page.locator('#customizeBtn').click();
   await page.locator('#manageLocationPrivacyBtn').click();
+  await expect(page.locator('#locationPrivacyCloseBtn')).toHaveAttribute('aria-label', /close|閉じる/i);
   const consent = await new AxeBuilder({ page }).include('#locationPrivacyModal').analyze();
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+});
+
+test('translated dynamic controls and location icon radio state stay synchronized', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('label[for="bg-blur"]').click();
+  await expect(page.locator('#blurRadiusRange')).toHaveAccessibleName('Radius');
+  await expect(page.locator('#blurStyleSelect')).toHaveAccessibleName('Style');
+  await expect(page.locator('#blurBrightnessRange')).toHaveAccessibleName('Brightness');
+
+  await page.locator('label:has(#showLocation)').click();
+  await page.locator('.icon-pick-btn[data-icon="pin"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.icon-pick-btn[data-icon="dot"]')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.icon-pick-btn[data-icon="dot"]')).toHaveAttribute('tabindex', '0');
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('.icon-pick-btn[data-icon="pin"]')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.icon-pick-btn[data-icon="dot"]')).toHaveAttribute('aria-checked', 'false');
+
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('#blurRadiusRange')).toHaveAccessibleName('強さ');
+  await expect(page.locator('#blurStyleSelect')).toHaveAccessibleName('スタイル');
+  await expect(page.locator('.icon-pick-btn[data-icon="pin"]')).toHaveAttribute('aria-label', 'ピン');
+});
+
+test('share dialog supports axe, Escape, and focus return', async ({ page }) => {
+  await page.locator('#shareAppBtn').focus();
+  await page.locator('#shareAppBtn').press('Enter');
+  await expect(page.locator('#shareAppModal')).toHaveClass(/open/);
+  await expect(page.locator('#shareAppCloseBtn')).toBeFocused();
+  const results = await new AxeBuilder({ page }).include('#shareAppModal').analyze();
+  expect(results.violations.filter(violation => ['critical', 'serious'].includes(violation.impact))).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#shareAppModal')).not.toHaveClass(/open/);
+  await expect(page.locator('#shareAppBtn')).toBeFocused();
+});
+
+test('video shortcuts do not steal Space from destructive dialog buttons', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'keyboard-video.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  const remove = page.locator('[data-action="remove"]');
+  await remove.focus();
+  await remove.press('Space');
+  await expect(page.locator('#destructiveConfirmModal')).toHaveClass(/open/);
+  await expect(page.locator('#destructiveConfirmCancelBtn')).toBeFocused();
+  await page.locator('#destructiveConfirmCancelBtn').press('Space');
+  await expect(page.locator('#destructiveConfirmModal')).not.toHaveClass(/open/);
+  await expect(page.locator('#item-1')).toBeVisible();
+  await expect(remove).toBeFocused();
 });
 
 test('dynamic panels and selectors expose keyboard state without hidden focus targets', async ({ page }) => {

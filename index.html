@@ -225,15 +225,15 @@
           <div class="setting-control">
             <div class="blur-controls">
               <div class="blur-row">
-                <span class="blur-sub-label" data-i18n="blurRadius">Radius</span>
+                <span class="blur-sub-label" id="blurRadiusLabel" data-i18n="blurRadius">Radius</span>
                 <div class="range-wrap">
-                  <input type="range" id="blurRadiusRange" min="0" max="60" step="2" value="20">
+                  <input type="range" id="blurRadiusRange" min="0" max="60" step="2" value="20" aria-labelledby="blurRadiusLabel">
                   <span class="range-val" id="blurRadiusVal">20px</span>
                 </div>
               </div>
               <div class="blur-row">
-                <span class="blur-sub-label" data-i18n="blurStyle">Style</span>
-                <select id="blurStyleSelect" class="font-select blur-style-select">
+                <span class="blur-sub-label" id="blurStyleLabel" data-i18n="blurStyle">Style</span>
+                <select id="blurStyleSelect" class="font-select blur-style-select" aria-labelledby="blurStyleLabel">
                   <option value="normal" data-i18n="blurStyleNormal">Normal</option>
                   <option value="grayscale" data-i18n="blurStyleGrayscale">Grayscale</option>
                   <option value="sepia" data-i18n="blurStyleSepia">Sepia</option>
@@ -241,9 +241,9 @@
                 </select>
               </div>
               <div class="blur-row">
-                <span class="blur-sub-label" data-i18n="blurBrightness">Brightness</span>
+                <span class="blur-sub-label" id="blurBrightnessLabel" data-i18n="blurBrightness">Brightness</span>
                 <div class="range-wrap">
-                  <input type="range" id="blurBrightnessRange" min="20" max="120" step="5" value="80">
+                  <input type="range" id="blurBrightnessRange" min="20" max="120" step="5" value="80" aria-labelledby="blurBrightnessLabel">
                   <span class="range-val" id="blurBrightnessVal">80%</span>
                 </div>
               </div>
@@ -515,16 +515,16 @@
           <div class="setting-label" data-i18n="mapIcon">Icon</div>
           <div class="setting-control">
             <div class="icon-picker" role="radiogroup" aria-label="Location icon">
-              <button type="button" class="icon-pick-btn active" data-icon="pin" title="Pin" role="radio" aria-checked="true">
+              <button type="button" class="icon-pick-btn active" data-icon="pin" title="Pin" aria-label="Pin" role="radio" aria-checked="true" tabindex="0" data-i18n="locationIconPin" data-i18n-attr="title,aria-label">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
               </button>
-              <button type="button" class="icon-pick-btn" data-icon="dot" title="Ring" role="radio" aria-checked="false">
+              <button type="button" class="icon-pick-btn" data-icon="dot" title="Ring" aria-label="Ring" role="radio" aria-checked="false" tabindex="-1" data-i18n="locationIconRing" data-i18n-attr="title,aria-label">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>
               </button>
-              <button type="button" class="icon-pick-btn" data-icon="compass" title="Diamond" role="radio" aria-checked="false">
+              <button type="button" class="icon-pick-btn" data-icon="compass" title="Diamond" aria-label="Diamond" role="radio" aria-checked="false" tabindex="-1" data-i18n="locationIconDiamond" data-i18n-attr="title,aria-label">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3 20 12 12 21 4 12 12 3Z"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>
               </button>
-              <button type="button" class="icon-pick-btn" data-icon="globe" title="Flag" role="radio" aria-checked="false">
+              <button type="button" class="icon-pick-btn" data-icon="globe" title="Flag" aria-label="Flag" role="radio" aria-checked="false" tabindex="-1" data-i18n="locationIconFlag" data-i18n-attr="title,aria-label">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v18"/><path d="M7 4h10l-2.3 3L17 10H7"/><circle cx="7" cy="20" r="1.8" fill="currentColor" stroke="none"/></svg>
               </button>
             </div>
@@ -874,7 +874,6 @@
         <div id="exportProgressMeter" class="export-progress-track" role="progressbar" aria-labelledby="exportProgressLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="exportProgressFill" class="export-progress-fill"></div>
         </div>
-        <span id="exportProgressStatus" class="sr-only" role="status" aria-live="polite"></span>
       </div>
 
       <div class="batch-bar">
@@ -900,6 +899,7 @@
       </div>
 
     </div>
+    <span id="exportProgressStatus" class="sr-only" role="status" aria-live="polite"></span>
   </main>
 
 </div><!-- /app-shell -->
@@ -949,7 +949,7 @@
   <div class="map-modal-content privacy-modal-content">
     <div class="map-modal-header">
       <span class="map-modal-title" id="locationPrivacyModalTitle" data-i18n="privacyConsentTitle">Allow online location services?</span>
-      <button type="button" class="map-modal-close" id="locationPrivacyCloseBtn" data-i18n-attr="title" data-i18n="close">×</button>
+      <button type="button" class="map-modal-close" id="locationPrivacyCloseBtn" data-i18n-attr="title,aria-label" data-i18n="close" title="Close" aria-label="Close">×</button>
     </div>
     <div class="privacy-modal-body">
       <p data-i18n="privacyConsentLead">Your photos and videos are never uploaded. If you continue, location data may be sent to the services below.</p>
