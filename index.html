@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
   <meta name="theme-color" content="#ffffff">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
   <meta property="og:title" content="InstaFrame">
@@ -81,15 +81,15 @@
             </label>
           </div>
           <!-- Accent color presets -->
-          <div class="customize-row" style="margin-top:6px;">
+          <div class="customize-row customize-row-accent">
             <span class="customize-row-label" data-i18n="accentLabel">Accent</span>
             <div class="accent-swatches" id="accentSwatches">
-              <button class="accent-swatch" data-color="#2563eb" style="background:#2563eb" title="Blue" aria-label="Blue accent"></button>
-              <button class="accent-swatch" data-color="#7c3aed" style="background:#7c3aed" title="Purple" aria-label="Purple accent"></button>
-              <button class="accent-swatch" data-color="#db2777" style="background:#db2777" title="Pink" aria-label="Pink accent"></button>
-              <button class="accent-swatch" data-color="#059669" style="background:#059669" title="Green" aria-label="Green accent"></button>
-              <button class="accent-swatch" data-color="#d97706" style="background:#d97706" title="Amber" aria-label="Amber accent"></button>
-              <button class="accent-swatch active" data-color="#08798f" style="background:#08798f" title="Cyan" aria-label="Cyan accent"></button>
+              <button class="accent-swatch accent-blue" data-color="#2563eb" title="Blue" aria-label="Blue accent"></button>
+              <button class="accent-swatch accent-purple" data-color="#7c3aed" title="Purple" aria-label="Purple accent"></button>
+              <button class="accent-swatch accent-pink" data-color="#db2777" title="Pink" aria-label="Pink accent"></button>
+              <button class="accent-swatch accent-green" data-color="#059669" title="Green" aria-label="Green accent"></button>
+              <button class="accent-swatch accent-amber" data-color="#d97706" title="Amber" aria-label="Amber accent"></button>
+              <button class="accent-swatch accent-cyan active" data-color="#08798f" title="Cyan" aria-label="Cyan accent"></button>
               <label id="accentCustomBtn" class="color-option-custom" title="Custom color">
                 <input type="color" id="accentColorPicker" value="#08798f">
                 <span class="rainbow-icon"></span>
@@ -226,7 +226,7 @@
         </div>
 
         <!-- Blur Background Options (shown when background=blur) -->
-        <div class="setting-row" id="blurOptionsRow" style="display:none;">
+        <div class="setting-row is-hidden" id="blurOptionsRow">
           <div class="setting-label" data-i18n="blurOptions">Blur</div>
           <div class="setting-control">
             <div class="blur-controls">
@@ -239,7 +239,7 @@
               </div>
               <div class="blur-row">
                 <span class="blur-sub-label" data-i18n="blurStyle">Style</span>
-                <select id="blurStyleSelect" class="font-select" style="flex:1;">
+                <select id="blurStyleSelect" class="font-select blur-style-select">
                   <option value="normal" data-i18n="blurStyleNormal">Normal</option>
                   <option value="grayscale" data-i18n="blurStyleGrayscale">Grayscale</option>
                   <option value="sepia" data-i18n="blurStyleSepia">Sepia</option>
@@ -408,15 +408,15 @@
             <div class="style-toggles">
               <div class="style-toggle-btn">
                 <input type="checkbox" id="cameraNameBold">
-                <label for="cameraNameBold" style="font-weight:700;">B</label>
+                <label for="cameraNameBold" class="style-toggle-bold">B</label>
               </div>
               <div class="style-toggle-btn">
                 <input type="checkbox" id="cameraNameItalic">
-                <label for="cameraNameItalic" style="font-style:italic;">I</label>
+                <label for="cameraNameItalic" class="style-toggle-italic">I</label>
               </div>
               <div class="style-toggle-btn">
                 <input type="checkbox" id="exifItalic">
-                <label for="exifItalic" style="font-style:italic; font-size:10px;">I&thinsp;exif</label>
+                <label for="exifItalic" class="style-toggle-exif">I&thinsp;exif</label>
               </div>
             </div>
           </div>
@@ -497,7 +497,7 @@
           </div>
         </div>
         <!-- Location position (shown when showLocation is on) -->
-        <div class="setting-row location-pos-row" id="locationPositionRow" style="display:none;">
+        <div class="setting-row location-pos-row is-hidden" id="locationPositionRow">
           <div class="setting-label" data-i18n="locationPosition">Position</div>
           <div class="setting-control">
             <div class="ratio-pills">
@@ -517,7 +517,7 @@
           </div>
         </div>
         <!-- Location icon picker (shown when showLocation is on) -->
-        <div class="setting-row" id="locationIconRow" style="display:none;">
+        <div class="setting-row is-hidden" id="locationIconRow">
           <div class="setting-label" data-i18n="mapIcon">Icon</div>
           <div class="setting-control">
             <div class="icon-picker">
@@ -537,7 +537,7 @@
           </div>
         </div>
         <!-- Map overlay (shown when showLocation is on) -->
-        <div class="setting-row map-overlay-row" id="mapOverlayRow" style="display:none;">
+        <div class="setting-row map-overlay-row is-hidden" id="mapOverlayRow">
           <div class="setting-control">
             <div class="vis-toggles">
               <label class="ios-toggle">
@@ -551,7 +551,7 @@
             </div>
           </div>
         </div>
-        <div class="setting-row" id="mapOverlayOpacityRow" style="display:none;">
+        <div class="setting-row is-hidden" id="mapOverlayOpacityRow">
           <div class="setting-label" data-i18n="mapOverlayOpacity">Opacity</div>
           <div class="setting-control">
             <div class="range-wrap">
@@ -560,7 +560,7 @@
             </div>
           </div>
         </div>
-        <div class="setting-row" id="mapOverlayPositionRow" style="display:none;">
+        <div class="setting-row is-hidden" id="mapOverlayPositionRow">
           <div class="setting-label" data-i18n="mapOverlayPosition">Map position</div>
           <div class="setting-control">
             <div class="ratio-pills">
@@ -692,7 +692,7 @@
       <input type="file" id="fileInput" multiple
              accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
       <canvas id="livePreviewCanvas"></canvas>
-      <video id="livePreviewVideo" playsinline style="display:none; max-width:100%; max-height:100%; object-fit:contain; border-radius:var(--r);"></video>
+      <video id="livePreviewVideo" class="live-preview-video" playsinline></video>
 
       <div class="preview-empty" id="previewEmpty">
         <div class="preview-empty-icon">📷</div>
@@ -775,7 +775,7 @@
       <div class="preview-video-bar" id="previewVideoBar">
         <button class="video-ctrl-btn" id="videoPlayPauseBtn" aria-label="Play/Pause">
           <svg id="videoPlayIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M3 2.5l10 5.5-10 5.5V2.5z"/></svg>
-          <svg id="videoPauseIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" style="display:none"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
+          <svg id="videoPauseIcon" class="video-icon-hidden" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
         </button>
         <span class="video-time-label" id="videoCurrentTime">0:00</span>
         <div class="video-seek-wrap">
@@ -789,7 +789,7 @@
               <path d="M8 2.5L4.5 5.5H2v5h2.5L8 13.5V2.5z"/>
               <path d="M10.5 5a4 4 0 0 1 0 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
             </svg>
-            <svg id="videoMuteIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" style="display:none">
+            <svg id="videoMuteIcon" class="video-icon-hidden" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
               <path d="M8 2.5L4.5 5.5H2v5h2.5L8 13.5V2.5z"/>
               <line x1="11" y1="6" x2="15" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               <line x1="15" y1="6" x2="11" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -813,7 +813,7 @@
     <!-- Empty hint (shown when no files are loaded) -->
     <div class="empty-hint" id="emptyHint">
       <!-- Mobile-only add button (desktop uses the drop-zone overlay) -->
-      <button class="btn btn-primary btn-lg mobile-add-btn" id="mobileAddBtn" style="display:none;">+ Add Photos</button>
+      <button class="btn btn-primary btn-lg mobile-add-btn" id="mobileAddBtn">+ Add Photos</button>
       <div class="empty-hint-grid">
         <div class="empty-hint-card">
           <div class="empty-hint-emoji">📷</div>
@@ -839,7 +839,7 @@
     </div>
 
     <!-- Image Section (shown when files are loaded) -->
-    <div class="image-section" id="imageSection" style="display:none;">
+    <div class="image-section is-hidden" id="imageSection">
 
       <div class="section-header">
         <span class="section-title" data-i18n="imagesTitle">Images</span>
@@ -856,7 +856,7 @@
       </div>
 
       <!-- Export progress bar (shown during generation / ZIP creation) -->
-      <div id="exportProgress" class="export-progress" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="display:none;">
+      <div id="exportProgress" class="export-progress is-hidden" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="export-progress-header">
           <span id="exportProgressLabel" class="export-progress-label">Processing…</span>
           <span id="exportProgressPct" class="export-progress-pct">0%</span>

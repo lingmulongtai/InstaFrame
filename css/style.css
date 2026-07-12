@@ -266,6 +266,7 @@ html, body {
   margin-bottom: 6px;
   flex-wrap: wrap;
 }
+.customize-row-accent { margin-top: 6px; }
 .customize-row-label {
   font-size: 11.5px;
   color: var(--text-2);
@@ -336,6 +337,12 @@ html, body {
   align-items: center;
   justify-content: center;
 }
+.accent-blue { background: #2563eb; }
+.accent-purple { background: #7c3aed; }
+.accent-pink { background: #db2777; }
+.accent-green { background: #059669; }
+.accent-amber { background: #d97706; }
+.accent-cyan { background: #08798f; }
 .accent-swatch:hover { transform: scale(1.15); }
 .accent-swatch.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
@@ -752,6 +759,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .style-toggle-btn input:checked + label { background: var(--accent); border-color: var(--accent); color: white; }
 .style-toggle-btn label:hover { border-color: var(--accent); color: var(--accent); }
 .style-toggle-btn input:checked + label:hover { background: var(--accent-h); color: white; }
+.style-toggle-bold { font-weight: 700; }
+.style-toggle-italic,
+.style-toggle-exif { font-style: italic; }
+.style-toggle-exif { font-size: 10px; }
 
 /* Aspect ratio pills */
 .ratio-pills { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -813,6 +824,8 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   cursor: pointer;
 }
 #textColorPicker:disabled { opacity: 0.38; cursor: not-allowed; }
+.is-hidden { display: none !important; }
+.blur-style-select { flex: 1; }
 .location-pos-row .ratio-pills { flex-wrap: nowrap; gap: 3px; }
 .location-pos-row .ratio-pill { flex: 1 1 0; min-width: 0; }
 .location-pos-row .ratio-pill label {
@@ -1565,6 +1578,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   padding: 20px 16px;
   background: var(--bg);
 }
+.mobile-add-btn { display: none; }
 
 .empty-hint-grid {
   display: grid;
@@ -1607,6 +1621,14 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .preview-area.has-preview { cursor: grab; }
 .preview-area.has-preview.dragging,
 .preview-area.has-preview.dragging #livePreviewCanvas { cursor: grabbing; }
+.live-preview-video {
+  display: none;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--r);
+}
+.video-icon-hidden { display: none; }
 
 /* ── Image section ───────────────────────────────────────────────────────────── */
 .image-section {
