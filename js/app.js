@@ -3956,6 +3956,19 @@ function setupCustomizePanel() {
 }
 
 // ─── Mobile Tab Bar ───────────────────────────────────────────────────────────
+function _syncMobileTabPanels(tabBar, tab, mobile) {
+  if (!tabBar) return;
+  tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+    const panel = document.getElementById(btn.getAttribute('aria-controls'));
+    if (!panel) return;
+    const selected = btn.dataset.tab === tab;
+    panel.hidden = mobile && !selected;
+    panel.inert = mobile && !selected;
+    if (mobile) panel.setAttribute('aria-hidden', String(!selected));
+    else panel.removeAttribute('aria-hidden');
+  });
+}
+
 function _setMobileTabState(tabBar, tab) {
   if (!tabBar) return;
   document.body.setAttribute('data-mobile-tab', tab);
@@ -3965,6 +3978,7 @@ function _setMobileTabState(tabBar, tab) {
     btn.setAttribute('aria-selected', String(selected));
     btn.tabIndex = selected ? 0 : -1;
   });
+  _syncMobileTabPanels(tabBar, tab, window.innerWidth <= 768);
 }
 
 function setupMobileTabs() {
@@ -4004,11 +4018,14 @@ function setupMobileTabs() {
   // Default to preview tab on mobile
   if (isMobile()) {
     _setMobileTabState(tabBar, 'preview');
-  }
+  } else _syncMobileTabPanels(tabBar, '', false);
 
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
-    if (!isMobile()) document.body.removeAttribute('data-mobile-tab');
+    if (!isMobile()) {
+      document.body.removeAttribute('data-mobile-tab');
+      _syncMobileTabPanels(tabBar, '', false);
+    }
     else if (!document.body.getAttribute('data-mobile-tab')) {
       _setMobileTabState(tabBar, 'preview');
     }
