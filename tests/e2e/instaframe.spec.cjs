@@ -249,6 +249,34 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   expect(download.suggestedFilename()).toMatch(/instaframe.*\.zip$/i);
 });
 
+test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
+
+  await page.evaluate(async () => {
+    const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
+    window.__zipGenerateCalled = false;
+    const originalGenerate = JSZipCtor.prototype.generateAsync;
+    JSZipCtor.prototype.generateAsync = function (...args) {
+      window.__zipGenerateCalled = true;
+      return originalGenerate.apply(this, args);
+    };
+    window.FrameEngine.canvasToBlob = async () => {
+      const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
+      Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
+      return blob;
+    };
+  });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#toast')).toContainText(/memory|メモリ/i);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  expect(await page.evaluate(() => window.__zipGenerateCalled)).toBe(false);
+});
+
 test('photo export refuses a browser MIME fallback instead of mislabelling the file', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="fmt-webp"]').click();

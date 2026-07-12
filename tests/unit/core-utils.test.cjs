@@ -29,6 +29,13 @@ test('preview backing density preserves normal zoom detail and caps extreme canv
   assert.equal(core.getBudgetedPreviewBackingScale(8, 500, 400, 24_000_000), 8);
 });
 
+test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and entry overhead', () => {
+  const mib = 1024 * 1024;
+  assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 380 * mib + 4096);
+  assert.ok(core.estimateZipPeakBytes(384 * mib, 64 * mib, 64 * mib, 1) > 512 * mib);
+  assert.equal(core.estimateZipPeakBytes(-1, NaN, 10, -3), 10);
+});
+
 test('coordinate labels are deterministic and remain local', () => {
   assert.equal(core.formatCoordinateLabel(35.6762, 139.6503), '35.6762°N, 139.6503°E');
   assert.equal(core.formatCoordinateLabel(-33.8688, 151.2093), '33.8688°S, 151.2093°E');
