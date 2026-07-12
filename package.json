@@ -1,0 +1,45 @@
+{
+  "name": "instaframe-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Privacy-conscious browser EXIF frame generator for photos and videos",
+  "scripts": {
+    "check:syntax": "node --check js/core-utils.js && node --check js/config.js && node --check js/i18n.js && node --check js/frame-engine.js && node --check js/app.js",
+    "lint": "eslint js tests scripts playwright.config.cjs",
+    "prepare:vendor": "node scripts/prepare-vendor.mjs",
+    "test:unit": "node --test tests/unit/*.test.cjs",
+    "test:e2e": "npm run prepare:vendor && playwright test",
+    "test": "npm run check:syntax && npm run lint && npm run test:unit && npm run test:e2e",
+    "build:site": "npm run prepare:vendor && node scripts/prepare-site.mjs",
+    "serve": "npm run prepare:vendor && node scripts/serve-site.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1",
+    "eslint": "10.6.0",
+    "globals": "17.7.0",
+    "jpeg-js": "0.4.4",
+    "piexifjs": "1.0.6"
+  },
+  "dependencies": {
+    "@fontsource/cinzel": "5.2.8",
+    "@fontsource/cormorant-garamond": "5.2.11",
+    "@fontsource/dm-sans": "5.2.8",
+    "@fontsource/eb-garamond": "5.2.7",
+    "@fontsource/inter": "5.2.8",
+    "@fontsource/josefin-sans": "5.2.8",
+    "@fontsource/lato": "5.2.7",
+    "@fontsource/libre-baskerville": "5.2.10",
+    "@fontsource/montserrat": "5.2.8",
+    "@fontsource/nunito": "5.2.7",
+    "@fontsource/oswald": "5.2.8",
+    "@fontsource/playfair-display": "5.2.8",
+    "@fontsource/poppins": "5.2.7",
+    "@fontsource/raleway": "5.2.8",
+    "@fontsource/source-serif-4": "5.2.9",
+    "@fontsource/work-sans": "5.2.8",
+    "exifr": "7.1.3",
+    "jszip": "3.10.1",
+    "leaflet": "1.9.4"
+  }
+}
