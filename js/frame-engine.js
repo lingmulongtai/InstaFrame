@@ -957,9 +957,10 @@ const FrameEngine = (() => {
       if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
-        const W = video.videoWidth;
-        const H = video.videoHeight;
-        if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
+        try {
+          const W = video.videoWidth;
+          const H = video.videoHeight;
+          if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
 
         const isPortrait      = H > W;
         const ts              = settings.thicknessScale || 1;
@@ -1041,7 +1042,19 @@ const FrameEngine = (() => {
           videoBitsPerSecond,
         });
         const chunks = [];
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        let recordedBytes = 0;
+        recorder.ondataavailable = event => {
+          if (event.data.size <= 0 || settled) return;
+          recordedBytes += event.data.size;
+          if (recordedBytes > MAX_ESTIMATED_VIDEO_BYTES) {
+            if (recorder.state !== 'inactive') {
+              try { recorder.stop(); } catch (_) {}
+            }
+            fail(resourceLimitError());
+            return;
+          }
+          chunks.push(event.data);
+        };
         recorder.onstop = () => {
           if (settled) { cleanup(); return; }
           settled = true;
@@ -1077,13 +1090,16 @@ const FrameEngine = (() => {
           }
         }
 
-        recorder.start(200);
-        video.play()
-          .then(() => { rafId = requestAnimationFrame(drawLoop); })
-          .catch(err => {
-            if (recorder.state !== 'inactive') recorder.stop();
-            fail(err);
-          });
+          recorder.start(200);
+          video.play()
+            .then(() => { rafId = requestAnimationFrame(drawLoop); })
+            .catch(err => {
+              if (recorder.state !== 'inactive') recorder.stop();
+              fail(err);
+            });
+        } catch (error) {
+          fail(error);
+        }
       };
 
       video.onerror = () => fail(new Error('Video load failed'));

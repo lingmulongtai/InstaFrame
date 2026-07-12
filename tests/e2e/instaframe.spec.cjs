@@ -258,6 +258,97 @@ test('oversized source files are rejected before decoding', async ({ page }) => 
   await expect(page.locator('#toast')).toContainText(/256 MiB|256 MiB/);
 });
 
+test('batch import only prewarms the selected photo decode', async ({ page }) => {
+  await page.addInitScript(() => {
+    const create = URL.createObjectURL.bind(URL);
+    window.__fileUrlCounts = {};
+    URL.createObjectURL = value => {
+      if (value instanceof File && value.name) {
+        window.__fileUrlCounts[value.name] = (window.__fileUrlCounts[value.name] || 0) + 1;
+      }
+      return create(value);
+    };
+  });
+  await page.reload();
+  await uploadJpegs(page, 3);
+  await expect.poll(() => page.evaluate(() => window.__fileUrlCounts)).toEqual({
+    'photo-1.jpg': 2,
+    'photo-2.jpg': 1,
+    'photo-3.jpg': 1,
+  });
+});
+
+test('video thumbnail decoding is limited to two active jobs', async ({ page }) => {
+  await page.evaluate(async () => {
+    const releases = [];
+    window.__thumbnailStats = { active: 0, peak: 0, completed: 0, releases };
+    window.FrameEngine.captureVideoFrame = () => new Promise(resolve => {
+      const stats = window.__thumbnailStats;
+      stats.active += 1;
+      stats.peak = Math.max(stats.peak, stats.active);
+      releases.push(() => {
+        stats.active -= 1;
+        stats.completed += 1;
+        resolve({});
+      });
+    });
+    window.FrameEngine.renderFrameWhenReady = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 80;
+      canvas.height = 60;
+      return canvas;
+    };
+    await window.addFiles(Array.from({ length: 6 }, (_, index) => (
+      new File(['video'], `queued-${index}.webm`, { type: 'video/webm' })
+    )));
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__thumbnailStats.peak)).toBe(2);
+  await page.evaluate(async () => {
+    const stats = window.__thumbnailStats;
+    while (stats.completed < 6) {
+      stats.releases.splice(0).forEach(release => release());
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  });
+  expect(await page.evaluate(() => ({
+    peak: window.__thumbnailStats.peak,
+    completed: window.__thumbnailStats.completed,
+  }))).toEqual({ peak: 2, completed: 6 });
+});
+
+test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__photoRenderCalls = 0;
+    window.__releasePhotoRender = null;
+    window.__stalePhotoCanvas = null;
+    window.FrameEngine.loadImage = async () => ({ naturalWidth: 480, naturalHeight: 320 });
+    window.FrameEngine.renderFrameWhenReady = () => new Promise(resolve => {
+      window.__photoRenderCalls += 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      window.__stalePhotoCanvas = canvas;
+      window.__releasePhotoRender = () => resolve(canvas);
+    });
+    window.__firstPhotoJob = window.applyAndDownloadSingle(1);
+    window.__secondPhotoJob = window.applyAndDownloadSingle(1);
+  });
+  await expect.poll(() => page.evaluate(() => window.__photoRenderCalls)).toBe(1);
+  await page.evaluate(async () => {
+    await window.removeItem(1, { skipConfirm: true });
+    window.__releasePhotoRender();
+    await Promise.all([window.__firstPhotoJob, window.__secondPhotoJob]);
+  });
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    calls: window.__photoRenderCalls,
+    width: window.__stalePhotoCanvas.width,
+    height: window.__stalePhotoCanvas.height,
+  }))).toEqual({ calls: 1, width: 0, height: 0 });
+});
+
 test('batch generation can be cancelled while keeping pending items', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
@@ -331,6 +422,39 @@ test('Japanese preview quality labels change raster density without moving compo
   expect(max.cssWidth).toBeCloseTo(draft.cssWidth, 0);
   expect(max.cssHeight).toBeCloseTo(draft.cssHeight, 0);
   expect(max.backingWidth).toBeGreaterThan(draft.backingWidth);
+});
+
+test('MediaRecorder setup exceptions reject and revoke their source URL', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'setup-failure.webm', { type: 'video/webm' });
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const active = new Set();
+    URL.createObjectURL = value => {
+      const url = create(value);
+      active.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      active.delete(url);
+      revoke(url);
+    };
+    const originalCaptureStream = HTMLCanvasElement.prototype.captureStream;
+    HTMLCanvasElement.prototype.captureStream = () => { throw new Error('simulated captureStream failure'); };
+    let message = '';
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+    } catch (error) {
+      message = error.message;
+    } finally {
+      HTMLCanvasElement.prototype.captureStream = originalCaptureStream;
+    }
+    return { message, activeUrls: active.size };
+  }, { base64: createWebm().toString('base64') });
+
+  expect(result.message).toContain('simulated captureStream failure');
+  expect(result.activeUrls).toBe(0);
 });
 
 test('auto preview stays pixel-dense through 600% zoom', async ({ page }) => {
