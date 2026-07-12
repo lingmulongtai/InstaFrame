@@ -590,19 +590,37 @@ const FrameEngine = (() => {
     return `#${toHex(ch(0))}${toHex(ch(2))}${toHex(ch(4))}`;
   }
 
+  function hasImageSignature(bytes, format) {
+    if (format === 'png') {
+      const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+      return signature.every((value, index) => bytes[index] === value);
+    }
+    if (format === 'webp') {
+      return bytes.length >= 12
+        && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF'
+        && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
+    }
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+
   function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92 } = {}) {
     const mime = format === 'png'  ? 'image/png'
                : format === 'webp' ? 'image/webp'
                :                     'image/jpeg';
     // PNG is lossless — no quality arg
     return new Promise((resolve, reject) =>
-      canvas.toBlob(blob => {
+      canvas.toBlob(async blob => {
         if (!blob) { reject(new Error('Image encoding failed')); return; }
-        if (blob.type.toLowerCase() !== mime) {
-          reject(new Error(`Browser returned ${blob.type || 'an unknown format'} instead of ${mime}`));
-          return;
+        try {
+          const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+          if (!hasImageSignature(bytes, format)) {
+            reject(new Error(`Browser did not encode the requested ${mime} format`));
+            return;
+          }
+          resolve(blob.type.toLowerCase() === mime ? blob : new Blob([blob], { type: mime }));
+        } catch (error) {
+          reject(error);
         }
-        resolve(blob);
       }, mime, format === 'png' ? undefined : quality)
     );
   }
