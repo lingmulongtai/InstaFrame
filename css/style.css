@@ -408,6 +408,10 @@ html, body {
   transition: background 0.2s;
 }
 .ios-toggle input:checked + .ios-toggle-track { background: var(--accent); }
+.ios-toggle input:focus-visible + .ios-toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .ios-toggle-thumb {
   position: absolute;
   top: 3px;
@@ -784,6 +788,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   transition: background 0.1s, border-color 0.1s;
 }
 .ratio-pill input:checked + label { background: var(--accent); border-color: var(--accent); color: white; }
+.ratio-pill input:focus-visible + label {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .ratio-pill label:hover { border-color: var(--accent); color: var(--accent); }
 .ratio-pill input:checked + label:hover { background: var(--accent-h); color: white; }
 .ratio-pill-social label,
@@ -822,6 +830,10 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   border-radius: 6px;
   background: var(--surface-2);
   cursor: pointer;
+}
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }
 #textColorPicker:disabled { opacity: 0.38; cursor: not-allowed; }
 .is-hidden { display: none !important; }
@@ -1688,7 +1700,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 .export-progress-pct {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-h);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -1949,11 +1961,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   opacity: 1;
   transition: max-height 0.2s ease, opacity 0.15s ease;
 }
-#photoQualityRow.row-hidden {
-  max-height: 0;
-  opacity: 0;
-  pointer-events: none;
-}
+#photoQualityRow.row-hidden { display: none; }
 
 /* ── Preview empty: mobile import hint (hidden on desktop) ──────────────────── */
 .preview-empty-mobile-hint { display: none; }
@@ -1976,7 +1984,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   text-decoration: underline;
 }
 .export-progress-cancel:hover,
-.export-progress-cancel:focus-visible { color: var(--accent); }
+.export-progress-cancel:focus-visible { color: var(--accent-h); }
 
 
 .preview-area::after { transition: opacity 0.15s ease; }
@@ -2323,6 +2331,17 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
+}
+.icon-pick-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.map-picker-help {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 /* ── Customize panel: token input ─────────────────────────────────────────── */
