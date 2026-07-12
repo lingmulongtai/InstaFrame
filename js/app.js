@@ -889,6 +889,17 @@ async function removeItem(id, options = {}) {
   return true;
 }
 
+function _syncLocationIconPicker(value, { focus = false } = {}) {
+  const selected = value || 'pin';
+  document.querySelectorAll('.icon-pick-btn').forEach(button => {
+    const active = button.dataset.icon === selected;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-checked', String(active));
+    button.tabIndex = active ? 0 : -1;
+    if (active && focus) button.focus();
+  });
+}
+
 async function clearAllItems(skipConfirm = false) {
   if (state.items.length === 0) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
@@ -1421,9 +1432,7 @@ function restoreSettings() {
 
   // Location icon style
   if (saved.locationIconStyle) {
-    document.querySelectorAll('.icon-pick-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.icon === saved.locationIconStyle);
-    });
+    _syncLocationIconPicker(saved.locationIconStyle);
   }
 
   // Map overlay opacity
@@ -1689,9 +1698,7 @@ function _syncDomWithStateSettings() {
   if (blurStyleEl) blurStyleEl.value = s.blurStyle || 'normal';
 
   // Location icon
-  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.icon === (s.locationIconStyle || 'pin'));
-  });
+  _syncLocationIconPicker(s.locationIconStyle);
 
   const locPosRow = document.getElementById('locationPositionRow');
   if (locPosRow) locPosRow.classList.toggle('is-hidden', !s.showLocation);
@@ -2124,6 +2131,11 @@ function setupShareAppModal() {
   document.getElementById('shareAppCloseBtn')?.addEventListener('click', closeShareAppModal);
   document.getElementById('shareAppModal')?.addEventListener('click', event => {
     if (event.target === event.currentTarget) closeShareAppModal();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !document.getElementById('shareAppModal')?.classList.contains('open')) return;
+    event.preventDefault();
+    closeShareAppModal();
   });
   document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
     const input = document.getElementById('shareUrlInput');
@@ -3456,14 +3468,24 @@ function setupSettingsListeners() {
   if (blurStyleEl) blurStyleEl.addEventListener('change', applySettings);
 
   // Location icon picker
-  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+  const iconButtons = [...document.querySelectorAll('.icon-pick-btn')];
+  iconButtons.forEach((btn, index) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.icon-pick-btn').forEach(b => {
-        b.classList.remove('active');
-        b.setAttribute('aria-checked', 'false');
-      });
-      btn.classList.add('active');
-      btn.setAttribute('aria-checked', 'true');
+      _syncLocationIconPicker(btn.dataset.icon);
+      applySettings();
+    });
+    btn.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let nextIndex = index;
+      if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = iconButtons.length - 1;
+      else {
+        const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+        nextIndex = (index + direction + iconButtons.length) % iconButtons.length;
+      }
+      const next = iconButtons[nextIndex];
+      _syncLocationIconPicker(next.dataset.icon, { focus: true });
       applySettings();
     });
   });
@@ -3537,9 +3559,14 @@ function _isTypingTarget(target) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
+function _isInteractiveShortcutTarget(target) {
+  return !!target?.closest?.('button, a, [role="button"], [role="radio"], [role="tab"], [role="menuitem"]');
+}
+
 function setupKeyboardShortcuts() {
   window.addEventListener('keydown', e => {
     if (_isTypingTarget(e.target)) return;
+    if (document.querySelector('.map-modal.open')) return;
 
     const key = (e.key || '').toLowerCase();
     const withMod = e.metaKey || e.ctrlKey;
@@ -3564,6 +3591,7 @@ function setupKeyboardShortcuts() {
       clearAllItems();
       return;
     }
+    if (_isInteractiveShortcutTarget(e.target)) return;
     if (key === 'delete' || key === 'backspace') {
       if (state.selectedItemId != null) {
         e.preventDefault();

@@ -128,6 +128,9 @@ test('export progress exposes a named meter, cancel control, and focus restorati
   await page.locator('#generateAllBtn').press('Enter');
   await expect(page.locator('#cancelExportBtn')).toBeFocused();
   await expect(page.locator('#exportProgressMeter')).toHaveAttribute('aria-valuenow', /\d+/);
+  expect(await page.locator('#exportProgressStatus').evaluate(element => (
+    element.closest('[aria-busy="true"]') !== null
+  ))).toBe(false);
   await assertNoAxeViolations(page, '#exportProgress');
   await page.locator('#cancelExportBtn').press('Enter');
   await expect(page.locator('#exportProgress')).toBeHidden();
