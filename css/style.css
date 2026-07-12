@@ -80,7 +80,7 @@
   --border:    #ccc9c2;
   --text:      #2c2a25;
   --text-2:    #5b5750;
-  --text-3:    #706b63;
+  --text-3:    #666159;
   --shadow:    0 1px 4px rgba(0,0,0,0.08), 0 2px 10px rgba(0,0,0,0.06);
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.13);
 }
@@ -387,6 +387,14 @@ html, body {
 .pill-option input:checked + span { background: var(--accent); border-color: var(--accent); color: white; }
 .pill-option span:hover { border-color: var(--accent); color: var(--accent); }
 .pill-option input:checked + span:hover { background: var(--accent-h); color: white; }
+.pill-option input:focus-visible + span,
+.color-option input:focus-visible + .color-swatch,
+.style-toggle-btn input:focus-visible + label,
+.ratio-pill input:focus-visible + label,
+.color-option-custom:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 
 /* ── iOS-style toggle ────────────────────────────────────────────────────────── */
 .ios-toggle {
@@ -1750,7 +1758,12 @@ input[type="range"]:focus-visible {
   overflow: hidden;
   cursor: pointer;
   flex-shrink: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
 }
+.card-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .card-preview img,
 .card-preview canvas {
   width: 100%;
