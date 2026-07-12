@@ -23,6 +23,8 @@ const state = {
     cameraNameBold:      false,
     cameraNameItalic:    false,
     exifItalic:          false,
+    textColorMode:       'auto',    // 'auto' | 'light' | 'dark' | 'custom'
+    textColor:           '#FFFFFF',
     showShotOn:          true,
     showExifInfo:        true,
     cameraNameOnly:      false,
@@ -104,39 +106,268 @@ const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
 const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
+let   _exportCancelRequested = false;
+let   _activeExportController = null;
+let   _exportProgressPreviousFocus = null;
+let   _lastProgressAnnouncement = -1;
 
 // ─── Video canvas preview loop ────────────────────────────────────────────────
 let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
 let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
 
-// ─── Mapbox token & usage tracking ────────────────────────────────────────────
-const DEFAULT_MAPBOX_TOKEN   = 'pk.eyJ1IjoibGluZ211bG9uZ3RhaSIsImEiOiJjbW53cHp3eHoxbDZhMnBtbzB3b3huemZwIn0.kX4B2BumC8txS9rZw41a-Q';
-const MAPBOX_USAGE_KEY       = 'instaframe_mb_usage';
-const MAPBOX_MONTHLY_LIMIT   = 50000;
+// ─── Location privacy consent ─────────────────────────────────────────────────
+let _sessionLocationNetworkConsent = false;
+let _locationConsentResolver = null;
+let _locationPrivacyPreviousFocus = null;
+
+function _openLocationPrivacyModal() {
+  _locationPrivacyPreviousFocus = document.activeElement;
+  document.getElementById('locationPrivacyModal')?.classList.add('open');
+  document.getElementById('locationPrivacyOnceBtn')?.focus();
+}
+
+function _closeLocationPrivacyModal() {
+  document.getElementById('locationPrivacyModal')?.classList.remove('open');
+  if (_locationPrivacyPreviousFocus?.focus) _locationPrivacyPreviousFocus.focus();
+  _locationPrivacyPreviousFocus = null;
+}
+
+function setupModalAccessibility() {
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return;
+    const modal = [...document.querySelectorAll('.map-modal.open')].at(-1);
+    if (!modal) return;
+    const focusable = [...modal.querySelectorAll(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element.getClientRects().length > 0);
+    if (!focusable.length) {
+      event.preventDefault();
+      modal.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
+function setupMapModalActions() {
+  document.getElementById('getDeviceLocationBtn')?.addEventListener('click', getLiveDeviceLocation);
+  document.getElementById('openMapPickerBtn')?.addEventListener('click', openMapPicker);
+  document.getElementById('mapPickerCloseBtn')?.addEventListener('click', closeMapPicker);
+  document.getElementById('confirmMapLocationBtn')?.addEventListener('click', confirmMapLocation);
+  document.getElementById('selectMapCenterBtn')?.addEventListener('click', () => {
+    if (_mapPickerMap) _selectMapCoordinates(_mapPickerMap.getCenter());
+  });
+  document.getElementById('mapPickerModal')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeMapPicker();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.getElementById('mapPickerModal')?.classList.contains('open')) {
+      event.preventDefault();
+      closeMapPicker();
+    }
+  });
+}
+
+function setupAccessibleFormNames() {
+  document.querySelectorAll('input, select, textarea').forEach(control => {
+    if (control.getAttribute('aria-label') || control.getAttribute('aria-labelledby')) return;
+    const wrappingLabel = control.closest('label');
+    if (wrappingLabel) {
+      const wrappingText = wrappingLabel.textContent?.trim();
+      if (wrappingText) return;
+      if (wrappingLabel.title) {
+        control.setAttribute('aria-label', wrappingLabel.title);
+        return;
+      }
+    }
+    if (control.id && document.querySelector(`label[for="${control.id}"]`)) return;
+    const scope = control.closest('.setting-row, .customize-row, .preview-exif-grid, .video-volume-wrap, .preview-video-bar');
+    const visibleLabel = scope?.querySelector('.setting-label, .customize-row-label, label[data-i18n]');
+    const text = visibleLabel?.textContent?.trim();
+    control.setAttribute('aria-label', text || control.title || control.id || t('appTitleMain'));
+  });
+}
+
+function hasLocationNetworkConsent() {
+  return _sessionLocationNetworkConsent || loadPrefs().locationNetworkConsent === 'always';
+}
+
+function updateLocationPrivacyStatus() {
+  const status = document.getElementById('locationPrivacyStatus');
+  if (!status) return;
+  const always = loadPrefs().locationNetworkConsent === 'always';
+  status.textContent = t(always ? 'privacyAccessAlways' : (_sessionLocationNetworkConsent ? 'privacyAccessSession' : 'privacyAccessOff'));
+  const usageStatus = document.getElementById('mapboxUsageStatus');
+  const config = window.INSTAFRAME_CONFIG?.mapbox;
+  if (usageStatus && config) {
+    const usage = _getMapboxUsage();
+    usageStatus.textContent = tf('mapboxUsageStatus', {
+      day: usage.dayCount,
+      dayLimit: config.dailyRequestLimitPerDevice,
+      month: usage.monthCount,
+      monthLimit: config.monthlyRequestLimitPerDevice,
+    });
+  }
+  const tokenStatus = document.getElementById('mapboxTokenStatus');
+  if (tokenStatus) {
+    tokenStatus.textContent = t(_isValidMapboxPublicToken(loadPrefs().mapboxPublicToken)
+      ? 'mapboxTokenConfigured'
+      : 'mapboxTokenNotConfigured');
+  }
+}
+
+function _finishLocationConsent(allowed, persist = false) {
+  _sessionLocationNetworkConsent = !!allowed;
+  const prefs = loadPrefs();
+  if (allowed && persist) prefs.locationNetworkConsent = 'always';
+  else if (!allowed) {
+    delete prefs.locationNetworkConsent;
+    const mapToggle = document.getElementById('showMapOverlay');
+    if (mapToggle) mapToggle.checked = false;
+    state.settings.showMapOverlay = false;
+    _mapImgCache.clear();
+    saveSettings();
+    scheduleLivePreview();
+  }
+  savePrefs(prefs);
+  _closeLocationPrivacyModal();
+  updateLocationPrivacyStatus();
+  if (_locationConsentResolver) {
+    const resolve = _locationConsentResolver;
+    _locationConsentResolver = null;
+    resolve(!!allowed);
+  }
+}
+
+function _cancelLocationConsent() {
+  _closeLocationPrivacyModal();
+  if (_locationConsentResolver) {
+    const resolve = _locationConsentResolver;
+    _locationConsentResolver = null;
+    resolve(false);
+  }
+}
+
+function requestLocationNetworkConsent() {
+  if (hasLocationNetworkConsent()) return Promise.resolve(true);
+  const modal = document.getElementById('locationPrivacyModal');
+  if (!modal) return Promise.resolve(false);
+  _openLocationPrivacyModal();
+  return new Promise(resolve => { _locationConsentResolver = resolve; });
+}
+
+function openLocationPrivacyManager() {
+  _openLocationPrivacyModal();
+  updateLocationPrivacyStatus();
+}
+
+function setupLocationPrivacy() {
+  document.getElementById('manageLocationPrivacyBtn')?.addEventListener('click', openLocationPrivacyManager);
+  document.getElementById('locationPrivacyOnceBtn')?.addEventListener('click', () => _finishLocationConsent(true, false));
+  document.getElementById('locationPrivacyAlwaysBtn')?.addEventListener('click', () => _finishLocationConsent(true, true));
+  document.getElementById('locationPrivacyRevokeBtn')?.addEventListener('click', () => _finishLocationConsent(false));
+  document.getElementById('locationPrivacyCancelBtn')?.addEventListener('click', _cancelLocationConsent);
+  document.getElementById('locationPrivacyCloseBtn')?.addEventListener('click', _cancelLocationConsent);
+  const modal = document.getElementById('locationPrivacyModal');
+  modal?.addEventListener('click', event => {
+    if (event.target === modal) _cancelLocationConsent();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal?.classList.contains('open')) _cancelLocationConsent();
+  });
+  document.addEventListener('instaframe:languagechange', updateLocationPrivacyStatus);
+
+  const tokenInput = document.getElementById('mapboxTokenInput');
+  if (tokenInput) tokenInput.value = loadPrefs().mapboxPublicToken || '';
+  tokenInput?.addEventListener('change', () => {
+    const value = tokenInput.value.trim();
+    if (value && !_isValidMapboxPublicToken(value)) {
+      showToast(t('msgMapboxTokenInvalid'), 'warn');
+      tokenInput.value = loadPrefs().mapboxPublicToken || '';
+      return;
+    }
+    const prefs = loadPrefs();
+    if (value) prefs.mapboxPublicToken = value;
+    else {
+      delete prefs.mapboxPublicToken;
+      const mapToggle = document.getElementById('showMapOverlay');
+      if (mapToggle) mapToggle.checked = false;
+      state.settings.showMapOverlay = false;
+      saveSettings();
+      scheduleLivePreview();
+    }
+    savePrefs(prefs);
+    _mapboxUnavailableNotified = false;
+    _mapImgCache.clear();
+    updateLocationPrivacyStatus();
+    showToast(t(value ? 'msgMapboxTokenSaved' : 'msgMapboxTokenCleared'), 'success');
+  });
+  document.getElementById('clearMapboxTokenBtn')?.addEventListener('click', () => {
+    if (tokenInput) {
+      tokenInput.value = '';
+      tokenInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  updateLocationPrivacyStatus();
+}
+
+// ─── Mapbox token & client-side usage guard ───────────────────────────────────
+const MAPBOX_USAGE_KEY = 'instaframe_mb_usage_v2';
+let _mapboxUnavailableNotified = false;
+
+function _isValidMapboxPublicToken(token) {
+  return /^pk\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(String(token || '').trim());
+}
 
 function _getMapboxUsage() {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const month = day.slice(0, 7);
   try {
-    const data = JSON.parse(localStorage.getItem(MAPBOX_USAGE_KEY) || '{}');
-    const now  = new Date();
-    const month = `${now.getFullYear()}-${now.getMonth()}`;
-    if (data.month !== month) return { count: 0, month };
-    return data;
-  } catch { return { count: 0, month: '' }; }
+    const saved = JSON.parse(localStorage.getItem(MAPBOX_USAGE_KEY) || '{}');
+    return {
+      day,
+      month,
+      dayCount: saved.day === day ? Number(saved.dayCount) || 0 : 0,
+      monthCount: saved.month === month ? Number(saved.monthCount) || 0 : 0,
+    };
+  } catch {
+    return { day, month, dayCount: 0, monthCount: 0 };
+  }
 }
 
 function _trackMapboxLoad() {
   try {
     const usage = _getMapboxUsage();
-    usage.count += 1;
+    usage.dayCount += 1;
+    usage.monthCount += 1;
     localStorage.setItem(MAPBOX_USAGE_KEY, JSON.stringify(usage));
+    updateLocationPrivacyStatus();
   } catch {}
 }
 
-/** Return the effective Mapbox token to use: default (if within limit) → null. */
 function getMapboxToken() {
+  if (!hasLocationNetworkConsent()) return null;
+  const config = window.INSTAFRAME_CONFIG?.mapbox;
+  const userToken = loadPrefs().mapboxPublicToken;
+  const hasUserToken = _isValidMapboxPublicToken(userToken);
+  const siteToken = config?.publicToken;
+  if (!hasUserToken && !_isValidMapboxPublicToken(siteToken)) return null;
+  if (!hasUserToken) {
+    const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
+    if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
+  }
   const usage = _getMapboxUsage();
-  if (usage.count >= MAPBOX_MONTHLY_LIMIT) return null;
-  return DEFAULT_MAPBOX_TOKEN;
+  if (usage.dayCount >= config.dailyRequestLimitPerDevice || usage.monthCount >= config.monthlyRequestLimitPerDevice) return null;
+  return hasUserToken ? userToken.trim() : siteToken;
 }
 
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
@@ -144,12 +375,23 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
   if (_mapImgCache.has(key)) return _mapImgCache.get(key);
   const token = getMapboxToken();
-  if (!token) return null;
+  if (!token) {
+    if (!_mapboxUnavailableNotified && hasLocationNetworkConsent()) {
+      _mapboxUnavailableNotified = true;
+      showToast(t('msgMapboxUnavailable'), 'warn');
+    }
+    return null;
+  }
   const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => { _trackMapboxLoad(); _mapImgCache.set(key, img); resolve(img); };
+    img.onload  = () => {
+      _trackMapboxLoad();
+      if (_mapImgCache.size >= 12) _mapImgCache.delete(_mapImgCache.keys().next().value);
+      _mapImgCache.set(key, img);
+      resolve(img);
+    };
     img.onerror = () => resolve(null);
     img.src = url;
   });
@@ -269,10 +511,9 @@ async function readExif(file) {
       if (lat != null && lon != null) {
         latitude  = lat;
         longitude = lon;
-        // Kick off reverse geocoding asynchronously; returns raw coords initially
-        location = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
-        // Store coords for later reverse-geocoding
-        reverseGeocode(lat, lon).then(name => { if (name) location = name; }).catch(() => {});
+        // Keep GPS extraction fully local. Place-name lookup is opt-in from the
+        // EXIF editor and never starts automatically when a file is imported.
+        location = InstaFrameCore.formatCoordinateLabel(lat, lon);
       }
     }
 
@@ -306,13 +547,16 @@ function gpsToDecimal(dms, ref) {
 
 const _geocodeCache = {};
 async function reverseGeocode(lat, lon) {
-  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  if (!hasLocationNetworkConsent()) return null;
+  const language = currentLang === 'ja' ? 'ja' : 'en';
+  const key = `${language}:${lat.toFixed(3)},${lon.toFixed(3)}`;
   if (_geocodeCache[key]) return _geocodeCache[key];
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-      { headers: { 'Accept-Language': 'en' } }
+      { headers: { 'Accept-Language': language } }
     );
+    if (!res.ok) return null;
     const data = await res.json();
     const a = data.address || {};
     const city    = a.city || a.town || a.village || a.county || '';
@@ -342,6 +586,12 @@ async function addFiles(files) {
   );
   if (!accepted.length) return;
 
+  const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
+  const existingBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  if (accepted.length + state.items.length > 30 || incomingBytes + existingBytes > 512 * 1024 * 1024) {
+    showToast(t('msgLargeBatch'), 'warn');
+  }
+
   for (const file of accepted) {
     const video = isVideoFile(file);
     const exif  = video ? await readVideoMetadata(file) : await readExif(file);
@@ -358,11 +608,21 @@ async function addFiles(files) {
     };
     state.items.push(item);
     renderItem(item);
-    // Auto-select first item added for live preview
-    if (state.items.length === 1) selectItem(item.id);
 
     // Pre-warm image cache so the first live preview is fast
-    if (!video) _loadPreviewImage(item).catch(() => {});
+    if (!video) {
+      try {
+        await _loadPreviewImage(item);
+      } catch {
+        item.status = 'error';
+        item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+        updateItemStatus(item);
+        showToast(item.errorMsg, 'error');
+      }
+    }
+
+    // Auto-select first item added for live preview
+    if (state.items.length === 1) selectItem(item.id);
 
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
@@ -395,7 +655,12 @@ async function addFiles(files) {
             if (!previewDiv) return;
             const thumb = previewDiv.querySelector('img.thumb-orig');
             if (thumb && img) thumb.src = img.src;
-          }).catch(() => {});
+          }).catch(() => {
+            item.status = 'error';
+            item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+            updateItemStatus(item);
+            showToast(item.errorMsg, 'error');
+          });
         });
     }
   }
@@ -409,7 +674,10 @@ function removeItem(id, options = {}) {
   if (!skipConfirm && !window.confirm(t('confirmDeleteItem'))) return;
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
-  if (idx !== -1) state.items.splice(idx, 1);
+  if (idx !== -1) {
+    _releaseItemOutput(state.items[idx]);
+    state.items.splice(idx, 1);
+  }
   const el = document.getElementById(`item-${id}`);
   if (el) el.remove();
   // If removed item was selected, select the new first item
@@ -426,6 +694,7 @@ function clearAllItems(skipConfirm = false) {
   if (!skipConfirm && !window.confirm(t('confirmClearAll'))) return;
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
+  state.items.forEach(_releaseItemOutput);
   state.items = [];
   state.selectedItemId = null;
   const grid = document.getElementById('imageGrid');
@@ -437,12 +706,13 @@ function clearAllItems(skipConfirm = false) {
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
 // onExternalProgress: optional (pct: 0..1) => void — for batch progress tracking
-async function generateItem(item, onExternalProgress = null) {
+async function generateItem(item, onExternalProgress = null, signal = null) {
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
 
   try {
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
@@ -456,10 +726,12 @@ async function generateItem(item, onExternalProgress = null) {
             updateItemStatus(item);
             if (onExternalProgress) onExternalProgress(p);
           },
+          signal,
         }
       );
     } else {
       const img = await FrameEngine.loadImage(item.file);
+      if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       // Pre-fetch map overlay image if enabled and coordinates are available
       let mapOverlayImg = null;
       if (state.settings.showMapOverlay && state.settings.showLocation &&
@@ -467,13 +739,18 @@ async function generateItem(item, onExternalProgress = null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
       }
       item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
+      if (signal?.aborted) {
+        _releaseItemOutput(item);
+        throw new DOMException('Export cancelled', 'AbortError');
+      }
       if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
     item.errorMsg = null;
   } catch (e) {
-    item.status   = 'error';
-    item.errorMsg = e.message;
+    const cancelled = e?.name === 'AbortError';
+    item.status   = cancelled ? 'pending' : 'error';
+    item.errorMsg = cancelled ? null : e.message;
     if (onExternalProgress) onExternalProgress(1);
   }
 
@@ -493,10 +770,14 @@ async function generateAll() {
     return;
   }
 
+  _exportCancelRequested = false;
+  const controller = new AbortController();
+  _activeExportController = controller;
   setGlobalBusy(true);
   const total = pending.length;
 
   for (let idx = 0; idx < total; idx++) {
+    if (_exportCancelRequested) break;
     const item     = pending[idx];
     const basePct  = idx / total;
     const itemSlot = 1 / total;
@@ -510,23 +791,28 @@ async function generateAll() {
     await generateItem(item, p => {
       const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
       showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
-    });
+    }, controller.signal);
   }
 
-  hideProgress();
+  const cancelled = _exportCancelRequested;
   setGlobalBusy(false);
-  showToast(t('msgDone'), 'success');
+  hideProgress();
+  _exportCancelRequested = false;
+  if (_activeExportController === controller) _activeExportController = null;
+  showToast(t(cancelled ? 'msgExportCancelled' : 'msgDone'), cancelled ? 'warn' : 'success');
 }
 
 async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
   item.status    = 'pending';
-  item.videoBlob = null;
-  item.canvas    = null;
+  _releaseItemOutput(item);
+  const controller = new AbortController();
+  _activeExportController = controller;
   showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
+  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
   hideProgress();
+  if (_activeExportController === controller) _activeExportController = null;
 }
 
 // Apply frame (if needed) then download — used by per-item Download button
@@ -538,12 +824,14 @@ async function applyAndDownloadSingle(id) {
     // Generate first
     setGlobalBusy(true);
     item.status    = 'pending';
-    item.videoBlob = null;
-    item.canvas    = null;
+    _releaseItemOutput(item);
+    const controller = new AbortController();
+    _activeExportController = controller;
     showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
-    hideProgress();
+    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
     setGlobalBusy(false);
+    hideProgress();
+    if (_activeExportController === controller) _activeExportController = null;
   }
 
   if (item.status === 'done') {
@@ -588,6 +876,9 @@ async function downloadAll() {
     return;
   }
 
+  _exportCancelRequested = false;
+  const controller = new AbortController();
+  _activeExportController = controller;
   setGlobalBusy(true);
 
   // Auto-generate any pending items first
@@ -595,6 +886,7 @@ async function downloadAll() {
   if (pending.length) {
     const total = pending.length;
     for (let idx = 0; idx < total; idx++) {
+      if (_exportCancelRequested) break;
       const item    = pending[idx];
       const basePct = idx / total;
       const slot    = 1 / total;
@@ -603,14 +895,24 @@ async function downloadAll() {
       await generateItem(item, p => {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
-      });
+      }, controller.signal);
     }
+  }
+
+  if (_exportCancelRequested) {
+    setGlobalBusy(false);
+    hideProgress();
+    _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
+    showToast(t('msgExportCancelled'), 'warn');
+    return;
   }
 
   const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
   if (!done.length) {
-    hideProgress();
     setGlobalBusy(false);
+    hideProgress();
+    if (_activeExportController === controller) _activeExportController = null;
     showToast(t('msgNoImages'), 'warn');
     return;
   }
@@ -622,6 +924,7 @@ async function downloadAll() {
   const total = done.length;
 
   for (let i = 0; i < total; i++) {
+    if (_exportCancelRequested) break;
     const item = done[i];
     showProgress(`Packing ${i + 1} / ${total}  —  ${item.file.name}`, (i / total) * 0.7);
 
@@ -635,17 +938,39 @@ async function downloadAll() {
     }
   }
 
-  const zipBlob = await zip.generateAsync(
-    { type: 'blob' },
-    meta => showProgress(
-      `Creating ZIP…`,
-      0.7 + 0.3 * (meta.percent / 100)
-    )
-  );
+  if (_exportCancelRequested) {
+    setGlobalBusy(false);
+    hideProgress();
+    _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
+    showToast(t('msgExportCancelled'), 'warn');
+    return;
+  }
+
+  let zipBlob;
+  try {
+    zipBlob = await zip.generateAsync(
+      { type: 'blob' },
+      meta => {
+        if (_exportCancelRequested) throw new Error('EXPORT_CANCELLED');
+        showProgress(`Creating ZIP…`, 0.7 + 0.3 * (meta.percent / 100));
+      }
+    );
+  } catch (error) {
+    setGlobalBusy(false);
+    hideProgress();
+    const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
+    _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
+    showToast(t(cancelled ? 'msgExportCancelled' : 'msgCopyFailed'), cancelled ? 'warn' : 'error');
+    return;
+  }
 
   triggerDownload(zipBlob, 'instaframe_export.zip');
-  hideProgress();
   setGlobalBusy(false);
+  hideProgress();
+  _exportCancelRequested = false;
+  if (_activeExportController === controller) _activeExportController = null;
 }
 
 function triggerDownload(blob, filename) {
@@ -725,6 +1050,17 @@ function restoreSettings() {
     if (el) el.value = saved.fontFamily;
   }
 
+  if (saved.textColorMode) {
+    const mode = document.querySelector(`input[name="textColorMode"][value="${saved.textColorMode}"]`);
+    if (mode) mode.checked = true;
+  }
+  if (saved.textColor) {
+    const picker = document.getElementById('textColorPicker');
+    if (picker) picker.value = InstaFrameCore.normalizeHexColor(saved.textColor, '#FFFFFF');
+  }
+  const textPicker = document.getElementById('textColorPicker');
+  if (textPicker) textPicker.disabled = (saved.textColorMode || 'auto') !== 'custom';
+
   // Checkboxes
   [
     ['cameraNameBold',   saved.cameraNameBold],
@@ -733,7 +1069,7 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showExifInfo',     saved.showExifInfo],
     ['showLocation',     saved.showLocation],
-    ['showMapOverlay',   saved.showMapOverlay],
+    ['showMapOverlay',   saved.showMapOverlay && hasLocationNetworkConsent()],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -751,15 +1087,15 @@ function restoreSettings() {
   }
   // Show/hide location position row and map overlay rows
   const locPosRow   = document.getElementById('locationPositionRow');
-  if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !saved.showLocation);
   const mapOvRow    = document.getElementById('mapOverlayRow');
-  if (mapOvRow) mapOvRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !saved.showLocation);
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
-  if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
   const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
-  if (mapOvPosRow) mapOvPosRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
   const locIconRow  = document.getElementById('locationIconRow');
-  if (locIconRow) locIconRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !saved.showLocation);
 
   // Frame background mode
   if (saved.frameBackground) {
@@ -769,8 +1105,8 @@ function restoreSettings() {
   const isBlurBg = saved.frameBackground === 'blur';
   const frameColorRow = document.getElementById('frameColorRow');
   const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
-  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
+  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -822,7 +1158,12 @@ function restoreSettings() {
       r.checked = true;
       // Show/hide quality row
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.classList.toggle('row-hidden', saved.exportPhotoFormat === 'png');
+      if (qRow) {
+        const hidden = saved.exportPhotoFormat === 'png';
+        qRow.classList.toggle('row-hidden', hidden);
+        qRow.hidden = hidden;
+        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
+      }
     }
   }
   // Photo quality
@@ -846,7 +1187,7 @@ function markDoneItemsPending() {
   state.items.forEach(i => {
     if (i.status === 'done') {
       i.status = 'pending';
-      i.canvas = null;
+      _releaseItemOutput(i);
       updateItemStatus(i);
       updateItemPreview(i);
     }
@@ -869,8 +1210,8 @@ function applySettings() {
   const isBlurBg = state.settings.frameBackground === 'blur';
   const frameColorRow = document.getElementById('frameColorRow');
   const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
-  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
+  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
 
   if (isBlurBg) {
     state.settings.blurRadius     = parseInt(document.getElementById('blurRadiusRange')?.value || '20', 10);
@@ -888,6 +1229,11 @@ function applySettings() {
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
   state.settings.imageOffsetY     = parseFloat(document.getElementById('imageOffsetRange').value);
   state.settings.fontFamily       = document.getElementById('fontFamily').value;
+  const textColorMode = document.querySelector('input[name="textColorMode"]:checked');
+  state.settings.textColorMode = textColorMode ? textColorMode.value : 'auto';
+  state.settings.textColor = InstaFrameCore.normalizeHexColor(document.getElementById('textColorPicker')?.value, '#FFFFFF');
+  const textColorPicker = document.getElementById('textColorPicker');
+  if (textColorPicker) textColorPicker.disabled = state.settings.textColorMode !== 'custom';
   state.settings.shotOnFontScale  = parseFloat(document.getElementById('shotOnFontRange').value);
   state.settings.exifFontScale    = parseFloat(document.getElementById('exifFontRange').value);
   state.settings.lineGapScale     = parseFloat(document.getElementById('lineGapRange').value);
@@ -919,11 +1265,11 @@ function applySettings() {
   const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
   const mapOvPosRow    = document.getElementById('mapOverlayPositionRow');
   const locIconRow     = document.getElementById('locationIconRow');
-  if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (locIconRow) locIconRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
-  if (mapOvPosRow) mapOvPosRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -986,6 +1332,7 @@ function _syncDomWithStateSettings() {
   setVal('textOffsetRange', s.textOffsetY);
   setVal('outerPaddingRange', s.outerPadding);
   setVal('fontFamily', s.fontFamily);
+  setVal('textColorPicker', s.textColor || '#FFFFFF');
   setVal('photoQualityRange', s.exportPhotoQuality);
 
   setChecked('cameraNameBold', s.cameraNameBold);
@@ -995,6 +1342,11 @@ function _syncDomWithStateSettings() {
   setChecked('showExifInfo', s.showExifInfo);
   setChecked('showLocation', s.showLocation);
   setChecked('showMapOverlay', s.showMapOverlay);
+
+  const textColorMode = document.querySelector(`input[name="textColorMode"][value="${s.textColorMode || 'auto'}"]`);
+  if (textColorMode) textColorMode.checked = true;
+  const textColorPicker = document.getElementById('textColorPicker');
+  if (textColorPicker) textColorPicker.disabled = (s.textColorMode || 'auto') !== 'custom';
 
   const locPos = document.querySelector(`input[name="locationPos"][value="${s.locationPosition}"]`);
   if (locPos) locPos.checked = true;
@@ -1033,8 +1385,8 @@ function _syncDomWithStateSettings() {
   const isBlur = s.frameBackground === 'blur';
   const fcRow = document.getElementById('frameColorRow');
   const boRow = document.getElementById('blurOptionsRow');
-  if (fcRow) fcRow.style.display = isBlur ? 'none' : '';
-  if (boRow) boRow.style.display = isBlur ? '' : 'none';
+  if (fcRow) fcRow.classList.toggle('is-hidden', isBlur);
+  if (boRow) boRow.classList.toggle('is-hidden', !isBlur);
   setVal('blurRadiusRange', s.blurRadius ?? 20);
   setText('blurRadiusVal', (s.blurRadius ?? 20) + 'px');
   setVal('blurBrightnessRange', s.blurBrightness ?? 80);
@@ -1048,15 +1400,15 @@ function _syncDomWithStateSettings() {
   });
 
   const locPosRow = document.getElementById('locationPositionRow');
-  if (locPosRow) locPosRow.style.display = s.showLocation ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !s.showLocation);
   const mapOvRow = document.getElementById('mapOverlayRow');
-  if (mapOvRow) mapOvRow.style.display = s.showLocation ? '' : 'none';
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !s.showLocation);
   const mapOvOpRow = document.getElementById('mapOverlayOpacityRow');
-  if (mapOvOpRow) mapOvOpRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(s.showLocation && s.showMapOverlay));
   const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
-  if (mapOvPosRow) mapOvPosRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(s.showLocation && s.showMapOverlay));
   const locIconRow = document.getElementById('locationIconRow');
-  if (locIconRow) locIconRow.style.display = s.showLocation ? '' : 'none';
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !s.showLocation);
 }
 
 function applySettingsSnapshot(snapshot) {
@@ -1128,6 +1480,7 @@ function toggleLiveExifPanel() {
   const wrap = document.getElementById('previewExifWrap');
   if (!wrap) return;
   const open = wrap.classList.toggle('exif-open');
+  document.querySelector('.preview-exif-drawer-header')?.setAttribute('aria-expanded', String(open));
   if (open) updateLiveExifPanel();
 }
 
@@ -1193,8 +1546,46 @@ function applyLiveExifEdit() {
   scheduleLivePreview();
 }
 
+function _applyResolvedLocation(item, latitude, longitude, label) {
+  if (!item) return;
+  if (!item.exif) item.exif = {};
+  item.exif.latitude = latitude;
+  item.exif.longitude = longitude;
+  item.exif.location = label || InstaFrameCore.formatCoordinateLabel(latitude, longitude);
+  const input = document.getElementById('live-exif-location');
+  if (input) input.value = item.exif.location;
+  const cardInput = document.getElementById(`exif-location-${item.id}`);
+  if (cardInput) cardInput.value = item.exif.location;
+  item.status = 'pending';
+  item.canvas = null;
+  _invalidateItemCache(item.id);
+  updateItemStatus(item);
+  updateItemPreview(item);
+  updateUI();
+  scheduleLivePreview();
+}
+
+async function resolveLiveExifLocation() {
+  const item = getSelectedPreviewItem();
+  const latitude = item?.exif?.latitude;
+  const longitude = item?.exif?.longitude;
+  if (latitude == null || longitude == null) {
+    showToast(t('msgNoLocationCoordinates'), 'warn');
+    return;
+  }
+  if (!await requestLocationNetworkConsent()) return;
+  const name = await reverseGeocode(latitude, longitude);
+  if (!name) {
+    showToast(t('msgLocationLookupFailed'), 'warn');
+    return;
+  }
+  _applyResolvedLocation(item, latitude, longitude, name);
+  showToast(t('msgLocationResolved'), 'success');
+}
+
 async function getLiveDeviceLocation() {
-  if (!navigator.geolocation) { showToast('Geolocation not supported', 'warn'); return; }
+  if (!navigator.geolocation) { showToast(t('msgGeolocationUnsupported'), 'warn'); return; }
+  if (!await requestLocationNetworkConsent()) return;
   const input = document.getElementById('live-exif-location');
   if (!input) return;
   const original = input.value;
@@ -1204,11 +1595,10 @@ async function getLiveDeviceLocation() {
     async (pos) => {
       const { latitude, longitude } = pos.coords;
       const name = await reverseGeocode(latitude, longitude);
-      input.value = name || `${Math.abs(latitude).toFixed(4)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(4)}°${longitude >= 0 ? 'E' : 'W'}`;
       input.disabled = false;
-      applyLiveExifEdit();
+      _applyResolvedLocation(getSelectedPreviewItem(), latitude, longitude, name || InstaFrameCore.formatCoordinateLabel(latitude, longitude));
     },
-    () => { input.value = original; input.disabled = false; showToast('Could not get location', 'warn'); },
+    () => { input.value = original; input.disabled = false; showToast(t('msgGeolocationFailed'), 'warn'); },
     { timeout: 10000 }
   );
 }
@@ -1225,7 +1615,7 @@ function _ensureLeafletStylesheet() {
   if (hasLeafletCss) return;
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+  link.href = 'vendor/leaflet/leaflet.css';
   link.setAttribute('data-leaflet-runtime', '1');
   document.head.appendChild(link);
 }
@@ -1235,8 +1625,12 @@ function _loadLeafletScript(src) {
     const script = document.createElement('script');
     script.src = src;
     script.async = true;
-    script.onload = () => resolve(true);
-    script.onerror = () => reject(new Error('Leaflet script load failed'));
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error('Leaflet script load timed out'));
+    }, 8_000);
+    script.onload = () => { clearTimeout(timeout); resolve(true); };
+    script.onerror = () => { clearTimeout(timeout); reject(new Error('Leaflet script load failed')); };
     document.head.appendChild(script);
   });
 }
@@ -1247,17 +1641,12 @@ async function ensureLeafletLoaded() {
 
   _leafletLoadPromise = (async () => {
     _ensureLeafletStylesheet();
-    const sources = [
-      'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js',
-      'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-    ];
-    for (const src of sources) {
-      try {
-        await _loadLeafletScript(src);
-        if (typeof L !== 'undefined') return true;
-      } catch (_) {}
+    try {
+      await _loadLeafletScript('vendor/leaflet/leaflet.js');
+      return typeof L !== 'undefined';
+    } catch (_) {
+      return false;
     }
-    return typeof L !== 'undefined';
   })();
 
   const loaded = await _leafletLoadPromise;
@@ -1268,12 +1657,22 @@ async function ensureLeafletLoaded() {
 async function openMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (!modal) return;
+  const activeElement = document.activeElement;
+  const previousFocus = activeElement && activeElement !== document.body
+    ? activeElement
+    : document.getElementById('openMapPickerBtn');
+  if (!await requestLocationNetworkConsent()) return;
+  modal.classList.add('open');
+  modal.setAttribute('aria-busy', 'true');
+  modal._previousFocus = previousFocus;
+  document.getElementById('mapPickerCloseBtn')?.focus();
   const leafletReady = await ensureLeafletLoaded();
   if (!leafletReady || typeof L === 'undefined') {
-    showToast('Map library failed to load', 'error');
+    closeMapPicker();
+    showToast(t('msgMapLoadFailed'), 'error');
     return;
   }
-  modal.classList.add('open');
+  modal.setAttribute('aria-busy', 'false');
 
   // Initialize Leaflet map in the next animation frame so the container
   // has a layout (width/height) before Leaflet tries to measure it.
@@ -1287,18 +1686,7 @@ async function openMapPicker() {
       maxZoom: 19,
     }).addTo(_mapPickerMap);
 
-    _mapPickerMap.on('click', e => {
-      const { lat, lng } = e.latlng;
-      _mapPickerLat = lat;
-      _mapPickerLon = lng;
-      if (_mapPickerMarker) {
-        _mapPickerMarker.setLatLng(e.latlng);
-      } else {
-        _mapPickerMarker = L.marker(e.latlng).addTo(_mapPickerMap);
-      }
-      const coordsEl = document.getElementById('mapPickerCoords');
-      if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
-    });
+    _mapPickerMap.on('click', e => _selectMapCoordinates(e.latlng));
   }
 
   // Force Leaflet to recalculate size after modal becomes visible
@@ -1338,6 +1726,7 @@ async function openMapPicker() {
 }
 
 async function _fetchIpLocation() {
+  if (!hasLocationNetworkConsent()) return;
   try {
     const res  = await fetch('https://ipapi.co/json/');
     const data = await res.json();
@@ -1347,21 +1736,35 @@ async function _fetchIpLocation() {
   } catch { /* silently ignore — stay at default view */ }
 }
 
+function _selectMapCoordinates({ lat, lng }) {
+  _mapPickerLat = lat;
+  _mapPickerLon = lng;
+  if (_mapPickerMarker) _mapPickerMarker.setLatLng([lat, lng]);
+  else if (_mapPickerMap) _mapPickerMarker = L.marker([lat, lng]).addTo(_mapPickerMap);
+  const coordsEl = document.getElementById('mapPickerCoords');
+  if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
+}
+
 function closeMapPicker() {
   const modal = document.getElementById('mapPickerModal');
-  if (modal) modal.classList.remove('open');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-busy', 'false');
+    modal._previousFocus?.focus?.();
+    modal._previousFocus = null;
+  }
 }
 
 async function confirmMapLocation() {
   if (_mapPickerLat == null || _mapPickerLon == null) {
-    showToast('Please click on the map to select a location', 'warn');
+    showToast(t('msgMapSelectLocation'), 'warn');
     return;
   }
   const lat = _mapPickerLat, lon = _mapPickerLon;
 
   // Resolve location name via reverse geocoding
   const name = await reverseGeocode(lat, lon);
-  const locStr = name || `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+  const locStr = name || InstaFrameCore.formatCoordinateLabel(lat, lon);
 
   // Update live EXIF panel input
   const locInput = document.getElementById('live-exif-location');
@@ -1369,22 +1772,7 @@ async function confirmMapLocation() {
 
   // Store lat/lon on the current item's exif and apply
   const item = getSelectedPreviewItem();
-  if (item) {
-    if (!item.exif) item.exif = {};
-    item.exif.latitude  = lat;
-    item.exif.longitude = lon;
-    item.exif.location  = locStr;
-    // Sync card EXIF editor if open
-    const cardLocEl = document.getElementById(`exif-location-${item.id}`);
-    if (cardLocEl) cardLocEl.value = locStr;
-    item.status = 'pending';
-    item.canvas = null;
-    _invalidateItemCache(item.id);
-    updateItemStatus(item);
-    updateItemPreview(item);
-    updateUI();
-    scheduleLivePreview();
-  }
+  if (item) _applyResolvedLocation(item, lat, lon, locStr);
 
   closeMapPicker();
 }
@@ -1419,15 +1807,25 @@ function openShareAppModal() {
   if (!modal) return;
   _refreshShareLinks();
   modal.classList.add('open');
+  modal._previousFocus = document.activeElement;
+  document.getElementById('shareAppCloseBtn')?.focus();
 }
 
 function closeShareAppModal() {
   const modal = document.getElementById('shareAppModal');
-  if (modal) modal.classList.remove('open');
+  if (modal) {
+    modal.classList.remove('open');
+    modal._previousFocus?.focus?.();
+    modal._previousFocus = null;
+  }
 }
 
 function setupShareAppModal() {
   document.getElementById('shareAppBtn')?.addEventListener('click', openShareAppModal);
+  document.getElementById('shareAppCloseBtn')?.addEventListener('click', closeShareAppModal);
+  document.getElementById('shareAppModal')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeShareAppModal();
+  });
   document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
     const input = document.getElementById('shareUrlInput');
     const url = input?.value || window.location.href;
@@ -1645,26 +2043,19 @@ function selectItem(id) {
 }
 
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
+const PREVIEW_LAYOUT_LONG_EDGE = 2400;
 
 /**
- * Stable hash of all settings that affect the canvas output.
- * Also encodes a quantised maxPreviewPx so quality-tier changes invalidate the cache.
+ * Stable hash of settings that affect composition. Preview quality is excluded:
+ * it changes backing-store density only, never layout geometry.
  */
 function _previewSettingsHash() {
-  const s  = state.settings;
-  const pq = loadPrefs().previewQuality || 'auto';
-  const maxPx = pq === 'draft'  ? 600
-              : pq === 'normal' ? 1200
-              : pq === 'high'   ? 1800
-              : pq === 'max'    ? 2400
-              : previewZoom <= 1.0 ? 900
-              : previewZoom <= 1.5 ? 1200
-              : previewZoom <= 2.0 ? 1800 : 2400;
-  return [maxPx,
+  const s = state.settings;
+  return ['stable-layout-v2',
     s.frameColor, s.frameBackground, s.blurRadius, s.blurStyle, s.blurBrightness,
     s.thicknessScale, s.imageOffsetY, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
-    s.cameraNameBold, s.cameraNameItalic, s.exifItalic,
+    s.cameraNameBold, s.cameraNameItalic, s.exifItalic, s.textColorMode, s.textColor,
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
@@ -1676,8 +2067,20 @@ function _invalidateItemCache(itemId) {
   const e = _imgCache.get(itemId);
   if (e) { URL.revokeObjectURL(e.objUrl); _imgCache.delete(itemId); }
   _imgFailed.delete(itemId);
-  for (const k of [..._frameCache.keys()])
-    if (k.startsWith(`${itemId}|`)) _frameCache.delete(k);
+  for (const k of [..._frameCache.keys()]) {
+    if (k.startsWith(`${itemId}|`)) {
+      const canvas = _frameCache.get(k);
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+      _frameCache.delete(k);
+    }
+  }
+}
+
+function _releaseItemOutput(item) {
+  if (!item) return;
+  if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
+  item.canvas = null;
+  item.videoBlob = null;
 }
 
 /** Load image for an item, keeping the Object URL alive for re-use. */
@@ -1710,7 +2113,8 @@ async function _loadPreviewImage(item) {
 
 /** Draw a rendered frame canvas into the live-preview canvas, DPR-aware. */
 function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
-  const dpr   = window.devicePixelRatio || 1;
+  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+  const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
   const areaW = Math.max(pane.clientWidth  - 40, 80);
   const areaH = Math.max(pane.clientHeight - 40, 60);
   const ratio = src.height / src.width;
@@ -1721,10 +2125,13 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   dispW = Math.max(dispW, 80);
   dispH = Math.max(dispH, 60);
 
-  canvas.width        = Math.round(dispW * dpr);
-  canvas.height       = Math.round(dispH * dpr);
+  canvas.width        = Math.round(dispW * backingScale);
+  canvas.height       = Math.round(dispH * backingScale);
   canvas.style.width  = dispW + 'px';
   canvas.style.height = dispH + 'px';
+  canvas.dataset.previewQuality = quality;
+  canvas.dataset.compositionWidth = String(src.width);
+  canvas.dataset.compositionHeight = String(src.height);
 
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = true;
@@ -1751,6 +2158,18 @@ function _stopVideoCanvasPreview() {
   _videoPreviewItemId = null;
 }
 
+function _disposeLiveVideoSource() {
+  _stopVideoCanvasPreview();
+  const video = document.getElementById('livePreviewVideo');
+  if (!video) return;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  if (video._objUrl) URL.revokeObjectURL(video._objUrl);
+  video._objUrl = null;
+  video._srcId = null;
+}
+
 /**
  * Start a requestAnimationFrame loop that continuously renders the framed video
  * (with EXIF text overlay) onto livePreviewCanvas.
@@ -1775,10 +2194,11 @@ function _startVideoCanvasPreview(item) {
       // Video metadata not yet loaded — draw loading placeholder
       const areaW = Math.max(pane.clientWidth  - 40, 80);
       const areaH = Math.max(pane.clientHeight - 40, 60);
-      const dpr   = window.devicePixelRatio || 1;
+      const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+      const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
       if (canvas.style.display === 'none' || canvas.style.display === '') {
-        canvas.width  = Math.round(areaW * dpr);
-        canvas.height = Math.round(areaH * dpr);
+        canvas.width  = Math.round(areaW * backingScale);
+        canvas.height = Math.round(areaH * backingScale);
         canvas.style.width  = areaW + 'px';
         canvas.style.height = areaH + 'px';
         canvas.style.display = 'block';
@@ -1789,7 +2209,7 @@ function _startVideoCanvasPreview(item) {
         // Subtle "loading" pulse text
         const isDark = FrameEngine.isColorDark(fc);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)';
-        ctx.font = `${Math.round(14 * dpr)}px system-ui, sans-serif`;
+        ctx.font = `${Math.round(14 * backingScale)}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
@@ -1802,7 +2222,8 @@ function _startVideoCanvasPreview(item) {
       video.videoWidth, video.videoHeight, state.settings
     );
 
-    const dpr   = window.devicePixelRatio || 1;
+    const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+    const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
     const areaW = Math.max(pane.clientWidth  - 40, 80);
     const areaH = Math.max(pane.clientHeight - 40, 60);
     const ratio = layout.canvasH / layout.canvasW;
@@ -1813,8 +2234,8 @@ function _startVideoCanvasPreview(item) {
     dispW = Math.max(dispW, 80);
     dispH = Math.max(dispH, 60);
 
-    const targetW = Math.round(dispW * dpr);
-    const targetH = Math.round(dispH * dpr);
+    const targetW = Math.round(dispW * backingScale);
+    const targetH = Math.round(dispH * backingScale);
 
     if (canvas.width !== targetW || canvas.height !== targetH) {
       canvas.width        = targetW;
@@ -1850,6 +2271,7 @@ async function renderLivePreview() {
 
   // ── Empty state ────────────────────────────────────────────────────────────
   if (state.items.length === 0) {
+    _disposeLiveVideoSource();
     canvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
@@ -1864,8 +2286,7 @@ async function renderLivePreview() {
   if (item.isVideo && liveVideo) {
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
-      _stopVideoCanvasPreview();
-      if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
+      _disposeLiveVideoSource();
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
       liveVideo.src     = liveVideo._objUrl;
@@ -1880,7 +2301,7 @@ async function renderLivePreview() {
     return;
   }
   // Switching away from video — stop the canvas loop
-  _stopVideoCanvasPreview();
+  _disposeLiveVideoSource();
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
 
@@ -1909,11 +2330,6 @@ async function renderLivePreview() {
   try {
     const img = await _loadPreviewImage(item);
 
-    const pq = loadPrefs().previewQuality || 'auto';
-    const maxPreviewPx = pq === 'draft'  ? 600
-      : pq === 'normal' ? 1200 : pq === 'high' ? 1800 : pq === 'max' ? 2400
-      : Math.min(2400, Math.round(1200 * previewZoom));
-
     // Pre-fetch map overlay image if enabled and coordinates are available
     let mapOverlayImg = null;
     if (state.settings.showMapOverlay && state.settings.showLocation &&
@@ -1922,12 +2338,15 @@ async function renderLivePreview() {
     }
 
     const rendered = await FrameEngine.renderFrameWhenReady(
-      img, item.exif, state.settings, { maxPreviewPx, mapOverlayImg });
+      img, item.exif, state.settings, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg });
 
     if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
     if (_frameCache.size >= 30) {             // evict oldest entry to cap memory
-      _frameCache.delete(_frameCache.keys().next().value);
+      const oldest = _frameCache.keys().next().value;
+      const oldCanvas = _frameCache.get(oldest);
+      if (oldCanvas) { oldCanvas.width = 0; oldCanvas.height = 0; }
+      _frameCache.delete(oldest);
     }
     _frameCache.set(hash, rendered);
     _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
@@ -1961,20 +2380,30 @@ function renderItem(item) {
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" onclick="applyAndDownloadSingle(${item.id})">
+        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
         </button>
-        <button class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">
+        <button class="btn btn-sm btn-danger" data-action="remove">
           <span data-i18n="remove">${t('remove')}</span>
         </button>
       </div>
     </div>
   `;
 
+  if (thumbSrc) {
+    const thumb = card.querySelector('img.thumb-orig');
+    const releaseThumbUrl = () => URL.revokeObjectURL(thumbSrc);
+    thumb?.addEventListener('load', releaseThumbUrl, { once: true });
+    thumb?.addEventListener('error', releaseThumbUrl, { once: true });
+    if (thumb?.complete) releaseThumbUrl();
+  }
+
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
     selectItem(item.id);
   });
+  card.querySelector('[data-action="download"]')?.addEventListener('click', () => applyAndDownloadSingle(item.id));
+  card.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeItem(item.id));
 
   // Click card body (not buttons) → select for live preview
   card.addEventListener('click', e => {
@@ -2041,7 +2470,6 @@ function updateItemPreview(item) {
 
 function updateUI() {
   const hasItems = state.items.length > 0;
-  const hasDone  = state.items.some(i => i.status === 'done');
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
@@ -2049,7 +2477,7 @@ function updateUI() {
   const counter = document.getElementById('imageCounter');
 
   if (genBtn)  genBtn.disabled  = !hasItems;
-  if (dlBtn)   dlBtn.disabled   = !hasDone;
+  if (dlBtn)   dlBtn.disabled   = !hasItems;
   if (clrBtn)  clrBtn.disabled  = !hasItems;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
@@ -2065,7 +2493,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
-    _stopVideoCanvasPreview();
+    _disposeLiveVideoSource();
     const dropZone = document.getElementById('dropZone');
     if (dropZone) {
       dropZone.classList.remove('has-preview');
@@ -2093,6 +2521,10 @@ function updateUI() {
 }
 
 function setGlobalBusy(busy) {
+  if (busy && !_exportProgressPreviousFocus) {
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
+  }
   document.getElementById('generateAllBtn').disabled = busy;
   document.getElementById('downloadAllBtn').disabled = busy;
   const clrBtn = document.getElementById('clearAllBtn');
@@ -2106,15 +2538,39 @@ function showProgress(label, pct) {
   const lbl   = document.getElementById('exportProgressLabel');
   const pctEl = document.getElementById('exportProgressPct');
   if (!wrap) return;
+  const wasHidden = wrap.classList.contains('is-hidden');
+  if (wasHidden) {
+    if (!_exportProgressPreviousFocus) _exportProgressPreviousFocus = document.activeElement;
+    _lastProgressAnnouncement = -1;
+  }
   setVisible(wrap, true);
+  document.getElementById('imageSection')?.setAttribute('aria-busy', 'true');
+  const cancelBtn = document.getElementById('cancelExportBtn');
+  if (cancelBtn) cancelBtn.style.display = '';
   const p = Math.max(0, Math.min(1, pct));
   fill.style.width   = Math.round(p * 100) + '%';
+  const meter = document.getElementById('exportProgressMeter');
+  meter?.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+  meter?.setAttribute('aria-valuetext', `${Math.round(p * 100)}% — ${label}`);
   lbl.textContent    = label;
   if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
+  const decile = Math.floor(p * 10);
+  if (decile !== _lastProgressAnnouncement) {
+    _lastProgressAnnouncement = decile;
+    const status = document.getElementById('exportProgressStatus');
+    if (status) status.textContent = `${Math.round(p * 100)}% — ${label}`;
+  }
+  if (wasHidden) cancelBtn?.focus();
 }
 
 function hideProgress() {
   setVisible(document.getElementById('exportProgress'), false);
+  document.getElementById('imageSection')?.setAttribute('aria-busy', 'false');
+  const cancelBtn = document.getElementById('cancelExportBtn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  const previousFocus = _exportProgressPreviousFocus;
+  _exportProgressPreviousFocus = null;
+  queueMicrotask(() => previousFocus?.isConnected && previousFocus.focus?.());
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────
@@ -2187,6 +2643,8 @@ function showToast(msg, type = 'info') {
     toast.id = 'toast';
     document.body.appendChild(toast);
   }
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
   toast.textContent = msg;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toast._timer);
@@ -2515,10 +2973,32 @@ function setupSettingsListeners() {
     });
   }
 
-  // Font style checkboxes (camera name + EXIF) and map overlay toggle
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation', 'showMapOverlay'].forEach(id => {
+  // Font style and visibility controls
+  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
+  });
+
+  document.querySelectorAll('input[name="textColorMode"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
+  });
+  const textColorPicker = document.getElementById('textColorPicker');
+  textColorPicker?.addEventListener('input', () => {
+    const custom = document.getElementById('text-color-custom');
+    if (custom) custom.checked = true;
+    applySettings();
+  });
+
+  const mapOverlayToggle = document.getElementById('showMapOverlay');
+  mapOverlayToggle?.addEventListener('change', async () => {
+    if (mapOverlayToggle.checked && !await requestLocationNetworkConsent()) {
+      mapOverlayToggle.checked = false;
+    }
+    if (mapOverlayToggle.checked && !getMapboxToken()) {
+      mapOverlayToggle.checked = false;
+      showToast(t('msgMapboxUnavailable'), 'warn');
+    }
+    applySettings();
   });
 
   // Live EXIF panel inputs: apply immediately on each change
@@ -2529,6 +3009,7 @@ function setupSettingsListeners() {
       el.addEventListener('input', scheduleLiveExifEditApply);
       el.addEventListener('change', scheduleLiveExifEditApply);
     });
+  document.getElementById('resolveLocationNameBtn')?.addEventListener('click', resolveLiveExifLocation);
 
   // Frame background mode radios
   document.querySelectorAll('input[name="frameBackground"]').forEach(r => {
@@ -2547,8 +3028,12 @@ function setupSettingsListeners() {
   // Location icon picker
   document.querySelectorAll('.icon-pick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.icon-pick-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.icon-pick-btn').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-checked', 'false');
+      });
       btn.classList.add('active');
+      btn.setAttribute('aria-checked', 'true');
       applySettings();
     });
   });
@@ -2563,7 +3048,13 @@ function setupSettingsListeners() {
 
   // Aspect ratio radios
   document.querySelectorAll('input[name="aspectRatio"]').forEach(radio => {
-    radio.addEventListener('change', applySettings);
+    radio.addEventListener('change', () => {
+      if (radio.checked && ['4:5', '3:4', '9:16'].includes(radio.value)) {
+        const portrait = document.getElementById('aspect-orientation-portrait');
+        if (portrait) portrait.checked = true;
+      }
+      applySettings();
+    });
   });
   document.querySelectorAll('input[name="aspectOrientation"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
@@ -2573,7 +3064,12 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.classList.toggle('row-hidden', r.value === 'png');
+      if (qRow) {
+        const hidden = r.value === 'png';
+        qRow.classList.toggle('row-hidden', hidden);
+        qRow.hidden = hidden;
+        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
+      }
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
@@ -2674,6 +3170,7 @@ function setVisible(el, show, displayVal = '') {
   if (el._fadeTimer) { clearTimeout(el._fadeTimer); el._fadeTimer = null; }
 
   if (show) {
+    el.classList.remove('is-hidden');
     if (el.style.display === 'none') {
       el.style.opacity = '0';
       el.style.display = displayVal || '';
@@ -2684,6 +3181,7 @@ function setVisible(el, show, displayVal = '') {
     el.style.opacity = '0';
     el._fadeTimer = setTimeout(() => {
       el.style.display = 'none';
+      el.classList.add('is-hidden');
       el._fadeTimer = null;
     }, 190);
   }
@@ -2700,7 +3198,13 @@ function updateCustomColorBtn(color) {
 }
 
 // ─── Preview Quality Popup ────────────────────────────────────────────────────
-const QUALITY_LABELS = { auto: 'Auto', draft: 'Draft', normal: 'Normal', high: 'High', max: 'Max' };
+const QUALITY_I18N_KEYS = {
+  auto: 'previewQualityAutoShort',
+  draft: 'previewQualityDraftShort',
+  normal: 'previewQualityNormalShort',
+  high: 'previewQualityHighShort',
+  max: 'previewQualityMaxShort',
+};
 
 function setupPreviewQuality() {
   const btn   = document.getElementById('previewQualityBtn');
@@ -2731,17 +3235,18 @@ function setupPreviewQuality() {
       popup.classList.remove('open');
     }
   });
+  document.addEventListener('instaframe:languagechange', refreshPreviewQualityTranslation);
 }
 
 function _applyQualitySelection(q, popup, label) {
   popup.querySelectorAll('.pq-option').forEach(o => o.classList.toggle('active', o.dataset.q === q));
-  if (label) label.textContent = QUALITY_LABELS[q] || 'Auto';
+  if (label) label.textContent = t(QUALITY_I18N_KEYS[q] || QUALITY_I18N_KEYS.auto);
   updatePreviewViewModifiedState();
 }
 
 function setPreviewQuality(q, options = {}) {
   const { schedule = false } = options;
-  const quality = QUALITY_LABELS[q] ? q : 'auto';
+  const quality = InstaFrameCore.normalizePreviewQuality(q);
   const prefs = loadPrefs();
   prefs.previewQuality = quality;
   savePrefs(prefs);
@@ -2750,6 +3255,13 @@ function setPreviewQuality(q, options = {}) {
   if (popup) _applyQualitySelection(quality, popup, label);
   else updatePreviewViewModifiedState();
   if (schedule) scheduleLivePreview();
+}
+
+function refreshPreviewQualityTranslation() {
+  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+  const popup = document.getElementById('previewQualityPopup');
+  const label = document.getElementById('previewQualityLabel');
+  if (popup) _applyQualitySelection(quality, popup, label);
 }
 
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────
@@ -2821,6 +3333,10 @@ function applyTheme(theme) {
 function applyLayout(layout) {
   document.documentElement.setAttribute('data-layout', layout || 'left');
 }
+function applyEditorSize(size) {
+  const normalized = ['compact', 'comfortable', 'large'].includes(size) ? size : 'comfortable';
+  document.documentElement.setAttribute('data-editor-size', normalized);
+}
 
 function rerenderCards() {
   const grid = document.getElementById('imageGrid');
@@ -2875,6 +3391,17 @@ function setupCustomizePanel() {
     });
   });
 
+  // ── EXIF editor size ───────────────────────────────────────────────────────
+  const savedEditorSize = prefs.editorSize || 'comfortable';
+  applyEditorSize(savedEditorSize);
+  document.querySelectorAll('input[name="editorSizeChoice"]').forEach(r => {
+    if (r.value === savedEditorSize) r.checked = true;
+    r.addEventListener('change', () => {
+      applyEditorSize(r.value);
+      const p = loadPrefs(); p.editorSize = r.value; savePrefs(p);
+    });
+  });
+
   // ── Accent color presets ───────────────────────────────────────────────────
   const accentSwatches = document.getElementById('accentSwatches');
   const accentPicker   = document.getElementById('accentColorPicker');
@@ -2909,7 +3436,7 @@ function setupCustomizePanel() {
     });
   }
   // Restore saved accent (default to cyan)
-  const effectiveAccent = savedAccent || '#0891b2';
+  const effectiveAccent = savedAccent || '#08798f';
   _applyAccentColor(effectiveAccent);
   _activateSwatch(effectiveAccent);
 
@@ -3101,12 +3628,14 @@ function setupCardSize() {
   const p = loadPrefs();
   applyTheme(p.theme || 'soft-white');
   applyLayout(p.layout || 'left');
-  _applyAccentColor(p.accentColor || '#0891b2');
+  applyEditorSize(p.editorSize || 'comfortable');
+  _applyAccentColor(p.accentColor || '#08798f');
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
   buildFontSelect();         // populate font select with popularity-ordered options
   applyTranslations();
+  setupAccessibleFormNames();
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
@@ -3137,6 +3666,15 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMainResize();
   setupCardSize();
   setupCustomizePanel();
+  setupLocationPrivacy();
+  setupModalAccessibility();
+  setupMapModalActions();
+  const exifHeader = document.querySelector('.preview-exif-drawer-header');
+  exifHeader?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleLiveExifPanel();
+  });
   setupShareAppModal();
   setupPreviewQuality();
   setupHistoryControls();
@@ -3153,8 +3691,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
+  document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
+    _exportCancelRequested = true;
+    _activeExportController?.abort();
+    showToast(t('msgExportCancelled'), 'warn');
+  });
   document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
+  window.addEventListener('pagehide', () => {
+    _activeExportController?.abort();
+    _disposeLiveVideoSource();
+    state.items.forEach(_releaseItemOutput);
+    for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
+    _imgCache.clear();
+  }, { once: true });
 });

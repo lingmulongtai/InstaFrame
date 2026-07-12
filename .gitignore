@@ -1,0 +1,17 @@
+# Web tooling and generated artifacts
+node_modules/
+dist/
+playwright-report/
+test-results/
+blob-report/
+output/
+vendor/
+*.log
+
+# IDE and unrelated Android/Gradle state
+.idea/
+.gradle/
+
+# OS files
+.DS_Store
+Thumbs.db

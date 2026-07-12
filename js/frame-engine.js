@@ -244,15 +244,26 @@ const FrameEngine = (() => {
       showExifInfo     = true,
       showLocation     = false,
       locationPosition = 'below-exif',
+      textColorMode    = 'auto',
+      textColor        = '#FFFFFF',
     } = settings;
 
     const showShotOnLabel = !!showShotOn;
     const effectiveShowExifInfo = !!showExifInfo;
     const effectiveShowLocation = showLocation && !!(exif.location);
 
-    const isDark  = isColorDark(frameColor);
-    const primary = isDark ? '#E8E8E8' : '#111111';
-    const muted   = isDark ? '#999999' : '#888888';
+    const backgroundIsDark = detectTextBackgroundDark(ctx, layout, settings);
+    let primary;
+    if (textColorMode === 'light') primary = '#F7F7F7';
+    else if (textColorMode === 'dark') primary = '#111111';
+    else if (textColorMode === 'custom') {
+      primary = typeof InstaFrameCore !== 'undefined'
+        ? InstaFrameCore.normalizeHexColor(textColor, '#FFFFFF')
+        : textColor;
+    } else {
+      primary = backgroundIsDark ? '#F7F7F7' : '#111111';
+    }
+    const muted = mixHexColor(primary, backgroundIsDark ? '#FFFFFF' : '#000000', 0.38);
 
     const stack  = FONT_STACKS[fontFamily] || `'${fontFamily}', Arial, sans-serif`;
     const baseFs = canvasW * 0.022;
@@ -371,6 +382,32 @@ const FrameEngine = (() => {
     }
 
     ctx.restore();
+  }
+
+  /** Estimate the luminance behind the text block for automatic contrast. */
+  function detectTextBackgroundDark(ctx, layout, settings) {
+    if (settings.frameBackground !== 'blur') return isColorDark(layout.frameColor || '#F0F0F0');
+    try {
+      const sample = document.createElement('canvas');
+      sample.width = 8;
+      sample.height = 4;
+      const sampleCtx = sample.getContext('2d', { willReadFrequently: true });
+      const coordinateScale = layout.canvasW ? ctx.canvas.width / layout.canvasW : 1;
+      const sy = Math.max(0, Math.round(layout.imageBottom * coordinateScale));
+      const sh = Math.max(1, Math.min(ctx.canvas.height - sy, Math.round(layout.bottomAreaHeight * coordinateScale)));
+      sampleCtx.drawImage(ctx.canvas, 0, sy, ctx.canvas.width, sh, 0, 0, sample.width, sample.height);
+      const pixels = sampleCtx.getImageData(0, 0, sample.width, sample.height).data;
+      let luminance = 0;
+      let weight = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const alpha = pixels[i + 3] / 255;
+        luminance += (0.2126 * pixels[i] + 0.7152 * pixels[i + 1] + 0.0722 * pixels[i + 2]) * alpha;
+        weight += alpha;
+      }
+      return weight ? (luminance / weight) < 145 : (settings.blurBrightness ?? 80) < 105;
+    } catch {
+      return (settings.blurBrightness ?? 80) < 105;
+    }
   }
 
   function drawLocationPin(ctx, cx, cy, size, color, style) {
@@ -560,16 +597,27 @@ const FrameEngine = (() => {
       video.onseeked = () => {
         if (captured) return;
         captured = true;
+        const sourceW = video.videoWidth || 1280;
+        const sourceH = video.videoHeight || 720;
+        const scale = Math.min(1, 640 / sourceW, 360 / sourceH);
         const c = document.createElement('canvas');
-        c.width  = video.videoWidth  || 1280;
-        c.height = video.videoHeight || 720;
+        c.width  = Math.max(1, Math.round(sourceW * scale));
+        c.height = Math.max(1, Math.round(sourceH * scale));
         c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-        video.src = '';
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
         URL.revokeObjectURL(url);
-        const img = new Image();
-        img.onload  = () => resolve(img);
-        img.onerror = reject;
-        img.src = c.toDataURL('image/jpeg', 0.92);
+        c.toBlob(blob => {
+          c.width = 0;
+          c.height = 0;
+          if (!blob) { reject(new Error('Video thumbnail encoding failed')); return; }
+          const thumbUrl = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(thumbUrl); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(thumbUrl); reject(new Error('Video thumbnail load failed')); };
+          img.src = thumbUrl;
+        }, 'image/jpeg', 0.88);
       };
 
       video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
@@ -735,14 +783,54 @@ const FrameEngine = (() => {
    * @param {object}   [opts]
    * @param {function} [opts.onProgress]  called with 0..1 during encoding
    */
-  async function renderVideoFrameWhenReady(file, exif, settings, { onProgress, preferredMime, videoBitsPerSecond = 10_000_000 } = {}) {
-    // Try WebCodecs fast path first (Chrome 94+, Firefox 130+)
-    // Requires: VideoEncoder, VideoFrame, requestVideoFrameCallback, WebMMuxer CDN library
+  async function _fileHasAudioTrackHint(file) {
+    const sampleSize = 1024 * 1024;
+    const extension = String(file.name || '').split('.').pop().toLowerCase();
+    const mime = String(file.type || '').toLowerCase();
+    const isWebM = mime.includes('webm') || ['webm', 'mkv'].includes(extension);
+    const isMp4 = mime.includes('mp4') || mime.includes('quicktime') || ['mp4', 'mov', 'm4v', '3gp'].includes(extension);
+    const isAvi = mime.includes('avi') || extension === 'avi';
+    if (!isWebM && !isMp4 && !isAvi) return null;
+
+    const contains = (bytes, pattern) => {
+      outer: for (let index = 0; index <= bytes.length - pattern.length; index += 1) {
+        for (let offset = 0; offset < pattern.length; offset += 1) {
+          if (bytes[index + offset] !== pattern[offset]) continue outer;
+        }
+        return true;
+      }
+      return false;
+    };
+
+    try {
+      const head = new Uint8Array(await file.slice(0, sampleSize).arrayBuffer());
+      const samples = [head];
+      if (file.size > sampleSize) {
+        samples.push(new Uint8Array(await file.slice(Math.max(0, file.size - sampleSize)).arrayBuffer()));
+      }
+      if (isWebM) return samples.some(bytes => contains(bytes, [0x83, 0x81, 0x02])); // EBML TrackType = audio
+      if (isMp4) return samples.some(bytes => contains(bytes, [0x73, 0x6f, 0x75, 0x6e])); // MP4 handler "soun"
+      return samples.some(bytes => contains(bytes, [0x61, 0x75, 0x64, 0x73])); // AVI stream "auds"
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function renderVideoFrameWhenReady(file, exif, settings, {
+    onProgress,
+    preferredMime,
+    videoBitsPerSecond = 10_000_000,
+    preserveAudio = true,
+    signal,
+  } = {}) {
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+    // The WebCodecs fast path currently muxes video only. Use it exclusively
+    // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
       && typeof VideoFrame !== 'undefined'
       && typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function'
       && (typeof WebMMuxer !== 'undefined' || typeof Muxer !== 'undefined');
-    if (canUseWebCodecs) {
+    if (!preserveAudio && canUseWebCodecs) {
       try {
         return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond });
       } catch (_) {
@@ -761,16 +849,58 @@ const FrameEngine = (() => {
       await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
     }
 
+    const sourceHasAudio = await _fileHasAudioTrackHint(file);
+
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
-      video.muted   = true;   // must be muted for autoplay; audio routed via AudioContext
+      video.muted   = true;   // must be muted for autoplay; source audio is captured separately
       video.preload = 'auto';
+      let audioContext = null;
+      let outputStream = null;
+      let sourceStream = null;
+      let canvas = null;
+      let recorder = null;
+      let rafId = null;
+      let stopTimer = null;
+      let settled = false;
+      let cleaned = false;
+
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        if (rafId != null) cancelAnimationFrame(rafId);
+        if (stopTimer != null) clearTimeout(stopTimer);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
+        if (outputStream) outputStream.getTracks().forEach(track => track.stop());
+        if (sourceStream) sourceStream.getTracks().forEach(track => track.stop());
+        if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
+        if (canvas) { canvas.width = 0; canvas.height = 0; }
+        signal?.removeEventListener('abort', abort);
+      };
+
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => {
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch (_) {}
+        }
+        fail(new DOMException('Export cancelled', 'AbortError'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
         const W = video.videoWidth;
         const H = video.videoHeight;
-        if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
+        if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
 
         const isPortrait      = H > W;
         const ts              = settings.thicknessScale || 1;
@@ -788,7 +918,7 @@ const FrameEngine = (() => {
         const canvasW = Math.round(W + sB * 2);
         const canvasH = imageLayout.canvasH;
 
-        const canvas = document.createElement('canvas');
+        canvas = document.createElement('canvas');
         canvas.width  = canvasW;
         canvas.height = canvasH;
         const ctx     = canvas.getContext('2d');
@@ -803,38 +933,57 @@ const FrameEngine = (() => {
         const frameColor = settings.frameColor || '#F0F0F0';
         const duration   = video.duration || 0;
 
-        // ── Route audio through AudioContext so it's captured but not played ──
+        // ── Preserve the source audio without playing it on the page ──
         let audioTrack = null;
+        let captureStreamAvailable = false;
         try {
-          const actx = new (window.AudioContext || window.webkitAudioContext)();
-          const src  = actx.createMediaElementSource(video);
-          const dest = actx.createMediaStreamDestination();
-          src.connect(dest);   // route to MediaStream (recorded)
-          // NOT connecting to actx.destination keeps page muted
-          audioTrack = dest.stream.getAudioTracks()[0] || null;
+          const capture = video.captureStream || video.mozCaptureStream;
+          if (capture && sourceHasAudio !== false) {
+            captureStreamAvailable = true;
+            sourceStream = capture.call(video);
+            audioTrack = sourceStream.getAudioTracks()[0] || null;
+          }
+        } catch (_) { /* captureStream is not implemented consistently */ }
+
+        // Older browsers without HTMLMediaElement.captureStream use Web Audio.
+        try {
+          if (!audioTrack && !captureStreamAvailable && sourceHasAudio !== false) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.resume().catch(() => {});
+            const src  = audioContext.createMediaElementSource(video);
+            const dest = audioContext.createMediaStreamDestination();
+            src.connect(dest);   // route to MediaStream (recorded)
+            // NOT connecting to audioContext.destination keeps page muted
+            audioTrack = dest.stream.getAudioTracks()[0] || null;
+          }
         } catch (_) { /* no audio support or no audio track */ }
 
         // ── Build output stream: canvas video + original audio ──
-        const outStream = canvas.captureStream(30);
-        if (audioTrack) outStream.addTrack(audioTrack);
+        outputStream = canvas.captureStream(30);
+        if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
           ? [preferredMime, 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
           : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
         const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
-        const recorder = new MediaRecorder(outStream, {
+        recorder = new MediaRecorder(outputStream, {
           mimeType,
           videoBitsPerSecond,
         });
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.onstop = () => {
-          URL.revokeObjectURL(url);
-          resolve(new Blob(chunks, { type: mimeType }));
+          if (settled) { cleanup(); return; }
+          settled = true;
+          const blob = new Blob(chunks, { type: mimeType });
+          cleanup();
+          resolve(blob);
+        };
+        recorder.onerror = event => {
+          fail(event.error || new Error('Video recording failed'));
         };
 
-        let rafId;
         function drawLoop() {
           if (settings.frameBackground === 'blur') {
             drawBlurBackground(ctx, video, canvasW, canvasH, settings);
@@ -853,17 +1002,22 @@ const FrameEngine = (() => {
           } else {
             cancelAnimationFrame(rafId);
             // Give recorder a moment to flush, then stop
-            setTimeout(() => recorder.stop(), 120);
+            stopTimer = setTimeout(() => {
+              if (recorder.state !== 'inactive') recorder.stop();
+            }, 120);
           }
         }
 
         recorder.start(200);
         video.play()
           .then(() => { rafId = requestAnimationFrame(drawLoop); })
-          .catch(err => { recorder.stop(); URL.revokeObjectURL(url); reject(err); });
+          .catch(err => {
+            if (recorder.state !== 'inactive') recorder.stop();
+            fail(err);
+          });
       };
 
-      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.onerror = () => fail(new Error('Video load failed'));
       video.src  = url;
       video.load();
     });
@@ -928,3 +1082,5 @@ const FrameEngine = (() => {
 
   return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
 })();
+
+if (typeof window !== 'undefined') window.FrameEngine = FrameEngine;
