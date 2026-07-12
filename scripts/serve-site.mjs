@@ -12,8 +12,15 @@ const mimeTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.mov', 'video/quicktime'],
+  ['.mp4', 'video/mp4'],
+  ['.png', 'image/png'],
   ['.svg', 'image/svg+xml'],
+  ['.webp', 'image/webp'],
   ['.webm', 'video/webm'],
+  ['.woff2', 'font/woff2'],
 ]);
 
 function send(response, status, body) {
@@ -46,6 +53,7 @@ export function createStaticServer({ rootDirectory = root, hostname = host, list
         'Cache-Control': 'no-store',
         'Content-Length': metadata.size,
         'Content-Type': mimeTypes.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
+        'X-Content-Type-Options': 'nosniff',
       });
       createReadStream(filePath).pipe(response);
     } catch (error) {
