@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Privacy-conscious browser EXIF frame generator for photos and videos",
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10"
+  },
   "scripts": {
     "check:syntax": "node --check js/core-utils.js && node --check js/config.js && node --check js/i18n.js && node --check js/frame-engine.js && node --check js/app.js",
     "lint": "eslint js tests scripts playwright.config.cjs",

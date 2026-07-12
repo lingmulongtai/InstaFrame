@@ -48,7 +48,7 @@ for (const [slug, family] of fonts) {
   const packageFiles = await readdir(path.join(packageRoot, 'files'));
   const selected = packageFiles.filter(name => (
     new RegExp(`^${slug}-latin-(300|400|500|700)-(normal|italic)\\.woff2$`).test(name)
-  ));
+  )).sort();
   for (const name of selected) {
     const match = name.match(/-latin-(\d+)-(normal|italic)\.woff2$/);
     if (!match) continue;
