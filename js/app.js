@@ -70,10 +70,10 @@ const MAX_SINGLE_SOURCE_BYTES = 256 * 1024 * 1024;
 const MAX_TOTAL_SOURCE_BYTES = 512 * 1024 * 1024;
 const MAX_SOURCE_IMAGE_PIXELS = 60_000_000;
 const MAX_PREVIEW_CACHE_PIXELS = 32_000_000;
-const MAX_FRAME_CACHE_PIXELS = 24_000_000;
+const MAX_FRAME_CACHE_PIXELS = 32_000_000;
 const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
-const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 16_000_000;
-const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 8_000_000;
+const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
+const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const _vendorScriptLoads = new Map();
 const APP_ASSET_VERSION = (() => {
@@ -2314,16 +2314,16 @@ function applyPreviewTransform() {
 }
 
 function setPreviewZoom(zoom) {
-  previewZoom = Math.min(Math.max(zoom, 0.5), 6.0);
+  previewZoom = Math.min(Math.max(zoom, 0.5), InstaFrameCore.MAX_PREVIEW_ZOOM || 8);
   applyPreviewTransform();
   const range = document.getElementById('zoomRange');
   if (range) range.value = Math.round(previewZoom * 100);
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = Math.round(previewZoom * 100) + '%';
   updatePreviewViewModifiedState();
-  if (InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality) === 'auto') {
-    scheduleLivePreview();
-  }
+  // Every quality mode derives its backing density from zoom. Re-rendering is
+  // required here; otherwise High/Max merely stretch their old bitmap in CSS.
+  scheduleLivePreview();
 }
 
 function resetPreviewPan() {
@@ -2359,7 +2359,7 @@ function selectItem(id) {
 }
 
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
-const PREVIEW_LAYOUT_LONG_EDGE = 4096;
+const PREVIEW_LAYOUT_LONG_EDGE = 5120;
 
 /**
  * Stable hash of settings that affect composition. Preview quality is excluded:
@@ -2518,6 +2518,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   canvas.dataset.previewPixelBudget = String(backing.pixelBudget);
   canvas.dataset.compositionWidth = String(src.width);
   canvas.dataset.compositionHeight = String(src.height);
+  canvas.dataset.previewSourceLimit = src.dataset.previewSourceLimit || '';
 
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = true;
@@ -2724,6 +2725,8 @@ async function renderLivePreview() {
 
     const rendered = await FrameEngine.renderFrameWhenReady(
       img, item.exif, state.settings, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg });
+
+    rendered.dataset.previewSourceLimit = String(PREVIEW_LAYOUT_LONG_EDGE);
 
     if (seq !== _renderSeq) {
       rendered.width = 0;

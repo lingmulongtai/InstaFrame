@@ -11,7 +11,9 @@ test('preview quality changes backing density without changing a layout input', 
   assert.equal(core.getPreviewBackingScale('auto', 1, 1), 2);
   assert.equal(core.getPreviewBackingScale('auto', 1, 3), 3);
   assert.equal(core.getPreviewBackingScale('auto', 1, 6), 6);
-  assert.equal(core.getPreviewBackingScale('max', 1, 6), 6);
+  assert.equal(core.getPreviewBackingScale('auto', 1, 8), 8);
+  assert.equal(core.getPreviewBackingScale('max', 1, 8), 8);
+  assert.equal(core.MAX_PREVIEW_ZOOM, 8);
   assert.ok(core.getPreviewBackingScale('high', 1, 1) >= core.getPreviewBackingScale('auto', 1, 1));
   assert.ok(core.getPreviewBackingScale('max', 1, 1) > core.getPreviewBackingScale('high', 1, 1));
 });
@@ -24,6 +26,7 @@ test('preview backing density preserves normal zoom detail and caps extreme canv
   const mobile = core.getBudgetedPreviewBackingScale(6, 390, 700, 8_000_000);
   assert.ok(mobile > 5.4);
   assert.ok(mobile <= 6);
+  assert.equal(core.getBudgetedPreviewBackingScale(8, 500, 400, 24_000_000), 8);
 });
 
 test('coordinate labels are deterministic and remain local', () => {

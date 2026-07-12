@@ -508,6 +508,53 @@ test('Japanese preview quality labels change raster density without moving compo
   expect(max.cssWidth).toBeCloseTo(draft.cssWidth, 0);
   expect(max.cssHeight).toBeCloseTo(draft.cssHeight, 0);
   expect(max.backingWidth).toBeGreaterThan(draft.backingWidth);
+
+  await page.locator('#zoomRange').evaluate(element => {
+    element.value = '800';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewBackingScale))).toBeGreaterThanOrEqual(7.9);
+});
+
+test('large preview downscaling stays lossless and avoids a JPEG round-trip', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const source = document.createElement('canvas');
+    source.width = 200;
+    source.height = 100;
+    const sourceContext = source.getContext('2d');
+    const gradient = sourceContext.createLinearGradient(0, 0, source.width, source.height);
+    gradient.addColorStop(0, '#ff0000');
+    gradient.addColorStop(1, '#0000ff');
+    sourceContext.fillStyle = gradient;
+    sourceContext.fillRect(0, 0, source.width, source.height);
+
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    let toBlobCalls = 0;
+    HTMLCanvasElement.prototype.toBlob = function (...args) {
+      toBlobCalls += 1;
+      return originalToBlob.apply(this, args);
+    };
+    try {
+      const output = await window.FrameEngine.renderFrameWhenReady(
+        source,
+        {},
+        {},
+        { maxPreviewPx: 50 }
+      );
+      const dimensions = { width: output.width, height: output.height };
+      output.width = 0;
+      output.height = 0;
+      return { toBlobCalls, dimensions };
+    } finally {
+      HTMLCanvasElement.prototype.toBlob = originalToBlob;
+      source.width = 0;
+      source.height = 0;
+    }
+  });
+
+  expect(result.toBlobCalls).toBe(0);
+  expect(result.dimensions.width).toBeGreaterThan(50);
+  expect(result.dimensions.width).toBeLessThan(60);
 });
 
 test('MediaRecorder setup exceptions reject and revoke their source URL', async ({ page }) => {
@@ -543,7 +590,7 @@ test('MediaRecorder setup exceptions reject and revoke their source URL', async 
   expect(result.activeUrls).toBe(0);
 });
 
-test('auto preview stays pixel-dense through 600% zoom', async ({ page }) => {
+test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
   const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 4096, 2731);
   await page.locator('#fileInput').setInputFiles({
     name: 'large-preview.jpg',
@@ -556,11 +603,12 @@ test('auto preview stays pixel-dense through 600% zoom', async ({ page }) => {
   await expect.poll(() => canvas.evaluate(element => Number(element.dataset.compositionWidth))).toBeGreaterThan(4000);
 
   await page.locator('#zoomRange').evaluate(element => {
-    element.value = '600';
+    element.value = '800';
     element.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await expect(page.locator('#zoomLabel')).toHaveText('600%');
-  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(5.9);
+  await expect(page.locator('#zoomLabel')).toHaveText('800%');
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewSourceLimit))).toBe(5120);
+  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(7.9);
   const backing = await canvas.evaluate(element => ({
     pixels: element.width * element.height,
     budget: Number(element.dataset.previewPixelBudget),

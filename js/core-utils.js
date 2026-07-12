@@ -7,6 +7,7 @@
   if (root) root.InstaFrameCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   const PREVIEW_QUALITIES = Object.freeze(['auto', 'draft', 'normal', 'high', 'max']);
+  const MAX_PREVIEW_ZOOM = 8;
 
   function normalizePreviewQuality(value) {
     return PREVIEW_QUALITIES.includes(value) ? value : 'auto';
@@ -19,15 +20,15 @@
   function getPreviewBackingScale(quality, devicePixelRatio = 1, zoom = 1) {
     const q = normalizePreviewQuality(quality);
     const dpr = Math.max(1, Number(devicePixelRatio) || 1);
-    const safeZoom = Math.max(0.5, Math.min(6, Number(zoom) || 1));
+    const safeZoom = Math.max(0.5, Math.min(MAX_PREVIEW_ZOOM, Number(zoom) || 1));
     const zoomDetail = Math.sqrt(Math.max(1, safeZoom));
-    if (q === 'draft') return Math.min(2, Math.max(1, zoomDetail));
-    if (q === 'normal') return Math.min(3, Math.max(1.5, Math.min(2, dpr)) * zoomDetail);
-    if (q === 'high') return Math.min(5, Math.max(2, Math.min(3, dpr * 1.5)) * zoomDetail);
-    if (q === 'max') return Math.min(6, Math.max(3, Math.min(4, dpr * 2)) * zoomDetail);
+    if (q === 'draft') return Math.min(2.5, Math.max(1, zoomDetail));
+    if (q === 'normal') return Math.min(4, Math.max(1.5, Math.min(2, dpr)) * zoomDetail);
+    if (q === 'high') return Math.min(6, Math.max(2, Math.min(3, dpr * 1.5)) * zoomDetail);
+    if (q === 'max') return Math.min(MAX_PREVIEW_ZOOM, Math.max(3, Math.min(4, dpr * 2)) * zoomDetail);
     // Auto should still look crisp on 1× desktop displays. Increase density
     // gradually while zooming instead of stretching the same backing bitmap.
-    return Math.min(6, Math.max(2, dpr * safeZoom));
+    return Math.min(MAX_PREVIEW_ZOOM, Math.max(2, dpr * safeZoom));
   }
 
   /** Keep the requested detail unless its backing canvas would exceed a safe pixel budget. */
@@ -66,6 +67,7 @@
 
   return Object.freeze({
     PREVIEW_QUALITIES,
+    MAX_PREVIEW_ZOOM,
     normalizePreviewQuality,
     getPreviewBackingScale,
     getBudgetedPreviewBackingScale,
