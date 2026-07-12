@@ -15,11 +15,11 @@ async function uploadJpegs(page, count = 1, gps = false) {
   await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
 }
 
-async function createBrowserRaster(page, mimeType) {
-  const result = await page.evaluate(type => {
+async function createBrowserRaster(page, mimeType, width = 96, height = 64) {
+  const result = await page.evaluate(({ type, width: rasterWidth, height: rasterHeight }) => {
     const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 64;
+    canvas.width = rasterWidth;
+    canvas.height = rasterHeight;
     const context = canvas.getContext('2d');
     const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
     gradient.addColorStop(0, '#ff5a5f');
@@ -28,7 +28,7 @@ async function createBrowserRaster(page, mimeType) {
     context.fillRect(0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL(type, 0.9);
     return { actualType: dataUrl.slice(5, dataUrl.indexOf(';')), base64: dataUrl.split(',')[1] };
-  }, mimeType);
+  }, { type: mimeType, width, height });
   expect(result.actualType).toBe(mimeType);
   return Buffer.from(result.base64, 'base64');
 }
@@ -45,6 +45,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
+  await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  await expect(page.locator('#mobileAddBtn')).toBeHidden();
+  await expect(page.locator('.empty-hint-card')).toHaveCount(4);
   const initial = await new AxeBuilder({ page }).analyze();
   expect(initial.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 
@@ -302,6 +305,26 @@ test('Japanese preview quality labels change raster density without moving compo
   expect(max.backingWidth).toBeGreaterThan(draft.backingWidth);
 });
 
+test('auto preview stays pixel-dense through 600% zoom', async ({ page }) => {
+  const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 4096, 2731);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'large-preview.jpg',
+    mimeType: 'image/jpeg',
+    buffer: largeJpeg,
+  });
+  const canvas = page.locator('#livePreviewCanvas');
+  await expect(canvas).toBeVisible();
+  await expect.poll(() => canvas.evaluate(element => element.width / element.getBoundingClientRect().width)).toBeGreaterThanOrEqual(1.95);
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.compositionWidth))).toBeGreaterThan(4000);
+
+  await page.locator('#zoomRange').evaluate(element => {
+    element.value = '600';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(page.locator('#zoomLabel')).toHaveText('600%');
+  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(5.9);
+});
+
 test('blur background supports an explicit custom text color', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="bg-blur"]').click();
@@ -405,7 +428,15 @@ test('unsupported browser codecs fail visibly instead of silently', async ({ pag
 test('mobile layout exposes import, settings, and a readable EXIF editor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await expect(page.locator('#previewMobileHint')).toBeVisible();
+  await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#mobileAddBtn')).toBeVisible();
+  const [buttonBox, viewportWidth] = await Promise.all([
+    page.locator('#mobileAddBtn').boundingBox(),
+    page.evaluate(() => innerWidth),
+  ]);
+  expect(buttonBox.x + buttonBox.width / 2).toBeCloseTo(viewportWidth / 2, 0);
+  await page.locator('#tabPreviewBtn').click();
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
   await expect(drawer).toBeVisible();
@@ -454,13 +485,39 @@ test('photo card and preview Blob URLs are revoked after rerender and removal', 
   await page.reload();
   await uploadJpegs(page);
   await page.locator('#langToggleBtn').click();
-  page.once('dialog', dialog => dialog.accept());
   await page.locator('[data-action="remove"]').click();
+  await expect(page.locator('#destructiveConfirmModal')).toHaveClass(/open/);
+  await page.locator('#destructiveConfirmAcceptBtn').click();
   await expect.poll(() => page.evaluate(() => ({
     created: window.__blobUrls.created.size,
     revoked: window.__blobUrls.revoked.size,
     active: [...window.__blobUrls.created].filter(url => !window.__blobUrls.revoked.has(url)).length,
   }))).toEqual({ created: 3, revoked: 3, active: 0 });
+});
+
+test('custom delete confirmation supports cancel, Escape, focus, and clear all', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  const firstRemove = page.locator('#item-1 [data-action="remove"]');
+  await firstRemove.focus();
+  await firstRemove.press('Enter');
+  await expect(page.locator('#destructiveConfirmModal')).toHaveClass(/open/);
+  await expect(page.locator('#destructiveConfirmCancelBtn')).toBeFocused();
+  const modalAxe = await new AxeBuilder({ page }).include('#destructiveConfirmModal').analyze();
+  expect(modalAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+
+  await page.keyboard.press('Escape');
+  await expect(firstRemove).toBeFocused();
+  await expect(page.locator('#item-1')).toBeVisible();
+  await firstRemove.press('Enter');
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect(page.locator('#preview-2')).toBeFocused();
+
+  await page.locator('#clearAllBtn').click();
+  await expect(page.locator('#destructiveConfirmTitle')).toContainText(/workspace|作業領域/i);
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#fileInput')).toBeFocused();
 });
 
 test('WebM input exports a decodable framed video', async ({ page }) => {

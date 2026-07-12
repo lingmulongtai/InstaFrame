@@ -942,12 +942,60 @@ input[type="range"]:focus-visible {
   flex-direction: column;
   align-items: center;
   gap: 10px;
+  width: min(680px, 92%);
   pointer-events: none;
   user-select: none;
+  text-align: center;
 }
-.preview-empty-icon { font-size: 44px; opacity: 0.55; line-height: 1; }
-.preview-empty-text { font-size: 15px; color: #e4e4e7; text-align: center; font-weight: 500; letter-spacing: -0.01em; }
+.preview-empty-eyebrow {
+  color: #67e8f9;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.preview-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  margin: 2px 0 4px;
+  color: #a5f3fc;
+  border: 1px solid rgba(103,232,249,0.28);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(8,145,178,0.22), rgba(255,255,255,0.04));
+  box-shadow: 0 16px 42px rgba(0,0,0,0.3), inset 0 1px rgba(255,255,255,0.08);
+}
+.preview-empty-icon svg { width: 34px; height: 34px; }
+.preview-empty-text { font-size: clamp(18px, 2vw, 24px); color: #f4f4f5; text-align: center; font-weight: 650; letter-spacing: -0.025em; }
 .preview-empty-sub  { font-size: 12px; color: #d4d4d8; text-align: center; }
+.preview-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 10px 16px;
+  color: white;
+  background: #08798f;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 999px;
+  box-shadow: 0 10px 28px rgba(8,121,143,0.28);
+  font-size: 12px;
+  font-weight: 650;
+}
+.preview-empty-trust {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+}
+.preview-empty-trust span {
+  padding: 4px 8px;
+  color: #a1a1aa;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 999px;
+  font-size: 9.5px;
+}
 
 /* ── Preview zoom bar (vertical, right side) ─────────────────────────────────── */
 .preview-zoom-bar {
@@ -1506,6 +1554,49 @@ input[type="range"]:focus-visible {
   color: var(--text);
 }
 
+.confirm-modal-content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  width: min(430px, calc(100vw - 28px));
+  height: auto;
+  padding: 20px;
+  overflow: visible;
+}
+.confirm-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: #b91c1c;
+  background: color-mix(in srgb, #dc2626 10%, var(--surface-2));
+  border-radius: 13px;
+}
+.confirm-modal-icon svg { width: 22px; height: 22px; }
+.confirm-modal-copy { min-width: 0; }
+.confirm-modal-copy .map-modal-title { font-size: 15px; }
+.confirm-modal-copy p {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.confirm-modal-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+.confirm-modal-actions .btn-danger {
+  color: #fff;
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+.confirm-modal-actions .btn-danger:hover,
+.confirm-modal-actions .btn-danger:focus-visible { background: #991b1b; border-color: #991b1b; }
+
 .map-modal-close {
   background: none;
   border: none;
@@ -1595,34 +1686,67 @@ input[type="range"]:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px 16px;
+  padding: 24px 28px;
   background: var(--bg);
 }
-.mobile-add-btn { display: none; }
+
+.empty-hint-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(920px, 100%);
+}
+
+.empty-hint-heading { text-align: center; }
+.empty-hint-title {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.empty-hint-subtitle {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.empty-hint .mobile-add-btn { display: none; }
 
 .empty-hint-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  max-width: 360px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
   width: 100%;
 }
 
 .empty-hint-card {
   background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  padding: 16px 12px;
-  text-align: center;
-  box-shadow: var(--shadow);
+  padding: 14px;
+  text-align: left;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 7px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.04);
 }
 
-.empty-hint-emoji { font-size: 22px; line-height: 1; }
+.empty-hint-emoji {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  font-size: 16px;
+  line-height: 1;
+}
 .empty-hint-card-title { font-size: 12px; font-weight: 600; color: var(--text); }
-.empty-hint-card-desc { font-size: 10.5px; color: var(--text-3); line-height: 1.55; }
+.empty-hint-card-desc { font-size: 10.5px; color: var(--text-3); line-height: 1.45; }
+
+@media (max-width: 1100px) and (min-width: 769px) {
+  .empty-hint-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 #livePreviewCanvas {
   display: block;
@@ -2192,9 +2316,11 @@ input[type="range"]:focus-visible {
     padding: 20px 16px;
   }
 
-  /* Mobile add button (shown in empty hint on Photos tab) */
-  .mobile-add-btn { display: none; }
-  body[data-mobile-tab="photos"] .mobile-add-btn { display: inline-flex; }
+  /* Photos tab gets a centered import action when the library is empty. */
+  body[data-mobile-tab="photos"] .empty-hint .mobile-add-btn {
+    display: inline-flex;
+    margin: 12px auto 0;
+  }
 
   /* Tab visibility — hide/show sections based on active tab */
   body[data-mobile-tab="preview"] .image-section,
@@ -2221,9 +2347,9 @@ input[type="range"]:focus-visible {
   .card-actions .btn { font-size: 11px; padding: 4px 8px; }
 
   /* Empty hint grid 2×2 */
+  .empty-hint-inner { gap: 14px; }
   .empty-hint-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .empty-hint-card { padding: 12px 8px; }
-  .empty-hint-emoji { font-size: 22px; }
+  .empty-hint-card { padding: 11px; }
 
   /* Batch bar stacks */
   .batch-bar { flex-wrap: wrap; gap: 6px; }
