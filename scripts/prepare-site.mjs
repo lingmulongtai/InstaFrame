@@ -1,6 +1,11 @@
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import {
+  createContentRevision,
+  normalizeReleaseRevision,
+  rewriteHtmlAssetReferences,
+} from './site-assets.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'dist');
@@ -21,5 +26,21 @@ for (const directory of directories) {
   if (existsSync(source)) await cp(source, path.join(output, directory), { recursive: true });
 }
 
+async function collectFiles(directory, relativeDirectory = '') {
+  const entries = [];
+  for (const child of await readdir(directory, { withFileTypes: true })) {
+    const relativePath = path.join(relativeDirectory, child.name);
+    const absolutePath = path.join(directory, child.name);
+    if (child.isDirectory()) entries.push(...await collectFiles(absolutePath, relativePath));
+    else entries.push({ path: relativePath, content: await readFile(absolutePath) });
+  }
+  return entries;
+}
+
+const copiedFiles = await collectFiles(output);
+const revision = normalizeReleaseRevision(process.env.GITHUB_SHA) || createContentRevision(copiedFiles);
+const indexPath = path.join(output, 'index.html');
+const indexHtml = await readFile(indexPath, 'utf8');
+await writeFile(indexPath, rewriteHtmlAssetReferences(indexHtml, revision));
 await writeFile(path.join(output, '.nojekyll'), '');
-console.log(`Prepared GitHub Pages artifact at ${output}`);
+console.log(`Prepared GitHub Pages artifact at ${output} (asset revision ${revision})`);

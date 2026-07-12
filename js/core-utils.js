@@ -30,6 +30,15 @@
     return Math.min(6, Math.max(2, dpr * safeZoom));
   }
 
+  /** Keep the requested detail unless its backing canvas would exceed a safe pixel budget. */
+  function getBudgetedPreviewBackingScale(requestedScale, cssWidth, cssHeight, maxPixels) {
+    const requested = Math.max(0.25, Number(requestedScale) || 1);
+    const width = Math.max(1, Number(cssWidth) || 1);
+    const height = Math.max(1, Number(cssHeight) || 1);
+    const budget = Math.max(1, Number(maxPixels) || 1);
+    return Math.min(requested, Math.max(0.25, Math.sqrt(budget / (width * height))));
+  }
+
   function formatCoordinateLabel(latitude, longitude) {
     const lat = Number(latitude);
     const lon = Number(longitude);
@@ -59,6 +68,7 @@
     PREVIEW_QUALITIES,
     normalizePreviewQuality,
     getPreviewBackingScale,
+    getBudgetedPreviewBackingScale,
     formatCoordinateLabel,
     normalizeHexColor,
     isAllowedOrigin,

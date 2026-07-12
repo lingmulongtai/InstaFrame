@@ -72,15 +72,54 @@ const MAX_SOURCE_IMAGE_PIXELS = 60_000_000;
 const MAX_PREVIEW_CACHE_PIXELS = 32_000_000;
 const MAX_FRAME_CACHE_PIXELS = 24_000_000;
 const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
+const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 16_000_000;
+const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 8_000_000;
 const _vendorScriptLoads = new Map();
+const APP_ASSET_VERSION = (() => {
+  try {
+    return new URL(document.currentScript?.src || '', document.baseURI).searchParams.get('v') || '';
+  } catch (_) {
+    return '';
+  }
+})();
+
+function _versionedAssetUrl(src) {
+  const url = new URL(src, document.baseURI);
+  if (APP_ASSET_VERSION) url.searchParams.set('v', APP_ASSET_VERSION);
+  return url.href;
+}
+
+function _getLivePreviewBackingScale(cssWidth, cssHeight) {
+  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
+  const requested = InstaFrameCore.getPreviewBackingScale(
+    quality,
+    window.devicePixelRatio,
+    previewZoom
+  );
+  const pixelBudget = window.matchMedia('(max-width: 768px)').matches
+    ? MAX_LIVE_PREVIEW_PIXELS_MOBILE
+    : MAX_LIVE_PREVIEW_PIXELS_DESKTOP;
+  return {
+    quality,
+    requested,
+    scale: InstaFrameCore.getBudgetedPreviewBackingScale(
+      requested,
+      cssWidth,
+      cssHeight,
+      pixelBudget
+    ),
+    pixelBudget,
+  };
+}
 
 function loadVendorScript(src, globalName) {
   if (window[globalName]) return Promise.resolve(window[globalName]);
-  if (_vendorScriptLoads.has(src)) return _vendorScriptLoads.get(src);
+  const assetUrl = _versionedAssetUrl(src);
+  if (_vendorScriptLoads.has(assetUrl)) return _vendorScriptLoads.get(assetUrl);
 
   const pending = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = src;
+    script.src = assetUrl;
     script.async = true;
     script.addEventListener('load', () => {
       if (window[globalName]) resolve(window[globalName]);
@@ -89,11 +128,11 @@ function loadVendorScript(src, globalName) {
     script.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
     document.head.appendChild(script);
   }).catch(error => {
-    _vendorScriptLoads.delete(src);
+    _vendorScriptLoads.delete(assetUrl);
     throw error;
   });
 
-  _vendorScriptLoads.set(src, pending);
+  _vendorScriptLoads.set(assetUrl, pending);
   return pending;
 }
 
@@ -1782,7 +1821,7 @@ function _ensureLeafletStylesheet() {
   if (hasLeafletCss) return;
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = 'vendor/leaflet/leaflet.css';
+  link.href = _versionedAssetUrl('vendor/leaflet/leaflet.css');
   link.setAttribute('data-leaflet-runtime', '1');
   document.head.appendChild(link);
 }
@@ -1790,7 +1829,7 @@ function _ensureLeafletStylesheet() {
 function _loadLeafletScript(src) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = src;
+    script.src = _versionedAssetUrl(src);
     script.async = true;
     const timeout = setTimeout(() => {
       script.remove();
@@ -2304,8 +2343,6 @@ async function _loadPreviewImage(item) {
 
 /** Draw a rendered frame canvas into the live-preview canvas, DPR-aware. */
 function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
-  const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
-  const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
   const areaW = Math.max(pane.clientWidth  - 40, 80);
   const areaH = Math.max(pane.clientHeight - 40, 60);
   const ratio = src.height / src.width;
@@ -2316,11 +2353,16 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   dispW = Math.max(dispW, 80);
   dispH = Math.max(dispH, 60);
 
+  const backing = _getLivePreviewBackingScale(dispW, dispH);
+  const backingScale = backing.scale;
+
   canvas.width        = Math.round(dispW * backingScale);
   canvas.height       = Math.round(dispH * backingScale);
   canvas.style.width  = dispW + 'px';
   canvas.style.height = dispH + 'px';
-  canvas.dataset.previewQuality = quality;
+  canvas.dataset.previewQuality = backing.quality;
+  canvas.dataset.previewBackingScale = backingScale.toFixed(3);
+  canvas.dataset.previewPixelBudget = String(backing.pixelBudget);
   canvas.dataset.compositionWidth = String(src.width);
   canvas.dataset.compositionHeight = String(src.height);
 
@@ -2385,9 +2427,8 @@ function _startVideoCanvasPreview(item) {
       // Video metadata not yet loaded — draw loading placeholder
       const areaW = Math.max(pane.clientWidth  - 40, 80);
       const areaH = Math.max(pane.clientHeight - 40, 60);
-      const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
-      const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
       if (canvas.style.display === 'none' || canvas.style.display === '') {
+        const backingScale = _getLivePreviewBackingScale(areaW, areaH).scale;
         canvas.width  = Math.round(areaW * backingScale);
         canvas.height = Math.round(areaH * backingScale);
         canvas.style.width  = areaW + 'px';
@@ -2413,8 +2454,6 @@ function _startVideoCanvasPreview(item) {
       video.videoWidth, video.videoHeight, state.settings
     );
 
-    const quality = InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality);
-    const backingScale = InstaFrameCore.getPreviewBackingScale(quality, window.devicePixelRatio, previewZoom);
     const areaW = Math.max(pane.clientWidth  - 40, 80);
     const areaH = Math.max(pane.clientHeight - 40, 60);
     const ratio = layout.canvasH / layout.canvasW;
@@ -2424,6 +2463,8 @@ function _startVideoCanvasPreview(item) {
     if (dispH > areaH) { dispH = areaH; dispW = Math.round(areaH / ratio); }
     dispW = Math.max(dispW, 80);
     dispH = Math.max(dispH, 60);
+
+    const backingScale = _getLivePreviewBackingScale(dispW, dispH).scale;
 
     const targetW = Math.round(dispW * backingScale);
     const targetH = Math.round(dispH * backingScale);
@@ -2531,7 +2572,11 @@ async function renderLivePreview() {
     const rendered = await FrameEngine.renderFrameWhenReady(
       img, item.exif, state.settings, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg });
 
-    if (seq !== _renderSeq) return;           // a newer render started; discard this one
+    if (seq !== _renderSeq) {
+      rendered.width = 0;
+      rendered.height = 0;
+      return;
+    }
 
     const renderedPixels = rendered.width * rendered.height;
     let cachedPixels = [..._frameCache.values()].reduce(
