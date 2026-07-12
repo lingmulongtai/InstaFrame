@@ -72,6 +72,7 @@ const MAX_SOURCE_IMAGE_PIXELS = 60_000_000;
 const MAX_PREVIEW_CACHE_PIXELS = 32_000_000;
 const MAX_FRAME_CACHE_PIXELS = 32_000_000;
 const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
+const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
@@ -1203,6 +1204,27 @@ async function downloadAll() {
   const zip   = new JSZipCtor();
   const opts  = _photoExportOpts();
   const total = done.length;
+  const retainedBytes = _retainedOutputBytes();
+  let encodedPhotoBytes = 0;
+  let archiveInputBytes = 0;
+  let packedEntries = 0;
+
+  function addZipEntry(name, blob, encodedPhoto = false) {
+    const nextPhotoBytes = encodedPhotoBytes + (encodedPhoto ? (blob.size || 0) : 0);
+    const nextArchiveBytes = archiveInputBytes + (blob.size || 0);
+    const nextEntries = packedEntries + 1;
+    const estimatedPeak = InstaFrameCore.estimateZipPeakBytes(
+      retainedBytes,
+      nextPhotoBytes,
+      nextArchiveBytes,
+      nextEntries
+    );
+    if (estimatedPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
+    zip.file(name, blob);
+    encodedPhotoBytes = nextPhotoBytes;
+    archiveInputBytes = nextArchiveBytes;
+    packedEntries = nextEntries;
+  }
 
   try {
     for (let i = 0; i < total; i++) {
@@ -1212,19 +1234,19 @@ async function downloadAll() {
 
       if (item.isVideo && item.videoBlob) {
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
-        zip.file(name, item.videoBlob);
+        addZipEntry(name, item.videoBlob);
       } else if (item.canvas) {
         const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-        zip.file(name, blob);
+        addZipEntry(name, blob, true);
       }
     }
-  } catch {
+  } catch (error) {
     setGlobalBusy(false);
     hideProgress();
     _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
-    showToast(t('msgExportFailed'), 'error');
+    showToast(t(error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed'), 'error');
     return;
   }
 
@@ -1240,19 +1262,29 @@ async function downloadAll() {
   let zipBlob;
   try {
     zipBlob = await zip.generateAsync(
-      { type: 'blob' },
+      { type: 'blob', compression: 'STORE', streamFiles: true },
       meta => {
         if (_exportCancelRequested) throw new Error('EXPORT_CANCELLED');
         showProgress(t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
       }
     );
+    const actualPeak = InstaFrameCore.estimateZipPeakBytes(
+      retainedBytes,
+      encodedPhotoBytes,
+      zipBlob.size,
+      packedEntries
+    );
+    if (actualPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
   } catch (error) {
     setGlobalBusy(false);
     hideProgress();
     const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
     _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
-    showToast(t(cancelled ? 'msgExportCancelled' : 'msgExportFailed'), cancelled ? 'warn' : 'error');
+    const messageKey = cancelled
+      ? 'msgExportCancelled'
+      : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
+    showToast(t(messageKey), cancelled ? 'warn' : 'error');
     return;
   }
 

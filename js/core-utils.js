@@ -40,6 +40,13 @@
     return Math.min(requested, Math.max(0.25, Math.sqrt(budget / (width * height))));
   }
 
+  /** Conservative ZIP peak: retained outputs + photo entry blobs + archive blob. */
+  function estimateZipPeakBytes(retainedBytes, encodedPhotoBytes, archiveInputBytes, entryCount = 0) {
+    const safe = value => Math.max(0, Number(value) || 0);
+    return safe(retainedBytes) + safe(encodedPhotoBytes) + safe(archiveInputBytes) +
+      Math.floor(safe(entryCount)) * 2048;
+  }
+
   function formatCoordinateLabel(latitude, longitude) {
     const lat = Number(latitude);
     const lon = Number(longitude);
@@ -71,6 +78,7 @@
     normalizePreviewQuality,
     getPreviewBackingScale,
     getBudgetedPreviewBackingScale,
+    estimateZipPeakBytes,
     formatCoordinateLabel,
     normalizeHexColor,
     isAllowedOrigin,
