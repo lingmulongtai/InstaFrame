@@ -16,6 +16,16 @@ test('preview quality changes backing density without changing a layout input', 
   assert.ok(core.getPreviewBackingScale('max', 1, 1) > core.getPreviewBackingScale('high', 1, 1));
 });
 
+test('preview backing density preserves normal zoom detail and caps extreme canvas memory', () => {
+  assert.equal(core.getBudgetedPreviewBackingScale(6, 500, 400, 16_000_000), 6);
+  const capped = core.getBudgetedPreviewBackingScale(6, 2_000, 1_500, 16_000_000);
+  assert.ok(capped < 6);
+  assert.ok(Math.round(2_000 * capped) * Math.round(1_500 * capped) <= 16_010_000);
+  const mobile = core.getBudgetedPreviewBackingScale(6, 390, 700, 8_000_000);
+  assert.ok(mobile > 5.4);
+  assert.ok(mobile <= 6);
+});
+
 test('coordinate labels are deterministic and remain local', () => {
   assert.equal(core.formatCoordinateLabel(35.6762, 139.6503), '35.6762°N, 139.6503°E');
   assert.equal(core.formatCoordinateLabel(-33.8688, 151.2093), '33.8688°S, 151.2093°E');

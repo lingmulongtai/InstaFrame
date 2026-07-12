@@ -220,6 +220,34 @@ test('heavy local processors load only when their features are used', async ({ p
   await expect.poll(loadedResources).toContain('/vendor/jszip.min.js');
 });
 
+test('a release revision follows the app into lazy EXIF and ZIP dependencies', async ({ page }) => {
+  const revision = 'abcdef123456';
+  await page.route('http://127.0.0.1:4173/', async route => {
+    const response = await route.fetch();
+    const body = (await response.text()).replace(
+      /\b(src|href)="((?:js|css|vendor)\/[^"?]+)"/g,
+      `$1="$2?v=${revision}"`
+    );
+    await route.fulfill({ response, body });
+  });
+  const requested = [];
+  page.on('request', request => requested.push(request.url()));
+  await page.reload();
+
+  await uploadJpegs(page, 2);
+  await expect(page.locator('#live-exif-make')).toHaveValue('FUJIFILM');
+  await expect(page.locator('#live-exif-model')).toHaveValue('X-T5');
+  await expect(page.locator('#live-exif-lens')).toHaveValue('XF35mmF1.4 R');
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  await downloadPromise;
+
+  const exifrUrl = new URL(requested.find(url => url.includes('/vendor/exifr.js')));
+  const jszipUrl = new URL(requested.find(url => url.includes('/vendor/jszip.min.js')));
+  expect(exifrUrl.searchParams.get('v')).toBe(revision);
+  expect(jszipUrl.searchParams.get('v')).toBe(revision);
+});
+
 test('oversized source files are rejected before decoding', async ({ page }) => {
   await page.evaluate(async () => {
     const file = new File(['not-decoded'], 'too-large.jpg', { type: 'image/jpeg' });
@@ -323,6 +351,11 @@ test('auto preview stays pixel-dense through 600% zoom', async ({ page }) => {
   });
   await expect(page.locator('#zoomLabel')).toHaveText('600%');
   await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(5.9);
+  const backing = await canvas.evaluate(element => ({
+    pixels: element.width * element.height,
+    budget: Number(element.dataset.previewPixelBudget),
+  }));
+  expect(backing.pixels).toBeLessThanOrEqual(backing.budget + 10_000);
 });
 
 test('blur background supports an explicit custom text color', async ({ page }) => {
