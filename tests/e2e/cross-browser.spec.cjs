@@ -142,6 +142,17 @@ test('crisp auto preview and custom delete confirmation are portable', async ({ 
   await uploadJpeg(page);
   const canvas = page.locator('#livePreviewCanvas');
   await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(1.9);
+  await page.locator('#zoomRange').evaluate(element => {
+    element.value = '800';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(page.locator('#zoomLabel')).toHaveText('800%');
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewBackingScale))).toBeGreaterThanOrEqual(7.9);
+  const previewBudget = await canvas.evaluate(element => ({
+    pixels: element.width * element.height,
+    limit: Number(element.dataset.previewPixelBudget),
+  }));
+  expect(previewBudget.pixels).toBeLessThanOrEqual(previewBudget.limit + 10_000);
 
   const remove = page.locator('[data-action="remove"]');
   await remove.focus();

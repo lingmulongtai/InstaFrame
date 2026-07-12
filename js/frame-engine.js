@@ -68,8 +68,8 @@ const FrameEngine = (() => {
       locationPosition = 'below-exif',
     } = settings;
 
-    const W = img.naturalWidth;
-    const H = img.naturalHeight;
+    const W = img.naturalWidth || img.videoWidth || img.width;
+    const H = img.naturalHeight || img.videoHeight || img.height;
     const isPortrait = H > W;
 
     const baseBorder      = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
@@ -120,32 +120,28 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Scale an HTMLImageElement down to maxPx on the longest side.
+   * Scale a decoded image down to maxPx on the longest side.
    * Returns the original img unchanged if it's already small enough.
+   * Keep the intermediate pixels lossless: a JPEG round-trip here visibly
+   * softens texture and text when the live preview is enlarged.
    */
   async function scaleImage(img, maxPx) {
-    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const sourceW = img.naturalWidth || img.videoWidth || img.width;
+    const sourceH = img.naturalHeight || img.videoHeight || img.height;
+    const longest = Math.max(sourceW, sourceH);
     if (longest <= maxPx) return img;
 
     const scale = maxPx / longest;
-    const w = Math.round(img.naturalWidth  * scale);
-    const h = Math.round(img.naturalHeight * scale);
+    const w = Math.round(sourceW * scale);
+    const h = Math.round(sourceH * scale);
     const tmp = document.createElement('canvas');
     tmp.width = w; tmp.height = h;
-    tmp.getContext('2d').drawImage(img, 0, 0, w, h);
-
-    return new Promise((resolve, reject) => {
-      const out = new Image();
-      tmp.toBlob(blob => {
-        tmp.width = 0;
-        tmp.height = 0;
-        if (!blob) { reject(new Error('Preview scaling failed')); return; }
-        const url = URL.createObjectURL(blob);
-        out.onload = () => { URL.revokeObjectURL(url); resolve(out); };
-        out.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Preview scaling failed')); };
-        out.src = url;
-      }, 'image/jpeg', 0.9);
-    });
+    const ctx = tmp.getContext('2d');
+    if (!ctx) throw new Error('Preview scaling failed');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, w, h);
+    return tmp;
   }
 
   /**
@@ -157,10 +153,17 @@ const FrameEngine = (() => {
     await loadFrameFonts(settings);
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx) : img;
-    const base = renderFrame(renderImg, exif, settings, mapOverlayImg);
-    const result = applyPostProcess(base, settings);
-    if (result !== base) { base.width = 0; base.height = 0; }
-    return result;
+    try {
+      const base = renderFrame(renderImg, exif, settings, mapOverlayImg);
+      const result = applyPostProcess(base, settings);
+      if (result !== base) { base.width = 0; base.height = 0; }
+      return result;
+    } finally {
+      if (renderImg !== img && renderImg instanceof HTMLCanvasElement) {
+        renderImg.width = 0;
+        renderImg.height = 0;
+      }
+    }
   }
 
   // ─── Drawing helpers ──────────────────────────────────────────────────────
