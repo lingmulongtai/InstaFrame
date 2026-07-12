@@ -70,7 +70,7 @@ const MAX_SINGLE_SOURCE_BYTES = 256 * 1024 * 1024;
 const MAX_TOTAL_SOURCE_BYTES = 512 * 1024 * 1024;
 const MAX_SOURCE_IMAGE_PIXELS = 60_000_000;
 const MAX_PREVIEW_CACHE_PIXELS = 32_000_000;
-const MAX_FRAME_CACHE_PIXELS = 12_000_000;
+const MAX_FRAME_CACHE_PIXELS = 24_000_000;
 const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
 const _vendorScriptLoads = new Map();
 
@@ -150,6 +150,8 @@ let _videoPreviewItemId = null;   // ID of item currently being rendered in the 
 let _sessionLocationNetworkConsent = false;
 let _locationConsentResolver = null;
 let _locationPrivacyPreviousFocus = null;
+let _destructiveConfirmResolver = null;
+let _destructiveConfirmPreviousFocus = null;
 
 function _openLocationPrivacyModal() {
   _locationPrivacyPreviousFocus = document.activeElement;
@@ -184,6 +186,52 @@ function setupModalAccessibility() {
     } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
       first.focus();
+    }
+  });
+}
+
+function _finishDestructiveConfirmation(confirmed) {
+  const modal = document.getElementById('destructiveConfirmModal');
+  modal?.classList.remove('open');
+  const resolve = _destructiveConfirmResolver;
+  _destructiveConfirmResolver = null;
+  if (!confirmed && _destructiveConfirmPreviousFocus?.isConnected) {
+    _destructiveConfirmPreviousFocus.focus();
+  }
+  _destructiveConfirmPreviousFocus = null;
+  if (resolve) resolve(confirmed);
+}
+
+function requestDestructiveConfirmation({ clearAll = false, filename = '' } = {}) {
+  const modal = document.getElementById('destructiveConfirmModal');
+  if (!modal || _destructiveConfirmResolver) return Promise.resolve(false);
+  const title = document.getElementById('destructiveConfirmTitle');
+  const message = document.getElementById('destructiveConfirmMessage');
+  const accept = document.getElementById('destructiveConfirmAcceptBtn');
+  if (title) title.textContent = t(clearAll ? 'clearConfirmTitle' : 'deleteConfirmTitle');
+  if (message) {
+    message.textContent = clearAll
+      ? t('confirmClearAll')
+      : tf('confirmDeleteItemNamed', { name: filename || t('imagesTitle') });
+  }
+  if (accept) accept.textContent = t(clearAll ? 'clearConfirmAction' : 'deleteConfirmAction');
+  _destructiveConfirmPreviousFocus = document.activeElement;
+  modal.classList.add('open');
+  document.getElementById('destructiveConfirmCancelBtn')?.focus();
+  return new Promise(resolve => { _destructiveConfirmResolver = resolve; });
+}
+
+function setupDestructiveConfirmation() {
+  const modal = document.getElementById('destructiveConfirmModal');
+  document.getElementById('destructiveConfirmCancelBtn')?.addEventListener('click', () => _finishDestructiveConfirmation(false));
+  document.getElementById('destructiveConfirmAcceptBtn')?.addEventListener('click', () => _finishDestructiveConfirmation(true));
+  modal?.addEventListener('click', event => {
+    if (event.target === modal) _finishDestructiveConfirmation(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal?.classList.contains('open')) {
+      event.preventDefault();
+      _finishDestructiveConfirmation(false);
     }
   });
 }
@@ -724,9 +772,11 @@ async function addFiles(files) {
   scheduleLivePreview();
 }
 
-function removeItem(id, options = {}) {
+async function removeItem(id, options = {}) {
   const { skipConfirm = false } = options;
-  if (!skipConfirm && !window.confirm(t('confirmDeleteItem'))) return;
+  const item = state.items.find(candidate => candidate.id === id);
+  if (!item) return false;
+  if (!skipConfirm && !await requestDestructiveConfirmation({ filename: item.file?.name })) return false;
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) {
@@ -742,11 +792,16 @@ function removeItem(id, options = {}) {
   }
   updateUI();
   scheduleLivePreview();
+  const focusTarget = state.items.length
+    ? document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')
+    : document.getElementById('fileInput');
+  focusTarget?.focus();
+  return true;
 }
 
-function clearAllItems(skipConfirm = false) {
-  if (state.items.length === 0) return;
-  if (!skipConfirm && !window.confirm(t('confirmClearAll'))) return;
+async function clearAllItems(skipConfirm = false) {
+  if (state.items.length === 0) return false;
+  if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
   state.items.forEach(_releaseItemOutput);
@@ -757,6 +812,8 @@ function clearAllItems(skipConfirm = false) {
   updateUI();
   scheduleLivePreview();
   showToast(t('msgClearedAll'), 'info');
+  document.getElementById('fileInput')?.focus();
+  return true;
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -2113,13 +2170,16 @@ function applyPreviewTransform() {
 }
 
 function setPreviewZoom(zoom) {
-  previewZoom = Math.min(Math.max(zoom, 0.5), 3.0);
+  previewZoom = Math.min(Math.max(zoom, 0.5), 6.0);
   applyPreviewTransform();
   const range = document.getElementById('zoomRange');
   if (range) range.value = Math.round(previewZoom * 100);
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = Math.round(previewZoom * 100) + '%';
   updatePreviewViewModifiedState();
+  if (InstaFrameCore.normalizePreviewQuality(loadPrefs().previewQuality) === 'auto') {
+    scheduleLivePreview();
+  }
 }
 
 function resetPreviewPan() {
@@ -2155,7 +2215,7 @@ function selectItem(id) {
 }
 
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
-const PREVIEW_LAYOUT_LONG_EDGE = 2400;
+const PREVIEW_LAYOUT_LONG_EDGE = 4096;
 
 /**
  * Stable hash of settings that affect composition. Preview quality is excluded:
@@ -3896,6 +3956,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCustomizePanel();
   setupLocationPrivacy();
   setupModalAccessibility();
+  setupDestructiveConfirmation();
   setupMapModalActions();
   const exifHeader = document.querySelector('.preview-exif-drawer-header');
   exifHeader?.addEventListener('keydown', event => {

@@ -685,16 +685,25 @@
     <!-- Live Preview + Drop Zone -->
     <div class="preview-area" id="dropZone">
       <input type="file" id="fileInput" multiple
+             data-i18n="emptyChooseMedia" data-i18n-attr="aria-label"
              accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv">
       <canvas id="livePreviewCanvas"></canvas>
       <video id="livePreviewVideo" class="live-preview-video" playsinline></video>
 
       <div class="preview-empty" id="previewEmpty">
-        <div class="preview-empty-icon">📷</div>
+        <div class="preview-empty-eyebrow" data-i18n="emptyLocalBadge">LOCAL · PRIVATE · NO UPLOADS</div>
+        <div class="preview-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.4-2h7.2l1.4 2h3a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9.5a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13.5" r="4"/><path d="M18.5 10h.01"/></svg>
+        </div>
         <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
         <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · WebP · MP4 · WebM</div>
+        <div class="preview-empty-cta"><span aria-hidden="true">＋</span><span data-i18n="emptyChooseMedia">Choose photos or videos</span></div>
         <div class="preview-empty-format-note" data-i18n="formatSupportNote">HEIC/HEIF and MOV depend on your browser codec support.</div>
-        <div class="preview-empty-mobile-hint" id="previewMobileHint" data-i18n="previewMobileHint">Tap here to import photos</div>
+        <div class="preview-empty-trust" aria-hidden="true">
+          <span data-i18n="emptyTrustExif">Local EXIF</span>
+          <span data-i18n="emptyTrustAudio">Original audio</span>
+          <span data-i18n="emptyTrustBatch">Batch ZIP</span>
+        </div>
       </div>
       <div class="preview-history-wrap" id="previewHistoryWrap">
         <button class="preview-history-btn" id="undoEditBtn" data-i18n="undoEdit" title="Undo">Undo</button>
@@ -762,7 +771,7 @@
       <div class="preview-zoom-bar" id="previewZoomBar">
         <span class="zoom-label" id="zoomLabel">100%</span>
         <button class="zoom-btn" id="zoomInBtn" data-i18n="zoomIn" data-i18n-attr="title,aria-label" title="Zoom in">+</button>
-        <input type="range" id="zoomRange" min="50" max="300" step="10" value="100" orient="vertical" data-i18n="previewZoom" data-i18n-attr="aria-label">
+        <input type="range" id="zoomRange" min="50" max="600" step="10" value="100" orient="vertical" data-i18n="previewZoom" data-i18n-attr="aria-label">
         <button class="zoom-btn" id="zoomOutBtn" data-i18n="zoomOut" data-i18n-attr="title,aria-label" title="Zoom out">−</button>
       </div>
       <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
@@ -807,28 +816,33 @@
 
     <!-- Empty hint (shown when no files are loaded) -->
     <div class="empty-hint" id="emptyHint">
-      <!-- Mobile-only add button (desktop uses the drop-zone overlay) -->
-      <button class="btn btn-primary btn-lg mobile-add-btn" id="mobileAddBtn">+ Add Photos</button>
-      <div class="empty-hint-grid">
+      <div class="empty-hint-inner">
+        <div class="empty-hint-heading">
+          <div class="empty-hint-title" data-i18n="emptyFeaturesTitle">A complete frame workflow, right in your browser</div>
+          <div class="empty-hint-subtitle" data-i18n="emptyFeaturesSub">From metadata to export, your files stay on this device.</div>
+          <button type="button" class="btn btn-primary mobile-add-btn" id="mobileAddBtn" data-i18n="emptyChooseMedia">Choose photos or videos</button>
+        </div>
+        <div class="empty-hint-grid">
         <div class="empty-hint-card">
           <div class="empty-hint-emoji">📷</div>
-          <div class="empty-hint-card-title">EXIF Frame</div>
-          <div class="empty-hint-card-desc">Camera · Lens · Aperture<br>Shutter speed · ISO</div>
+          <div class="empty-hint-card-title" data-i18n="emptyFeatureExifTitle">EXIF-aware frames</div>
+          <div class="empty-hint-card-desc" data-i18n="emptyFeatureExifDesc">Camera, lens and exposure details</div>
         </div>
         <div class="empty-hint-card">
           <div class="empty-hint-emoji">🎬</div>
-          <div class="empty-hint-card-title">Video Support</div>
-          <div class="empty-hint-card-desc">MP4 · MOV · WebM<br>Original audio preserved</div>
+          <div class="empty-hint-card-title" data-i18n="emptyFeatureVideoTitle">Photo + video</div>
+          <div class="empty-hint-card-desc" data-i18n="emptyFeatureVideoDesc">Preserves supported source audio</div>
         </div>
         <div class="empty-hint-card">
           <div class="empty-hint-emoji">⚡</div>
-          <div class="empty-hint-card-title">Batch Export</div>
-          <div class="empty-hint-card-desc">Generate all &amp; download<br>as ZIP in one click</div>
+          <div class="empty-hint-card-title" data-i18n="emptyFeatureBatchTitle">Batch workflow</div>
+          <div class="empty-hint-card-desc" data-i18n="emptyFeatureBatchDesc">Process many files and export a ZIP</div>
         </div>
         <div class="empty-hint-card">
           <div class="empty-hint-emoji">🔒</div>
-          <div class="empty-hint-card-title">100% Private</div>
-          <div class="empty-hint-card-desc">All local processing<br>Files never leave your device</div>
+          <div class="empty-hint-card-title" data-i18n="emptyFeaturePrivateTitle">Private by default</div>
+          <div class="empty-hint-card-desc" data-i18n="emptyFeaturePrivateDesc">Media processing stays on-device</div>
+        </div>
         </div>
       </div>
     </div>
@@ -952,6 +966,23 @@
       <button type="button" class="btn btn-secondary btn-sm" id="locationPrivacyCancelBtn" data-i18n="privacyCancel">Cancel</button>
       <button type="button" class="btn btn-secondary btn-sm" id="locationPrivacyOnceBtn" data-i18n="privacyAllowOnce">Allow once</button>
       <button type="button" class="btn btn-primary btn-sm" id="locationPrivacyAlwaysBtn" data-i18n="privacyAllowAlways">Always allow</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Destructive Action Confirmation ─────────────────────────────────────── -->
+<div class="map-modal confirm-modal" id="destructiveConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="destructiveConfirmTitle" aria-describedby="destructiveConfirmMessage">
+  <div class="map-modal-content confirm-modal-content">
+    <div class="confirm-modal-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5"/></svg>
+    </div>
+    <div class="confirm-modal-copy">
+      <div class="map-modal-title" id="destructiveConfirmTitle" data-i18n="deleteConfirmTitle">Delete this photo?</div>
+      <p id="destructiveConfirmMessage" data-i18n="confirmDeleteItem">This item will be removed from the current workspace.</p>
+    </div>
+    <div class="confirm-modal-actions">
+      <button type="button" class="btn btn-secondary" id="destructiveConfirmCancelBtn" data-i18n="privacyCancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="destructiveConfirmAcceptBtn" data-i18n="deleteConfirmAction">Delete</button>
     </div>
   </div>
 </div>

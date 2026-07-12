@@ -134,3 +134,20 @@ test('export progress exposes a named meter, cancel control, and focus restorati
   await expect(page.locator('#generateAllBtn')).toBeFocused();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
 });
+
+test('crisp auto preview and custom delete confirmation are portable', async ({ page }) => {
+  await uploadJpeg(page);
+  const canvas = page.locator('#livePreviewCanvas');
+  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(1.9);
+
+  const remove = page.locator('[data-action="remove"]');
+  await remove.focus();
+  await remove.press('Enter');
+  await expect(page.locator('#destructiveConfirmCancelBtn')).toBeFocused();
+  await assertNoAxeViolations(page, '#destructiveConfirmModal');
+  await page.keyboard.press('Escape');
+  await expect(remove).toBeFocused();
+  await remove.press('Enter');
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('.image-card')).toHaveCount(0);
+});

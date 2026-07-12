@@ -19,12 +19,15 @@
   function getPreviewBackingScale(quality, devicePixelRatio = 1, zoom = 1) {
     const q = normalizePreviewQuality(quality);
     const dpr = Math.max(1, Number(devicePixelRatio) || 1);
-    const safeZoom = Math.max(0.5, Math.min(3, Number(zoom) || 1));
-    if (q === 'draft') return 0.75;
-    if (q === 'normal') return 1;
-    if (q === 'high') return Math.max(1.5, Math.min(2, dpr));
-    if (q === 'max') return Math.max(2, Math.min(3, dpr * 1.5));
-    return Math.max(1, Math.min(2.5, dpr * Math.max(1, safeZoom)));
+    const safeZoom = Math.max(0.5, Math.min(6, Number(zoom) || 1));
+    const zoomDetail = Math.sqrt(Math.max(1, safeZoom));
+    if (q === 'draft') return Math.min(2, Math.max(1, zoomDetail));
+    if (q === 'normal') return Math.min(3, Math.max(1.5, Math.min(2, dpr)) * zoomDetail);
+    if (q === 'high') return Math.min(5, Math.max(2, Math.min(3, dpr * 1.5)) * zoomDetail);
+    if (q === 'max') return Math.min(6, Math.max(3, Math.min(4, dpr * 2)) * zoomDetail);
+    // Auto should still look crisp on 1× desktop displays. Increase density
+    // gradually while zooming instead of stretching the same backing bitmap.
+    return Math.min(6, Math.max(2, dpr * safeZoom));
   }
 
   function formatCoordinateLabel(latitude, longitude) {

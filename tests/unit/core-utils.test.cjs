@@ -6,9 +6,13 @@ const core = require('../../js/core-utils.js');
 
 test('preview quality changes backing density without changing a layout input', () => {
   assert.equal(core.normalizePreviewQuality('unknown'), 'auto');
-  assert.equal(core.getPreviewBackingScale('draft', 2, 1), 0.75);
-  assert.equal(core.getPreviewBackingScale('normal', 2, 1), 1);
-  assert.ok(core.getPreviewBackingScale('high', 1, 1) > 1);
+  assert.equal(core.getPreviewBackingScale('draft', 2, 1), 1);
+  assert.equal(core.getPreviewBackingScale('normal', 1, 1), 1.5);
+  assert.equal(core.getPreviewBackingScale('auto', 1, 1), 2);
+  assert.equal(core.getPreviewBackingScale('auto', 1, 3), 3);
+  assert.equal(core.getPreviewBackingScale('auto', 1, 6), 6);
+  assert.equal(core.getPreviewBackingScale('max', 1, 6), 6);
+  assert.ok(core.getPreviewBackingScale('high', 1, 1) >= core.getPreviewBackingScale('auto', 1, 1));
   assert.ok(core.getPreviewBackingScale('max', 1, 1) > core.getPreviewBackingScale('high', 1, 1));
 });
 
