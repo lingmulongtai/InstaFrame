@@ -187,6 +187,38 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   expect(download.suggestedFilename()).toMatch(/instaframe.*\.zip$/i);
 });
 
+test('photo export refuses a browser MIME fallback instead of mislabelling the file', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('label[for="fmt-webp"]').click();
+  await page.evaluate(() => {
+    const nativeToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function forcedFallback(callback, type, quality) {
+      if (type === 'image/webp') {
+        callback(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }));
+        return;
+      }
+      nativeToBlob.call(this, callback, type, quality);
+    };
+  });
+  let downloadCount = 0;
+  page.on('download', () => { downloadCount += 1; });
+  await page.locator('#dl-btn-1').click();
+  await expect(page.locator('#toast')).toContainText(/could not finish|完了できません/);
+  expect(downloadCount).toBe(0);
+});
+
+test('video export controls disappear when MediaRecorder supports no output MIME', async ({ page }) => {
+  await page.evaluate(() => {
+    window.MediaRecorder.isTypeSupported = () => false;
+    window.initVideoFormatOptions();
+  });
+  await expect(page.locator('#videoFormatPills input[name="exportVideoFormat"]')).toHaveCount(0);
+  await expect(page.locator('#videoFormatPills [role="status"]')).toContainText(/unavailable|書き出せません/i);
+  const disabledBitrates = await page.locator('input[name="exportVideoBitrate"]:disabled').count();
+  const allBitrates = await page.locator('input[name="exportVideoBitrate"]').count();
+  expect(disabledBitrates).toBe(allBitrates);
+});
+
 test('batch encoding failure restores controls and reports the error', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {

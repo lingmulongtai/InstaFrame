@@ -596,7 +596,14 @@ const FrameEngine = (() => {
                :                     'image/jpeg';
     // PNG is lossless — no quality arg
     return new Promise((resolve, reject) =>
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Image encoding failed')), mime, format === 'png' ? undefined : quality)
+      canvas.toBlob(blob => {
+        if (!blob) { reject(new Error('Image encoding failed')); return; }
+        if (blob.type.toLowerCase() !== mime) {
+          reject(new Error(`Browser returned ${blob.type || 'an unknown format'} instead of ${mime}`));
+          return;
+        }
+        resolve(blob);
+      }, mime, format === 'png' ? undefined : quality)
     );
   }
 
@@ -1035,7 +1042,8 @@ const FrameEngine = (() => {
         const candidates = preferredMime
           ? [preferredMime, 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
           : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
-        const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
+        const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+        if (!mimeType) { fail(new Error('Video export is not supported by this browser')); return; }
 
         recorder = new MediaRecorder(outputStream, {
           mimeType,

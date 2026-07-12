@@ -2100,6 +2100,13 @@ input[type="range"]:focus-visible {
 }
 #photoQualityRow.row-hidden { display: none; }
 
+.export-format-unavailable {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* ── Preview empty: mobile import hint (hidden on desktop) ──────────────────── */
 .preview-empty-mobile-hint { display: none; }
 .preview-empty-format-note {

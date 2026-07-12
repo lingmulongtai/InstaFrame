@@ -931,6 +931,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
+      if (!mime) throw new Error(t('msgVideoExportUnavailable'));
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
       const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
         item.file, item.exif, state.settings,
@@ -2984,14 +2985,19 @@ const VIDEO_FORMAT_MAP = {
   'webm': 'video/webm',
 };
 
+function _supportsVideoExportMime(mime) {
+  try { return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime); }
+  catch { return false; }
+}
+
 function resolveVideoMime(formatKey) {
   if (!formatKey) {
     // Auto: pick best supported
     return ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-      .find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
+      .find(_supportsVideoExportMime) || '';
   }
   const mime = VIDEO_FORMAT_MAP[formatKey] || formatKey;
-  return MediaRecorder.isTypeSupported(mime) ? mime : resolveVideoMime('');
+  return _supportsVideoExportMime(mime) ? mime : resolveVideoMime('');
 }
 
 function initVideoFormatOptions() {
@@ -3002,9 +3008,21 @@ function initVideoFormatOptions() {
     { label: 'MP4',  value: 'mp4',  mime: 'video/mp4' },
     { label: 'VP9',  value: 'vp9',  mime: 'video/webm;codecs=vp9,opus' },
     { label: 'VP8',  value: 'vp8',  mime: 'video/webm;codecs=vp8,opus' },
-  ].filter(f => { try { return MediaRecorder.isTypeSupported(f.mime); } catch { return false; } });
+  ].filter(format => _supportsVideoExportMime(format.mime));
 
-  if (!candidates.length) candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
+  document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(control => {
+    control.disabled = candidates.length === 0;
+  });
+  if (!candidates.length) {
+    const message = document.createElement('p');
+    message.className = 'export-format-unavailable';
+    message.setAttribute('role', 'status');
+    message.setAttribute('data-i18n', 'videoExportUnavailable');
+    message.textContent = t('videoExportUnavailable');
+    container.replaceChildren(message);
+    state.settings.exportVideoFormat = '';
+    return;
+  }
 
   container.innerHTML = candidates.map((f, i) => `
     <div class="ratio-pill">
