@@ -1035,15 +1035,15 @@ function restoreSettings() {
   }
   // Show/hide location position row and map overlay rows
   const locPosRow   = document.getElementById('locationPositionRow');
-  if (locPosRow) locPosRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !saved.showLocation);
   const mapOvRow    = document.getElementById('mapOverlayRow');
-  if (mapOvRow) mapOvRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !saved.showLocation);
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
-  if (mapOvOpRow) mapOvOpRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
   const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
-  if (mapOvPosRow) mapOvPosRow.style.display = (saved.showLocation && saved.showMapOverlay) ? '' : 'none';
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
   const locIconRow  = document.getElementById('locationIconRow');
-  if (locIconRow) locIconRow.style.display = (saved.showLocation) ? '' : 'none';
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !saved.showLocation);
 
   // Frame background mode
   if (saved.frameBackground) {
@@ -1053,8 +1053,8 @@ function restoreSettings() {
   const isBlurBg = saved.frameBackground === 'blur';
   const frameColorRow = document.getElementById('frameColorRow');
   const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
-  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
+  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -1153,8 +1153,8 @@ function applySettings() {
   const isBlurBg = state.settings.frameBackground === 'blur';
   const frameColorRow = document.getElementById('frameColorRow');
   const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.style.display = isBlurBg ? 'none' : '';
-  if (blurOptionsRow) blurOptionsRow.style.display = isBlurBg ? '' : 'none';
+  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
+  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
 
   if (isBlurBg) {
     state.settings.blurRadius     = parseInt(document.getElementById('blurRadiusRange')?.value || '20', 10);
@@ -1208,11 +1208,11 @@ function applySettings() {
   const mapOvOpRow     = document.getElementById('mapOverlayOpacityRow');
   const mapOvPosRow    = document.getElementById('mapOverlayPositionRow');
   const locIconRow     = document.getElementById('locationIconRow');
-  if (locPosRow) locPosRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (mapOvRow) mapOvRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (locIconRow) locIconRow.style.display = state.settings.showLocation ? '' : 'none';
-  if (mapOvOpRow) mapOvOpRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
-  if (mapOvPosRow) mapOvPosRow.style.display = (state.settings.showLocation && state.settings.showMapOverlay) ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !state.settings.showLocation);
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -1328,8 +1328,8 @@ function _syncDomWithStateSettings() {
   const isBlur = s.frameBackground === 'blur';
   const fcRow = document.getElementById('frameColorRow');
   const boRow = document.getElementById('blurOptionsRow');
-  if (fcRow) fcRow.style.display = isBlur ? 'none' : '';
-  if (boRow) boRow.style.display = isBlur ? '' : 'none';
+  if (fcRow) fcRow.classList.toggle('is-hidden', isBlur);
+  if (boRow) boRow.classList.toggle('is-hidden', !isBlur);
   setVal('blurRadiusRange', s.blurRadius ?? 20);
   setText('blurRadiusVal', (s.blurRadius ?? 20) + 'px');
   setVal('blurBrightnessRange', s.blurBrightness ?? 80);
@@ -1343,15 +1343,15 @@ function _syncDomWithStateSettings() {
   });
 
   const locPosRow = document.getElementById('locationPositionRow');
-  if (locPosRow) locPosRow.style.display = s.showLocation ? '' : 'none';
+  if (locPosRow) locPosRow.classList.toggle('is-hidden', !s.showLocation);
   const mapOvRow = document.getElementById('mapOverlayRow');
-  if (mapOvRow) mapOvRow.style.display = s.showLocation ? '' : 'none';
+  if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !s.showLocation);
   const mapOvOpRow = document.getElementById('mapOverlayOpacityRow');
-  if (mapOvOpRow) mapOvOpRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(s.showLocation && s.showMapOverlay));
   const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
-  if (mapOvPosRow) mapOvPosRow.style.display = (s.showLocation && s.showMapOverlay) ? '' : 'none';
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(s.showLocation && s.showMapOverlay));
   const locIconRow = document.getElementById('locationIconRow');
-  if (locIconRow) locIconRow.style.display = s.showLocation ? '' : 'none';
+  if (locIconRow) locIconRow.classList.toggle('is-hidden', !s.showLocation);
 }
 
 function applySettingsSnapshot(snapshot) {
@@ -3037,6 +3037,7 @@ function setVisible(el, show, displayVal = '') {
   if (el._fadeTimer) { clearTimeout(el._fadeTimer); el._fadeTimer = null; }
 
   if (show) {
+    el.classList.remove('is-hidden');
     if (el.style.display === 'none') {
       el.style.opacity = '0';
       el.style.display = displayVal || '';
@@ -3047,6 +3048,7 @@ function setVisible(el, show, displayVal = '') {
     el.style.opacity = '0';
     el._fadeTimer = setTimeout(() => {
       el.style.display = 'none';
+      el.classList.add('is-hidden');
       el._fadeTimer = null;
     }, 190);
   }
