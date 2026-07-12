@@ -162,6 +162,29 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
+test('video cancellation propagates an AbortSignal to the active encoder', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'cancel-me.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await page.evaluate(() => {
+    window.__videoAbortObserved = false;
+    window.FrameEngine.renderVideoFrameWhenReady = (_file, _exif, _settings, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        window.__videoAbortObserved = true;
+        reject(new DOMException('Export cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await page.locator('#cancelExportBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__videoAbortObserved)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+});
+
 test('Japanese preview quality labels change raster density without moving composition', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
@@ -324,6 +347,39 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   await expect(page.locator('#previewVideoBar')).toBeVisible();
   await page.locator('#preview-1').click();
   await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+  expect(await page.locator('#livePreviewVideo').evaluate(video => ({
+    hasSource: video.hasAttribute('src'),
+    hasObjectUrl: !!video._objUrl,
+    hasSourceId: !!video._srcId,
+    paused: video.paused,
+  }))).toEqual({ hasSource: false, hasObjectUrl: false, hasSourceId: false, paused: true });
+});
+
+test('photo card and preview Blob URLs are revoked after rerender and removal', async ({ page }) => {
+  await page.addInitScript(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    window.__blobUrls = { created: new Set(), revoked: new Set() };
+    URL.createObjectURL = value => {
+      const url = create(value);
+      window.__blobUrls.created.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      window.__blobUrls.revoked.add(url);
+      revoke(url);
+    };
+  });
+  await page.reload();
+  await uploadJpegs(page);
+  await page.locator('#langToggleBtn').click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-action="remove"]').click();
+  await expect.poll(() => page.evaluate(() => ({
+    created: window.__blobUrls.created.size,
+    revoked: window.__blobUrls.revoked.size,
+    active: [...window.__blobUrls.created].filter(url => !window.__blobUrls.revoked.has(url)).length,
+  }))).toEqual({ created: 3, revoked: 3, active: 0 });
 });
 
 test('WebM input exports a decodable framed video', async ({ page }) => {

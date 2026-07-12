@@ -44,7 +44,6 @@ export function createStaticServer({ rootDirectory = root, hostname = host, list
 
       response.writeHead(200, {
         'Cache-Control': 'no-store',
-        'Connection': 'close',
         'Content-Length': metadata.size,
         'Content-Type': mimeTypes.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
       });
@@ -53,7 +52,6 @@ export function createStaticServer({ rootDirectory = root, hostname = host, list
       send(response, error?.code === 'ENOENT' ? 404 : 500, error?.code === 'ENOENT' ? 'Not found' : 'Server error');
     }
   });
-  server.keepAliveTimeout = 1;
   return server;
 }
 

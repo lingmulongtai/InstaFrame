@@ -41,7 +41,9 @@ test('the published page has a self-only CSP with no inline handlers or styles',
   const index = fs.readFileSync(path.resolve(__dirname, '../../index.html'), 'utf8');
   assert.match(index, /Content-Security-Policy/);
   assert.match(index, /script-src 'self'/);
-  assert.match(index, /style-src 'self' https:\/\/fonts\.googleapis\.com/);
+  assert.match(index, /style-src 'self'; font-src 'self'/);
+  assert.doesNotMatch(index, /fonts\.(?:googleapis|gstatic)\.com/);
+  assert.doesNotMatch(index, /frame-ancestors/);
   assert.doesNotMatch(index, /\bon(?:click|change|input)=/i);
   assert.doesNotMatch(index, /\bstyle\s*=/i);
 });

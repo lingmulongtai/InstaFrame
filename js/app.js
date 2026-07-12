@@ -107,6 +107,9 @@ const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _exportCancelRequested = false;
+let   _activeExportController = null;
+let   _exportProgressPreviousFocus = null;
+let   _lastProgressAnnouncement = -1;
 
 // ─── Video canvas preview loop ────────────────────────────────────────────────
 let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
@@ -159,14 +162,32 @@ function setupMapModalActions() {
   document.getElementById('openMapPickerBtn')?.addEventListener('click', openMapPicker);
   document.getElementById('mapPickerCloseBtn')?.addEventListener('click', closeMapPicker);
   document.getElementById('confirmMapLocationBtn')?.addEventListener('click', confirmMapLocation);
+  document.getElementById('selectMapCenterBtn')?.addEventListener('click', () => {
+    if (_mapPickerMap) _selectMapCoordinates(_mapPickerMap.getCenter());
+  });
   document.getElementById('mapPickerModal')?.addEventListener('click', event => {
     if (event.target === event.currentTarget) closeMapPicker();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.getElementById('mapPickerModal')?.classList.contains('open')) {
+      event.preventDefault();
+      closeMapPicker();
+    }
   });
 }
 
 function setupAccessibleFormNames() {
   document.querySelectorAll('input, select, textarea').forEach(control => {
     if (control.getAttribute('aria-label') || control.getAttribute('aria-labelledby')) return;
+    const wrappingLabel = control.closest('label');
+    if (wrappingLabel) {
+      const wrappingText = wrappingLabel.textContent?.trim();
+      if (wrappingText) return;
+      if (wrappingLabel.title) {
+        control.setAttribute('aria-label', wrappingLabel.title);
+        return;
+      }
+    }
     if (control.id && document.querySelector(`label[for="${control.id}"]`)) return;
     const scope = control.closest('.setting-row, .customize-row, .preview-exif-grid, .video-volume-wrap, .preview-video-bar');
     const visibleLabel = scope?.querySelector('.setting-label, .customize-row-label, label[data-i18n]');
@@ -365,7 +386,12 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => { _trackMapboxLoad(); _mapImgCache.set(key, img); resolve(img); };
+    img.onload  = () => {
+      _trackMapboxLoad();
+      if (_mapImgCache.size >= 12) _mapImgCache.delete(_mapImgCache.keys().next().value);
+      _mapImgCache.set(key, img);
+      resolve(img);
+    };
     img.onerror = () => resolve(null);
     img.src = url;
   });
@@ -648,7 +674,10 @@ function removeItem(id, options = {}) {
   if (!skipConfirm && !window.confirm(t('confirmDeleteItem'))) return;
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
-  if (idx !== -1) state.items.splice(idx, 1);
+  if (idx !== -1) {
+    _releaseItemOutput(state.items[idx]);
+    state.items.splice(idx, 1);
+  }
   const el = document.getElementById(`item-${id}`);
   if (el) el.remove();
   // If removed item was selected, select the new first item
@@ -665,6 +694,7 @@ function clearAllItems(skipConfirm = false) {
   if (!skipConfirm && !window.confirm(t('confirmClearAll'))) return;
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
+  state.items.forEach(_releaseItemOutput);
   state.items = [];
   state.selectedItemId = null;
   const grid = document.getElementById('imageGrid');
@@ -676,12 +706,13 @@ function clearAllItems(skipConfirm = false) {
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
 // onExternalProgress: optional (pct: 0..1) => void — for batch progress tracking
-async function generateItem(item, onExternalProgress = null) {
+async function generateItem(item, onExternalProgress = null, signal = null) {
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
 
   try {
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
@@ -695,10 +726,12 @@ async function generateItem(item, onExternalProgress = null) {
             updateItemStatus(item);
             if (onExternalProgress) onExternalProgress(p);
           },
+          signal,
         }
       );
     } else {
       const img = await FrameEngine.loadImage(item.file);
+      if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       // Pre-fetch map overlay image if enabled and coordinates are available
       let mapOverlayImg = null;
       if (state.settings.showMapOverlay && state.settings.showLocation &&
@@ -706,13 +739,18 @@ async function generateItem(item, onExternalProgress = null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
       }
       item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
+      if (signal?.aborted) {
+        _releaseItemOutput(item);
+        throw new DOMException('Export cancelled', 'AbortError');
+      }
       if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
     item.errorMsg = null;
   } catch (e) {
-    item.status   = 'error';
-    item.errorMsg = e.message;
+    const cancelled = e?.name === 'AbortError';
+    item.status   = cancelled ? 'pending' : 'error';
+    item.errorMsg = cancelled ? null : e.message;
     if (onExternalProgress) onExternalProgress(1);
   }
 
@@ -733,6 +771,8 @@ async function generateAll() {
   }
 
   _exportCancelRequested = false;
+  const controller = new AbortController();
+  _activeExportController = controller;
   setGlobalBusy(true);
   const total = pending.length;
 
@@ -751,13 +791,14 @@ async function generateAll() {
     await generateItem(item, p => {
       const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
       showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
-    });
+    }, controller.signal);
   }
 
   const cancelled = _exportCancelRequested;
-  hideProgress();
   setGlobalBusy(false);
+  hideProgress();
   _exportCancelRequested = false;
+  if (_activeExportController === controller) _activeExportController = null;
   showToast(t(cancelled ? 'msgExportCancelled' : 'msgDone'), cancelled ? 'warn' : 'success');
 }
 
@@ -765,11 +806,13 @@ async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
   item.status    = 'pending';
-  item.videoBlob = null;
-  item.canvas    = null;
+  _releaseItemOutput(item);
+  const controller = new AbortController();
+  _activeExportController = controller;
   showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
+  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
   hideProgress();
+  if (_activeExportController === controller) _activeExportController = null;
 }
 
 // Apply frame (if needed) then download — used by per-item Download button
@@ -781,12 +824,14 @@ async function applyAndDownloadSingle(id) {
     // Generate first
     setGlobalBusy(true);
     item.status    = 'pending';
-    item.videoBlob = null;
-    item.canvas    = null;
+    _releaseItemOutput(item);
+    const controller = new AbortController();
+    _activeExportController = controller;
     showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p));
-    hideProgress();
+    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
     setGlobalBusy(false);
+    hideProgress();
+    if (_activeExportController === controller) _activeExportController = null;
   }
 
   if (item.status === 'done') {
@@ -832,6 +877,8 @@ async function downloadAll() {
   }
 
   _exportCancelRequested = false;
+  const controller = new AbortController();
+  _activeExportController = controller;
   setGlobalBusy(true);
 
   // Auto-generate any pending items first
@@ -848,22 +895,24 @@ async function downloadAll() {
       await generateItem(item, p => {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
-      });
+      }, controller.signal);
     }
   }
 
   if (_exportCancelRequested) {
-    hideProgress();
     setGlobalBusy(false);
+    hideProgress();
     _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
 
   const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
   if (!done.length) {
-    hideProgress();
     setGlobalBusy(false);
+    hideProgress();
+    if (_activeExportController === controller) _activeExportController = null;
     showToast(t('msgNoImages'), 'warn');
     return;
   }
@@ -890,9 +939,10 @@ async function downloadAll() {
   }
 
   if (_exportCancelRequested) {
-    hideProgress();
     setGlobalBusy(false);
+    hideProgress();
     _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
@@ -907,18 +957,20 @@ async function downloadAll() {
       }
     );
   } catch (error) {
-    hideProgress();
     setGlobalBusy(false);
+    hideProgress();
     const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
     _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
     showToast(t(cancelled ? 'msgExportCancelled' : 'msgCopyFailed'), cancelled ? 'warn' : 'error');
     return;
   }
 
   triggerDownload(zipBlob, 'instaframe_export.zip');
-  hideProgress();
   setGlobalBusy(false);
+  hideProgress();
   _exportCancelRequested = false;
+  if (_activeExportController === controller) _activeExportController = null;
 }
 
 function triggerDownload(blob, filename) {
@@ -1106,7 +1158,12 @@ function restoreSettings() {
       r.checked = true;
       // Show/hide quality row
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.classList.toggle('row-hidden', saved.exportPhotoFormat === 'png');
+      if (qRow) {
+        const hidden = saved.exportPhotoFormat === 'png';
+        qRow.classList.toggle('row-hidden', hidden);
+        qRow.hidden = hidden;
+        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
+      }
     }
   }
   // Photo quality
@@ -1130,7 +1187,7 @@ function markDoneItemsPending() {
   state.items.forEach(i => {
     if (i.status === 'done') {
       i.status = 'pending';
-      i.canvas = null;
+      _releaseItemOutput(i);
       updateItemStatus(i);
       updateItemPreview(i);
     }
@@ -1568,8 +1625,12 @@ function _loadLeafletScript(src) {
     const script = document.createElement('script');
     script.src = src;
     script.async = true;
-    script.onload = () => resolve(true);
-    script.onerror = () => reject(new Error('Leaflet script load failed'));
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error('Leaflet script load timed out'));
+    }, 8_000);
+    script.onload = () => { clearTimeout(timeout); resolve(true); };
+    script.onerror = () => { clearTimeout(timeout); reject(new Error('Leaflet script load failed')); };
     document.head.appendChild(script);
   });
 }
@@ -1596,15 +1657,22 @@ async function ensureLeafletLoaded() {
 async function openMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (!modal) return;
+  const activeElement = document.activeElement;
+  const previousFocus = activeElement && activeElement !== document.body
+    ? activeElement
+    : document.getElementById('openMapPickerBtn');
   if (!await requestLocationNetworkConsent()) return;
+  modal.classList.add('open');
+  modal.setAttribute('aria-busy', 'true');
+  modal._previousFocus = previousFocus;
+  document.getElementById('mapPickerCloseBtn')?.focus();
   const leafletReady = await ensureLeafletLoaded();
   if (!leafletReady || typeof L === 'undefined') {
+    closeMapPicker();
     showToast(t('msgMapLoadFailed'), 'error');
     return;
   }
-  modal.classList.add('open');
-  modal._previousFocus = document.activeElement;
-  document.getElementById('mapPickerCloseBtn')?.focus();
+  modal.setAttribute('aria-busy', 'false');
 
   // Initialize Leaflet map in the next animation frame so the container
   // has a layout (width/height) before Leaflet tries to measure it.
@@ -1618,18 +1686,7 @@ async function openMapPicker() {
       maxZoom: 19,
     }).addTo(_mapPickerMap);
 
-    _mapPickerMap.on('click', e => {
-      const { lat, lng } = e.latlng;
-      _mapPickerLat = lat;
-      _mapPickerLon = lng;
-      if (_mapPickerMarker) {
-        _mapPickerMarker.setLatLng(e.latlng);
-      } else {
-        _mapPickerMarker = L.marker(e.latlng).addTo(_mapPickerMap);
-      }
-      const coordsEl = document.getElementById('mapPickerCoords');
-      if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
-    });
+    _mapPickerMap.on('click', e => _selectMapCoordinates(e.latlng));
   }
 
   // Force Leaflet to recalculate size after modal becomes visible
@@ -1679,10 +1736,20 @@ async function _fetchIpLocation() {
   } catch { /* silently ignore — stay at default view */ }
 }
 
+function _selectMapCoordinates({ lat, lng }) {
+  _mapPickerLat = lat;
+  _mapPickerLon = lng;
+  if (_mapPickerMarker) _mapPickerMarker.setLatLng([lat, lng]);
+  else if (_mapPickerMap) _mapPickerMarker = L.marker([lat, lng]).addTo(_mapPickerMap);
+  const coordsEl = document.getElementById('mapPickerCoords');
+  if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
+}
+
 function closeMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (modal) {
     modal.classList.remove('open');
+    modal.setAttribute('aria-busy', 'false');
     modal._previousFocus?.focus?.();
     modal._previousFocus = null;
   }
@@ -2000,8 +2067,20 @@ function _invalidateItemCache(itemId) {
   const e = _imgCache.get(itemId);
   if (e) { URL.revokeObjectURL(e.objUrl); _imgCache.delete(itemId); }
   _imgFailed.delete(itemId);
-  for (const k of [..._frameCache.keys()])
-    if (k.startsWith(`${itemId}|`)) _frameCache.delete(k);
+  for (const k of [..._frameCache.keys()]) {
+    if (k.startsWith(`${itemId}|`)) {
+      const canvas = _frameCache.get(k);
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+      _frameCache.delete(k);
+    }
+  }
+}
+
+function _releaseItemOutput(item) {
+  if (!item) return;
+  if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
+  item.canvas = null;
+  item.videoBlob = null;
 }
 
 /** Load image for an item, keeping the Object URL alive for re-use. */
@@ -2077,6 +2156,18 @@ function _stopVideoCanvasPreview() {
     _videoPreviewRAF = null;
   }
   _videoPreviewItemId = null;
+}
+
+function _disposeLiveVideoSource() {
+  _stopVideoCanvasPreview();
+  const video = document.getElementById('livePreviewVideo');
+  if (!video) return;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  if (video._objUrl) URL.revokeObjectURL(video._objUrl);
+  video._objUrl = null;
+  video._srcId = null;
 }
 
 /**
@@ -2180,6 +2271,7 @@ async function renderLivePreview() {
 
   // ── Empty state ────────────────────────────────────────────────────────────
   if (state.items.length === 0) {
+    _disposeLiveVideoSource();
     canvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
@@ -2194,8 +2286,7 @@ async function renderLivePreview() {
   if (item.isVideo && liveVideo) {
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
-      _stopVideoCanvasPreview();
-      if (liveVideo._objUrl) URL.revokeObjectURL(liveVideo._objUrl);
+      _disposeLiveVideoSource();
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
       liveVideo.src     = liveVideo._objUrl;
@@ -2210,7 +2301,7 @@ async function renderLivePreview() {
     return;
   }
   // Switching away from video — stop the canvas loop
-  _stopVideoCanvasPreview();
+  _disposeLiveVideoSource();
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
 
@@ -2252,7 +2343,10 @@ async function renderLivePreview() {
     if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
     if (_frameCache.size >= 30) {             // evict oldest entry to cap memory
-      _frameCache.delete(_frameCache.keys().next().value);
+      const oldest = _frameCache.keys().next().value;
+      const oldCanvas = _frameCache.get(oldest);
+      if (oldCanvas) { oldCanvas.width = 0; oldCanvas.height = 0; }
+      _frameCache.delete(oldest);
     }
     _frameCache.set(hash, rendered);
     _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
@@ -2295,6 +2389,14 @@ function renderItem(item) {
       </div>
     </div>
   `;
+
+  if (thumbSrc) {
+    const thumb = card.querySelector('img.thumb-orig');
+    const releaseThumbUrl = () => URL.revokeObjectURL(thumbSrc);
+    thumb?.addEventListener('load', releaseThumbUrl, { once: true });
+    thumb?.addEventListener('error', releaseThumbUrl, { once: true });
+    if (thumb?.complete) releaseThumbUrl();
+  }
 
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
@@ -2391,7 +2493,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
-    _stopVideoCanvasPreview();
+    _disposeLiveVideoSource();
     const dropZone = document.getElementById('dropZone');
     if (dropZone) {
       dropZone.classList.remove('has-preview');
@@ -2419,6 +2521,10 @@ function updateUI() {
 }
 
 function setGlobalBusy(busy) {
+  if (busy && !_exportProgressPreviousFocus) {
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
+  }
   document.getElementById('generateAllBtn').disabled = busy;
   document.getElementById('downloadAllBtn').disabled = busy;
   const clrBtn = document.getElementById('clearAllBtn');
@@ -2432,21 +2538,39 @@ function showProgress(label, pct) {
   const lbl   = document.getElementById('exportProgressLabel');
   const pctEl = document.getElementById('exportProgressPct');
   if (!wrap) return;
+  const wasHidden = wrap.classList.contains('is-hidden');
+  if (wasHidden) {
+    if (!_exportProgressPreviousFocus) _exportProgressPreviousFocus = document.activeElement;
+    _lastProgressAnnouncement = -1;
+  }
   setVisible(wrap, true);
+  document.getElementById('imageSection')?.setAttribute('aria-busy', 'true');
   const cancelBtn = document.getElementById('cancelExportBtn');
   if (cancelBtn) cancelBtn.style.display = '';
   const p = Math.max(0, Math.min(1, pct));
   fill.style.width   = Math.round(p * 100) + '%';
-  wrap.setAttribute('aria-valuenow', String(Math.round(p * 100)));
-  wrap.setAttribute('aria-valuetext', `${Math.round(p * 100)}% — ${label}`);
+  const meter = document.getElementById('exportProgressMeter');
+  meter?.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+  meter?.setAttribute('aria-valuetext', `${Math.round(p * 100)}% — ${label}`);
   lbl.textContent    = label;
   if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
+  const decile = Math.floor(p * 10);
+  if (decile !== _lastProgressAnnouncement) {
+    _lastProgressAnnouncement = decile;
+    const status = document.getElementById('exportProgressStatus');
+    if (status) status.textContent = `${Math.round(p * 100)}% — ${label}`;
+  }
+  if (wasHidden) cancelBtn?.focus();
 }
 
 function hideProgress() {
   setVisible(document.getElementById('exportProgress'), false);
+  document.getElementById('imageSection')?.setAttribute('aria-busy', 'false');
   const cancelBtn = document.getElementById('cancelExportBtn');
   if (cancelBtn) cancelBtn.style.display = 'none';
+  const previousFocus = _exportProgressPreviousFocus;
+  _exportProgressPreviousFocus = null;
+  queueMicrotask(() => previousFocus?.isConnected && previousFocus.focus?.());
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────
@@ -2904,8 +3028,12 @@ function setupSettingsListeners() {
   // Location icon picker
   document.querySelectorAll('.icon-pick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.icon-pick-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.icon-pick-btn').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-checked', 'false');
+      });
       btn.classList.add('active');
+      btn.setAttribute('aria-checked', 'true');
       applySettings();
     });
   });
@@ -2936,7 +3064,12 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
       const qRow = document.getElementById('photoQualityRow');
-      if (qRow) qRow.classList.toggle('row-hidden', r.value === 'png');
+      if (qRow) {
+        const hidden = r.value === 'png';
+        qRow.classList.toggle('row-hidden', hidden);
+        qRow.hidden = hidden;
+        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
+      }
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
@@ -3560,10 +3693,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
   document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
     _exportCancelRequested = true;
+    _activeExportController?.abort();
     showToast(t('msgExportCancelled'), 'warn');
   });
   document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
+  window.addEventListener('pagehide', () => {
+    _activeExportController?.abort();
+    _disposeLiveVideoSource();
+    state.items.forEach(_releaseItemOutput);
+    for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
+    _imgCache.clear();
+  }, { once: true });
 });

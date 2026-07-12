@@ -5,17 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
   <meta name="theme-color" content="#ffffff">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
   <meta property="og:title" content="InstaFrame">
   <meta property="og:description" content="Add beautiful EXIF frames to your photos in batch. Free, local, private.">
   <meta property="og:type" content="website">
 
-  <!-- Google Fonts: frame text fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Montserrat:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=DM+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Lato:ital,wght@0,300;0,700;1,300;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Raleway:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Nunito:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Josefin+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Oswald:wght@300;500;700&family=Work+Sans:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Cinzel:wght@400;700&family=Source+Serif+4:ital,wght@0,300;0,500;0,700;1,300;1,500;1,700&display=swap">
+  <!-- Pinned frame fonts generated from @fontsource packages. -->
+  <link rel="stylesheet" href="vendor/fonts/fonts.css">
 
   <link rel="stylesheet" href="css/style.css">
 
@@ -24,7 +22,6 @@
   <script src="vendor/jszip.min.js"></script>
 </head>
 <body>
-<h1 class="sr-only" data-i18n="appTitleMain">InstaFrame</h1>
 <div class="app-shell">
 
   <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
@@ -520,17 +517,17 @@
         <div class="setting-row is-hidden" id="locationIconRow">
           <div class="setting-label" data-i18n="mapIcon">Icon</div>
           <div class="setting-control">
-            <div class="icon-picker">
-              <button class="icon-pick-btn active" data-icon="pin" title="Pin">
+            <div class="icon-picker" role="radiogroup" aria-label="Location icon">
+              <button type="button" class="icon-pick-btn active" data-icon="pin" title="Pin" role="radio" aria-checked="true">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
               </button>
-              <button class="icon-pick-btn" data-icon="dot" title="Ring">
+              <button type="button" class="icon-pick-btn" data-icon="dot" title="Ring" role="radio" aria-checked="false">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>
               </button>
-              <button class="icon-pick-btn" data-icon="compass" title="Diamond">
+              <button type="button" class="icon-pick-btn" data-icon="compass" title="Diamond" role="radio" aria-checked="false">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3 20 12 12 21 4 12 12 3Z"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>
               </button>
-              <button class="icon-pick-btn" data-icon="globe" title="Flag">
+              <button type="button" class="icon-pick-btn" data-icon="globe" title="Flag" role="radio" aria-checked="false">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v18"/><path d="M7 4h10l-2.3 3L17 10H7"/><circle cx="7" cy="20" r="1.8" fill="currentColor" stroke="none"/></svg>
               </button>
             </div>
@@ -686,6 +683,7 @@
 
   <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
   <main class="main">
+    <h1 class="sr-only" data-i18n="appTitleMain">InstaFrame</h1>
 
     <!-- Live Preview + Drop Zone -->
     <div class="preview-area" id="dropZone">
@@ -856,15 +854,16 @@
       </div>
 
       <!-- Export progress bar (shown during generation / ZIP creation) -->
-      <div id="exportProgress" class="export-progress is-hidden" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="exportProgress" class="export-progress is-hidden">
         <div class="export-progress-header">
           <span id="exportProgressLabel" class="export-progress-label">Processing…</span>
           <span id="exportProgressPct" class="export-progress-pct">0%</span>
           <button type="button" class="export-progress-cancel" id="cancelExportBtn" data-i18n="privacyCancel" aria-label="Cancel export">Cancel</button>
         </div>
-        <div class="export-progress-track">
+        <div id="exportProgressMeter" class="export-progress-track" role="progressbar" aria-labelledby="exportProgressLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="exportProgressFill" class="export-progress-fill"></div>
         </div>
+        <span id="exportProgressStatus" class="sr-only" role="status" aria-live="polite"></span>
       </div>
 
       <div class="batch-bar">
@@ -918,15 +917,17 @@
 <script src="js/app.js"></script>
 
 <!-- ─── Map Location Picker Modal ───────────────────────────────────────────── -->
-<div class="map-modal" id="mapPickerModal" role="dialog" aria-modal="true" aria-labelledby="mapPickerModalTitle">
+<div class="map-modal" id="mapPickerModal" role="dialog" aria-modal="true" aria-labelledby="mapPickerModalTitle" aria-describedby="mapPickerHelp">
   <div class="map-modal-content">
     <div class="map-modal-header">
       <span class="map-modal-title" id="mapPickerModalTitle" data-i18n="pickOnMap">Pick Location on Map</span>
       <button class="map-modal-close" id="mapPickerCloseBtn" data-i18n-attr="title,aria-label" data-i18n="close" title="Close">×</button>
     </div>
-    <div id="mapPickerContainer" class="map-picker-container"></div>
+    <p id="mapPickerHelp" class="map-picker-help" data-i18n="mapKeyboardHelp">Use the arrow keys to move the map, then choose its center or click a point.</p>
+    <div id="mapPickerContainer" class="map-picker-container" tabindex="0"></div>
     <div class="map-modal-footer">
-      <span id="mapPickerCoords" class="map-picker-coords" data-i18n="mapClickHint">Click on the map to select a location</span>
+      <span id="mapPickerCoords" class="map-picker-coords" role="status" aria-live="polite" data-i18n="mapClickHint">Click on the map to select a location</span>
+      <button type="button" class="btn btn-secondary btn-sm" id="selectMapCenterBtn" data-i18n="mapSelectCenter">Use map center</button>
       <button class="btn btn-primary btn-sm" id="confirmMapLocationBtn" data-i18n="mapConfirm">Set Location</button>
     </div>
   </div>

@@ -597,16 +597,27 @@ const FrameEngine = (() => {
       video.onseeked = () => {
         if (captured) return;
         captured = true;
+        const sourceW = video.videoWidth || 1280;
+        const sourceH = video.videoHeight || 720;
+        const scale = Math.min(1, 640 / sourceW, 360 / sourceH);
         const c = document.createElement('canvas');
-        c.width  = video.videoWidth  || 1280;
-        c.height = video.videoHeight || 720;
+        c.width  = Math.max(1, Math.round(sourceW * scale));
+        c.height = Math.max(1, Math.round(sourceH * scale));
         c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-        video.src = '';
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
         URL.revokeObjectURL(url);
-        const img = new Image();
-        img.onload  = () => resolve(img);
-        img.onerror = reject;
-        img.src = c.toDataURL('image/jpeg', 0.92);
+        c.toBlob(blob => {
+          c.width = 0;
+          c.height = 0;
+          if (!blob) { reject(new Error('Video thumbnail encoding failed')); return; }
+          const thumbUrl = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(thumbUrl); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(thumbUrl); reject(new Error('Video thumbnail load failed')); };
+          img.src = thumbUrl;
+        }, 'image/jpeg', 0.88);
       };
 
       video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
@@ -810,7 +821,9 @@ const FrameEngine = (() => {
     preferredMime,
     videoBitsPerSecond = 10_000_000,
     preserveAudio = true,
+    signal,
   } = {}) {
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
@@ -846,18 +859,48 @@ const FrameEngine = (() => {
       let audioContext = null;
       let outputStream = null;
       let sourceStream = null;
+      let canvas = null;
+      let recorder = null;
+      let rafId = null;
+      let stopTimer = null;
+      let settled = false;
+      let cleaned = false;
 
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        if (rafId != null) cancelAnimationFrame(rafId);
+        if (stopTimer != null) clearTimeout(stopTimer);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
         URL.revokeObjectURL(url);
         if (outputStream) outputStream.getTracks().forEach(track => track.stop());
         if (sourceStream) sourceStream.getTracks().forEach(track => track.stop());
         if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
+        if (canvas) { canvas.width = 0; canvas.height = 0; }
+        signal?.removeEventListener('abort', abort);
       };
+
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => {
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch (_) {}
+        }
+        fail(new DOMException('Export cancelled', 'AbortError'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
         const W = video.videoWidth;
         const H = video.videoHeight;
-        if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
+        if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
 
         const isPortrait      = H > W;
         const ts              = settings.thicknessScale || 1;
@@ -875,7 +918,7 @@ const FrameEngine = (() => {
         const canvasW = Math.round(W + sB * 2);
         const canvasH = imageLayout.canvasH;
 
-        const canvas = document.createElement('canvas');
+        canvas = document.createElement('canvas');
         canvas.width  = canvasW;
         canvas.height = canvasH;
         const ctx     = canvas.getContext('2d');
@@ -924,22 +967,23 @@ const FrameEngine = (() => {
           : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
         const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
 
-        const recorder = new MediaRecorder(outputStream, {
+        recorder = new MediaRecorder(outputStream, {
           mimeType,
           videoBitsPerSecond,
         });
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.onstop = () => {
+          if (settled) { cleanup(); return; }
+          settled = true;
+          const blob = new Blob(chunks, { type: mimeType });
           cleanup();
-          resolve(new Blob(chunks, { type: mimeType }));
+          resolve(blob);
         };
         recorder.onerror = event => {
-          cleanup();
-          reject(event.error || new Error('Video recording failed'));
+          fail(event.error || new Error('Video recording failed'));
         };
 
-        let rafId;
         function drawLoop() {
           if (settings.frameBackground === 'blur') {
             drawBlurBackground(ctx, video, canvasW, canvasH, settings);
@@ -958,17 +1002,22 @@ const FrameEngine = (() => {
           } else {
             cancelAnimationFrame(rafId);
             // Give recorder a moment to flush, then stop
-            setTimeout(() => recorder.stop(), 120);
+            stopTimer = setTimeout(() => {
+              if (recorder.state !== 'inactive') recorder.stop();
+            }, 120);
           }
         }
 
         recorder.start(200);
         video.play()
           .then(() => { rafId = requestAnimationFrame(drawLoop); })
-          .catch(err => { recorder.stop(); cleanup(); reject(err); });
+          .catch(err => {
+            if (recorder.state !== 'inactive') recorder.stop();
+            fail(err);
+          });
       };
 
-      video.onerror = () => { cleanup(); reject(new Error('Video load failed')); };
+      video.onerror = () => fail(new Error('Video load failed'));
       video.src  = url;
       video.load();
     });
