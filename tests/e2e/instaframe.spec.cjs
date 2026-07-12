@@ -143,10 +143,18 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('.pq-option[data-q="draft"]')).toHaveAttribute('aria-checked', 'true');
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-controls', 'dropZone');
+  await expect(page.locator('#tabPhotosBtn')).toHaveAttribute('aria-controls', 'photosPanel');
+  await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-controls', 'settingsPanel');
+  expect(await page.locator('#dropZone').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
+  expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
+  expect(await page.locator('#settingsPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
   await page.locator('#tabPreviewBtn').focus();
   await page.keyboard.press('ArrowRight');
   await expect(page.locator('#tabPhotosBtn')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#tabPhotosBtn')).toBeFocused();
+  expect(await page.locator('#dropZone').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
+  expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
 });
 
 test('JPEG upload renders a preview and exports a framed image', async ({ page }) => {
@@ -721,6 +729,7 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await page.reload();
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
   await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#photosPanel')).toBeVisible();
   await expect(page.locator('#mobileAddBtn')).toBeVisible();
   const [buttonBox, viewportWidth] = await Promise.all([
     page.locator('#mobileAddBtn').boundingBox(),
@@ -734,8 +743,15 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   const box = await drawer.boundingBox();
   expect(box.width).toBeGreaterThan(250);
   expect(box.width).toBeLessThanOrEqual(382);
+  await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#photosPanel')).toBeVisible();
+  await expect(page.locator('#imageSection')).toBeVisible();
+  await expect(page.locator('#emptyHint')).toBeHidden();
   await page.locator('#tabSettingsBtn').click();
   await expect(page.locator('.sidebar')).toBeVisible();
+  expect(await page.locator('#dropZone').evaluate(element => element.inert)).toBe(true);
+  expect(await page.locator('#photosPanel').evaluate(element => element.inert)).toBe(true);
+  expect(await page.locator('#settingsPanel').evaluate(element => element.inert)).toBe(false);
 });
 
 test('photo and generated WebM can be switched in the live preview', async ({ page }) => {

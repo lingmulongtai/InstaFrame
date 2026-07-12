@@ -947,6 +947,16 @@ input[type="range"]:focus-visible {
   user-select: none;
   text-align: center;
 }
+
+.photos-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mobile-tab-panel[hidden] { display: none !important; }
 .preview-empty-eyebrow {
   color: #67e8f9;
   font-size: 10px;
@@ -2304,6 +2314,11 @@ input[type="range"]:focus-visible {
   }
 
   /* Image section: fills the main area on photos tab */
+  .photos-panel {
+    position: absolute;
+    inset: 0;
+  }
+
   .image-section {
     position: absolute;
     inset: 0;
@@ -2330,16 +2345,12 @@ input[type="range"]:focus-visible {
   }
 
   /* Tab visibility — hide/show sections based on active tab */
-  body[data-mobile-tab="preview"] .image-section,
-  body[data-mobile-tab="preview"] .empty-hint {
-    display: none !important;
-  }
+  body[data-mobile-tab="preview"] .photos-panel { display: none !important; }
 
   body[data-mobile-tab="photos"] .preview-area { display: none !important; }
 
   body[data-mobile-tab="settings"] .preview-area,
-  body[data-mobile-tab="settings"] .image-section,
-  body[data-mobile-tab="settings"] .empty-hint {
+  body[data-mobile-tab="settings"] .photos-panel {
     display: none !important;
   }
 
