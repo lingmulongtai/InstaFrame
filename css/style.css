@@ -785,7 +785,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   background: var(--surface-2);
   color: var(--text-2);
   user-select: none;
-  transition: background 0.1s, border-color 0.1s;
+  transition: border-color 0.1s;
 }
 .ratio-pill input:checked + label { background: var(--accent); border-color: var(--accent); color: white; }
 .ratio-pill input:focus-visible + label {
