@@ -65,6 +65,37 @@ const _settingsRedoStack = [];
 let _historyLocked = false;
 let _updateMobileEmptyOverlay = null; // set by setupMobileTabs, called from updateUI
 const MAX_EDITABLE_RANGE_INPUT_LENGTH = 64;
+const MAX_SOURCE_ITEMS = 50;
+const MAX_SINGLE_SOURCE_BYTES = 256 * 1024 * 1024;
+const MAX_TOTAL_SOURCE_BYTES = 512 * 1024 * 1024;
+const MAX_SOURCE_IMAGE_PIXELS = 60_000_000;
+const MAX_PREVIEW_CACHE_PIXELS = 32_000_000;
+const MAX_FRAME_CACHE_PIXELS = 12_000_000;
+const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
+const _vendorScriptLoads = new Map();
+
+function loadVendorScript(src, globalName) {
+  if (window[globalName]) return Promise.resolve(window[globalName]);
+  if (_vendorScriptLoads.has(src)) return _vendorScriptLoads.get(src);
+
+  const pending = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.addEventListener('load', () => {
+      if (window[globalName]) resolve(window[globalName]);
+      else reject(new Error(`Vendor script did not expose ${globalName}`));
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
+    document.head.appendChild(script);
+  }).catch(error => {
+    _vendorScriptLoads.delete(src);
+    throw error;
+  });
+
+  _vendorScriptLoads.set(src, pending);
+  return pending;
+}
 
 function _createSettingsSnapshot() {
   return {
@@ -452,13 +483,13 @@ function buildFontSelect() {
 
   if (popular.length) {
     const g1 = document.createElement('optgroup');
-    g1.label = '⭐ Popular';
+    g1.label = t('fontGroupPopular');
     popular.forEach(f => g1.appendChild(makeOpt(f)));
     sel.appendChild(g1);
   }
   if (rest.length) {
     const g2 = document.createElement('optgroup');
-    g2.label = 'More';
+    g2.label = t('fontGroupMore');
     rest.forEach(f => g2.appendChild(makeOpt(f)));
     sel.appendChild(g2);
   }
@@ -473,7 +504,8 @@ function isVideoFile(file) {
 async function readVideoMetadata(file) {
   // exifr can read some QuickTime/XMP metadata from MP4/MOV
   try {
-    const raw = await exifr.parse(file, {
+    const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
+    const raw = await exifrApi.parse(file, {
       pick: ['Make', 'Model', 'Software', 'Author'],
     });
     if (raw) {
@@ -494,7 +526,8 @@ async function readVideoMetadata(file) {
 
 async function readExif(file) {
   try {
-    const raw = await exifr.parse(file, {
+    const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
+    const raw = await exifrApi.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
              'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings',
              'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef'],
@@ -580,10 +613,27 @@ function formatFNumber(v) {
 
 // ─── Item Management ──────────────────────────────────────────────────────────
 async function addFiles(files) {
-  const accepted = Array.from(files).filter(f =>
+  const candidates = Array.from(files).filter(f =>
     f.type.startsWith('image/') || f.type.startsWith('video/') ||
     /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(f.name)
   );
+  const accepted = [];
+  let rejectedCount = 0;
+  let totalBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  for (const file of candidates) {
+    const size = file.size || 0;
+    if (
+      state.items.length + accepted.length >= MAX_SOURCE_ITEMS ||
+      size > MAX_SINGLE_SOURCE_BYTES ||
+      totalBytes + size > MAX_TOTAL_SOURCE_BYTES
+    ) {
+      rejectedCount += 1;
+      continue;
+    }
+    accepted.push(file);
+    totalBytes += size;
+  }
+  if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
   if (!accepted.length) return;
 
   const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
@@ -601,6 +651,7 @@ async function addFiles(files) {
       exif,
       canvas:    null,
       videoBlob: null,
+      thumbnailController: video ? new AbortController() : null,
       progress:  0,
       status:    'pending',
       errorMsg:  null,
@@ -613,9 +664,11 @@ async function addFiles(files) {
     if (!video) {
       try {
         await _loadPreviewImage(item);
-      } catch {
+      } catch (error) {
         item.status = 'error';
-        item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+        item.errorMsg = error?.code === 'MEDIA_RESOURCE_LIMIT'
+          ? t('msgMediaResourceLimit')
+          : tf('msgUnsupportedMedia', { name: file.name });
         updateItemStatus(item);
         showToast(item.errorMsg, 'error');
       }
@@ -626,7 +679,7 @@ async function addFiles(files) {
 
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
-      FrameEngine.captureVideoFrame(file)
+      FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal })
         .then(async img => {
           // Render a framed preview at thumbnail resolution
           const framed = await FrameEngine.renderFrameWhenReady(
@@ -648,9 +701,10 @@ async function addFiles(files) {
           const origThumb = previewDiv.querySelector('img.thumb-orig');
           if (origThumb) origThumb.style.display = 'none';
         })
-        .catch(() => {
+        .catch(error => {
+          if (error?.name === 'AbortError') return;
           // Fallback: show raw captured frame
-          FrameEngine.captureVideoFrame(file).then(img => {
+          return FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal }).then(img => {
             const previewDiv = document.getElementById(`preview-${item.id}`);
             if (!previewDiv) return;
             const thumb = previewDiv.querySelector('img.thumb-orig');
@@ -661,7 +715,8 @@ async function addFiles(files) {
             updateItemStatus(item);
             showToast(item.errorMsg, 'error');
           });
-        });
+        })
+        .finally(() => { item.thumbnailController = null; });
     }
   }
 
@@ -716,7 +771,7 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
-      item.videoBlob = await FrameEngine.renderVideoFrameWhenReady(
+      const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
         item.file, item.exif, state.settings,
         {
           preferredMime:     mime,
@@ -729,6 +784,10 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
           signal,
         }
       );
+      if (_retainedOutputBytes(item) + videoBlob.size > MAX_RETAINED_OUTPUT_BYTES) {
+        throw _mediaResourceLimitError();
+      }
+      item.videoBlob = videoBlob;
     } else {
       const img = await FrameEngine.loadImage(item.file);
       if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -738,7 +797,13 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
           item.exif && item.exif.latitude != null && item.exif.longitude != null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
       }
-      item.canvas = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
+      const rendered = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
+      if (_retainedOutputBytes(item) + rendered.width * rendered.height * 4 > MAX_RETAINED_OUTPUT_BYTES) {
+        rendered.width = 0;
+        rendered.height = 0;
+        throw _mediaResourceLimitError();
+      }
+      item.canvas = rendered;
       if (signal?.aborted) {
         _releaseItemOutput(item);
         throw new DOMException('Export cancelled', 'AbortError');
@@ -750,7 +815,8 @@ async function generateItem(item, onExternalProgress = null, signal = null) {
   } catch (e) {
     const cancelled = e?.name === 'AbortError';
     item.status   = cancelled ? 'pending' : 'error';
-    item.errorMsg = cancelled ? null : e.message;
+    item.errorMsg = cancelled ? null : (e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit') : e.message);
+    if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
     if (onExternalProgress) onExternalProgress(1);
   }
 
@@ -859,14 +925,18 @@ async function downloadSingle(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
 
-  if (item.isVideo && item.videoBlob) {
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
-    triggerDownload(item.videoBlob, name);
-  } else if (item.canvas) {
-    const opts = _photoExportOpts();
-    const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-    triggerDownload(blob, name);
+  try {
+    if (item.isVideo && item.videoBlob) {
+      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
+      triggerDownload(item.videoBlob, name);
+    } else if (item.canvas) {
+      const opts = _photoExportOpts();
+      const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
+      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
+      triggerDownload(blob, name);
+    }
+  } catch {
+    showToast(t('msgExportFailed'), 'error');
   }
 }
 
@@ -917,25 +987,45 @@ async function downloadAll() {
     return;
   }
 
-  showProgress('Preparing files…', 0);
+  showProgress(t('progressPreparing'), 0);
 
-  const zip   = new JSZip();
+  let JSZipCtor;
+  try {
+    JSZipCtor = await loadVendorScript('vendor/jszip.min.js', 'JSZip');
+  } catch {
+    setGlobalBusy(false);
+    hideProgress();
+    if (_activeExportController === controller) _activeExportController = null;
+    showToast(t('msgDependencyLoadFailed'), 'error');
+    return;
+  }
+
+  const zip   = new JSZipCtor();
   const opts  = _photoExportOpts();
   const total = done.length;
 
-  for (let i = 0; i < total; i++) {
-    if (_exportCancelRequested) break;
-    const item = done[i];
-    showProgress(`Packing ${i + 1} / ${total}  —  ${item.file.name}`, (i / total) * 0.7);
+  try {
+    for (let i = 0; i < total; i++) {
+      if (_exportCancelRequested) break;
+      const item = done[i];
+      showProgress(tf('progressPacking', { current: i + 1, total, name: item.file.name }), (i / total) * 0.7);
 
-    if (item.isVideo && item.videoBlob) {
-      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
-      zip.file(name, item.videoBlob);
-    } else if (item.canvas) {
-      const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
-      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-      zip.file(name, blob);
+      if (item.isVideo && item.videoBlob) {
+        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
+        zip.file(name, item.videoBlob);
+      } else if (item.canvas) {
+        const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
+        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
+        zip.file(name, blob);
+      }
     }
+  } catch {
+    setGlobalBusy(false);
+    hideProgress();
+    _exportCancelRequested = false;
+    if (_activeExportController === controller) _activeExportController = null;
+    showToast(t('msgExportFailed'), 'error');
+    return;
   }
 
   if (_exportCancelRequested) {
@@ -953,7 +1043,7 @@ async function downloadAll() {
       { type: 'blob' },
       meta => {
         if (_exportCancelRequested) throw new Error('EXPORT_CANCELLED');
-        showProgress(`Creating ZIP…`, 0.7 + 0.3 * (meta.percent / 100));
+        showProgress(t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
       }
     );
   } catch (error) {
@@ -962,7 +1052,7 @@ async function downloadAll() {
     const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
     _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
-    showToast(t(cancelled ? 'msgExportCancelled' : 'msgCopyFailed'), cancelled ? 'warn' : 'error');
+    showToast(t(cancelled ? 'msgExportCancelled' : 'msgExportFailed'), cancelled ? 'warn' : 'error');
     return;
   }
 
@@ -982,6 +1072,21 @@ function triggerDownload(blob, filename) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function _mediaResourceLimitError() {
+  const error = new Error(t('msgMediaResourceLimit'));
+  error.code = 'MEDIA_RESOURCE_LIMIT';
+  return error;
+}
+
+function _retainedOutputBytes(excludeItem = null) {
+  return state.items.reduce((sum, item) => {
+    if (item === excludeItem) return sum;
+    if (item.canvas) sum += item.canvas.width * item.canvas.height * 4;
+    if (item.videoBlob) sum += item.videoBlob.size || 0;
+    return sum;
+  }, 0);
 }
 
 // ─── Settings persistence ─────────────────────────────────────────────────────
@@ -1481,6 +1586,11 @@ function toggleLiveExifPanel() {
   if (!wrap) return;
   const open = wrap.classList.toggle('exif-open');
   document.querySelector('.preview-exif-drawer-header')?.setAttribute('aria-expanded', String(open));
+  const content = document.getElementById('previewExifContent');
+  if (content) {
+    content.inert = !open;
+    content.setAttribute('aria-hidden', String(!open));
+  }
   if (open) updateLiveExifPanel();
 }
 
@@ -1538,7 +1648,7 @@ function applyLiveExifEdit() {
   syncCard('exif-location', item.exif.location);
 
   item.status = 'pending';
-  item.canvas = null;
+  _releaseItemOutput(item);
   _invalidateItemCache(item.id);
   updateItemStatus(item);
   updateItemPreview(item);
@@ -1557,7 +1667,7 @@ function _applyResolvedLocation(item, latitude, longitude, label) {
   const cardInput = document.getElementById(`exif-location-${item.id}`);
   if (cardInput) cardInput.value = item.exif.location;
   item.status = 'pending';
-  item.canvas = null;
+  _releaseItemOutput(item);
   _invalidateItemCache(item.id);
   updateItemStatus(item);
   updateItemPreview(item);
@@ -2029,14 +2139,16 @@ function resetPreviewView() {
 function selectItem(id) {
   state.selectedItemId = id;
   document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected-preview'));
+  document.querySelectorAll('.card-preview').forEach(preview => preview.setAttribute('aria-pressed', 'false'));
   const el = document.getElementById(`item-${id}`);
-  if (el) el.classList.add('selected-preview');
+  if (el) {
+    el.classList.add('selected-preview');
+    el.querySelector('.card-preview')?.setAttribute('aria-pressed', 'true');
+  }
   // On mobile: auto-switch to preview tab so user can see the result
   if (window.innerWidth <= 768) {
     document.body.setAttribute('data-mobile-tab', 'preview');
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.tab === 'preview');
-    });
+    _setMobileTabState(document.getElementById('mobileTabBar'), 'preview');
   }
   updateLiveExifPanel();
   scheduleLivePreview();
@@ -2078,6 +2190,8 @@ function _invalidateItemCache(itemId) {
 
 function _releaseItemOutput(item) {
   if (!item) return;
+  item.thumbnailController?.abort();
+  item.thumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
   item.videoBlob = null;
@@ -2102,10 +2216,27 @@ async function _loadPreviewImage(item) {
     throw e;
   });
 
-  if (_imgCache.size >= 50) {                         // LRU eviction
+  const imagePixels = img.naturalWidth * img.naturalHeight;
+  if (imagePixels > MAX_SOURCE_IMAGE_PIXELS) {
+    URL.revokeObjectURL(objUrl);
+    _imgFailed.add(item.id);
+    throw _mediaResourceLimitError();
+  }
+
+  let cachedPixels = [..._imgCache.values()].reduce(
+    (sum, entry) => sum + entry.img.naturalWidth * entry.img.naturalHeight,
+    0
+  );
+  while (_imgCache.size && cachedPixels + imagePixels > MAX_PREVIEW_CACHE_PIXELS) {
     const firstKey = _imgCache.keys().next().value;
-    URL.revokeObjectURL(_imgCache.get(firstKey).objUrl);
+    const first = _imgCache.get(firstKey);
+    cachedPixels -= first.img.naturalWidth * first.img.naturalHeight;
+    URL.revokeObjectURL(first.objUrl);
     _imgCache.delete(firstKey);
+  }
+  if (imagePixels > MAX_PREVIEW_CACHE_PIXELS) {
+    URL.revokeObjectURL(objUrl);
+    return img;
   }
   _imgCache.set(item.id, { img, objUrl });
   return img;
@@ -2212,7 +2343,7 @@ function _startVideoCanvasPreview(item) {
         ctx.font = `${Math.round(14 * backingScale)}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
+        ctx.fillText(t('previewLoading'), canvas.width / 2, canvas.height / 2);
       }
       _videoPreviewRAF = requestAnimationFrame(draw);
       return;
@@ -2342,14 +2473,24 @@ async function renderLivePreview() {
 
     if (seq !== _renderSeq) return;           // a newer render started; discard this one
 
-    if (_frameCache.size >= 30) {             // evict oldest entry to cap memory
+    const renderedPixels = rendered.width * rendered.height;
+    let cachedPixels = [..._frameCache.values()].reduce(
+      (sum, cachedCanvas) => sum + cachedCanvas.width * cachedCanvas.height,
+      0
+    );
+    while (_frameCache.size && cachedPixels + renderedPixels > MAX_FRAME_CACHE_PIXELS) {
       const oldest = _frameCache.keys().next().value;
       const oldCanvas = _frameCache.get(oldest);
-      if (oldCanvas) { oldCanvas.width = 0; oldCanvas.height = 0; }
+      if (oldCanvas) {
+        cachedPixels -= oldCanvas.width * oldCanvas.height;
+        oldCanvas.width = 0;
+        oldCanvas.height = 0;
+      }
       _frameCache.delete(oldest);
     }
-    _frameCache.set(hash, rendered);
     _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
+    if (renderedPixels <= MAX_FRAME_CACHE_PIXELS) _frameCache.set(hash, rendered);
+    else { rendered.width = 0; rendered.height = 0; }
     applyPreviewTransform();
   } catch (_e) {
     // Non-critical — silently ignore preview failures
@@ -2369,14 +2510,14 @@ function renderItem(item) {
   const thumbSrc = item.isVideo ? '' : URL.createObjectURL(item.file);
 
   card.innerHTML = `
-    <div class="card-preview" id="preview-${item.id}">
+    <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}">
       ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
       <img class="thumb-orig" src="${thumbSrc}" alt="">
-      <div class="card-status" id="status-badge-${item.id}">
+      <div class="card-status" id="status-badge-${item.id}" role="status" aria-live="polite" aria-atomic="true">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
       </div>
-    </div>
+    </button>
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
@@ -2422,6 +2563,13 @@ function updateItemStatus(item) {
   const text = badge.querySelector('.status-text');
 
   dot.className = `status-dot ${item.status}`;
+  if (item.status === 'error' && item.errorMsg) {
+    badge.setAttribute('aria-label', item.errorMsg);
+    badge.title = item.errorMsg;
+  } else {
+    badge.removeAttribute('aria-label');
+    badge.removeAttribute('title');
+  }
 
   if (item.status === 'processing' && item.isVideo && item.progress > 0) {
     text.textContent = `${Math.round(item.progress * 100)}%`;
@@ -2470,6 +2618,11 @@ function updateItemPreview(item) {
 
 function updateUI() {
   const hasItems = state.items.length > 0;
+  const exifWrap = document.getElementById('previewExifWrap');
+  if (exifWrap) {
+    exifWrap.inert = !hasItems;
+    exifWrap.setAttribute('aria-hidden', String(!hasItems));
+  }
 
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
@@ -2628,7 +2781,7 @@ function onVideoExportSettingChange() {
   state.items.forEach(i => {
     if (i.isVideo && i.status === 'done') {
       i.status    = 'pending';
-      i.videoBlob = null;
+      _releaseItemOutput(i);
       updateItemStatus(i);
     }
   });
@@ -2643,12 +2796,21 @@ function showToast(msg, type = 'info') {
     toast.id = 'toast';
     document.body.appendChild(toast);
   }
+  toast.removeAttribute('role');
+  toast.removeAttribute('aria-live');
+  toast.textContent = '';
+  void toast.offsetWidth;
   toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
   toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
   toast.textContent = msg;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => toast.classList.remove('show'), 3500);
+  toast._timer = setTimeout(() => {
+    toast.classList.remove('show');
+    toast.textContent = '';
+    toast.removeAttribute('role');
+    toast.removeAttribute('aria-live');
+  }, 3500);
 }
 
 // ─── Drag & Drop ──────────────────────────────────────────────────────────────
@@ -3216,30 +3378,66 @@ function setupPreviewQuality() {
   const saved = loadPrefs().previewQuality || 'auto';
   setPreviewQuality(saved, { schedule: false });
 
+  const options = [...popup.querySelectorAll('.pq-option')];
+  const closePopup = ({ restoreFocus = false } = {}) => {
+    popup.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) btn.focus();
+  };
+  const openPopup = () => {
+    popup.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    (options.find(option => option.getAttribute('aria-checked') === 'true') || options[0])?.focus();
+  };
+  const chooseOption = opt => {
+    const q = opt.dataset.q;
+    setPreviewQuality(q, { schedule: false });
+    closePopup({ restoreFocus: true });
+    scheduleLivePreview();
+  };
+
   btn.addEventListener('click', e => {
     e.stopPropagation();
-    popup.classList.toggle('open');
+    if (popup.classList.contains('open')) closePopup();
+    else openPopup();
   });
 
-  popup.querySelectorAll('.pq-option').forEach(opt => {
-    opt.addEventListener('click', () => {
-      const q = opt.dataset.q;
-      setPreviewQuality(q, { schedule: false });
-      popup.classList.remove('open');
-      scheduleLivePreview();
+  options.forEach(opt => {
+    opt.addEventListener('click', () => chooseOption(opt));
+    opt.addEventListener('keydown', event => {
+      const index = options.indexOf(opt);
+      let nextIndex = null;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (index + 1) % options.length;
+      if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (index - 1 + options.length) % options.length;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = options.length - 1;
+      if (nextIndex != null) {
+        event.preventDefault();
+        options[nextIndex].focus();
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        chooseOption(opt);
+      } else if (event.key === 'Escape' || event.key === 'Tab') {
+        if (event.key === 'Escape') event.preventDefault();
+        closePopup({ restoreFocus: event.key === 'Escape' });
+      }
     });
   });
 
   document.addEventListener('click', e => {
     if (!btn.contains(e.target) && !popup.contains(e.target)) {
-      popup.classList.remove('open');
+      closePopup();
     }
   });
   document.addEventListener('instaframe:languagechange', refreshPreviewQualityTranslation);
 }
 
 function _applyQualitySelection(q, popup, label) {
-  popup.querySelectorAll('.pq-option').forEach(o => o.classList.toggle('active', o.dataset.q === q));
+  popup.querySelectorAll('.pq-option').forEach(o => {
+    const selected = o.dataset.q === q;
+    o.classList.toggle('active', selected);
+    o.setAttribute('aria-checked', String(selected));
+  });
   if (label) label.textContent = t(QUALITY_I18N_KEYS[q] || QUALITY_I18N_KEYS.auto);
   updatePreviewViewModifiedState();
 }
@@ -3359,12 +3557,28 @@ function setupCustomizePanel() {
   const scroll = document.getElementById('sidebarScroll');
   if (!btn || !panel || !scroll) return;
 
+  const setOpen = open => {
+    panel.classList.toggle('panel-open', open);
+    scroll.classList.toggle('panel-open', open);
+    btn.classList.toggle('active', open);
+    btn.setAttribute('aria-expanded', String(open));
+    panel.inert = !open;
+    panel.setAttribute('aria-hidden', String(!open));
+    scroll.inert = open;
+    scroll.setAttribute('aria-hidden', String(open));
+    if (open) panel.querySelector('input, button, select, a')?.focus();
+  };
+
   // Toggle panel visibility — class-based so CSS transitions run
   btn.addEventListener('click', () => {
     const open = panel.classList.contains('panel-open');
-    panel.classList.toggle('panel-open', !open);
-    scroll.classList.toggle('panel-open', !open);
-    btn.classList.toggle('active', !open);
+    setOpen(!open);
+  });
+  panel.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    setOpen(false);
+    btn.focus();
   });
 
   const prefs = loadPrefs();
@@ -3443,6 +3657,17 @@ function setupCustomizePanel() {
 }
 
 // ─── Mobile Tab Bar ───────────────────────────────────────────────────────────
+function _setMobileTabState(tabBar, tab) {
+  if (!tabBar) return;
+  document.body.setAttribute('data-mobile-tab', tab);
+  tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+    const selected = btn.dataset.tab === tab;
+    btn.classList.toggle('active', selected);
+    btn.setAttribute('aria-selected', String(selected));
+    btn.tabIndex = selected ? 0 : -1;
+  });
+}
+
 function setupMobileTabs() {
   const tabBar = document.getElementById('mobileTabBar');
   if (!tabBar) return;
@@ -3451,10 +3676,7 @@ function setupMobileTabs() {
 
   function switchTab(tab) {
     if (!isMobile()) return;
-    document.body.setAttribute('data-mobile-tab', tab);
-    tabBar.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tab);
-    });
+    _setMobileTabState(tabBar, tab);
 
     // When switching to preview tab, fire a live preview update
     if (tab === 'preview') scheduleLivePreview();
@@ -3465,18 +3687,31 @@ function setupMobileTabs() {
 
   tabBar.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    btn.addEventListener('keydown', event => {
+      const tabs = [...tabBar.querySelectorAll('.tab-btn')];
+      const index = tabs.indexOf(btn);
+      let nextIndex = null;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = tabs.length - 1;
+      if (nextIndex == null) return;
+      event.preventDefault();
+      switchTab(tabs[nextIndex].dataset.tab);
+      tabs[nextIndex].focus();
+    });
   });
 
   // Default to preview tab on mobile
   if (isMobile()) {
-    document.body.setAttribute('data-mobile-tab', 'preview');
+    _setMobileTabState(tabBar, 'preview');
   }
 
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
     if (!isMobile()) document.body.removeAttribute('data-mobile-tab');
     else if (!document.body.getAttribute('data-mobile-tab')) {
-      document.body.setAttribute('data-mobile-tab', 'preview');
+      _setMobileTabState(tabBar, 'preview');
     }
     updateEmptyTapOverlay();
   });
@@ -3652,13 +3887,6 @@ document.addEventListener('DOMContentLoaded', () => {
   applySettings();           // sync state.settings from restored DOM values
   _historyLocked = false;
 
-  // Pre-load current font so the very first preview render skips the font-fetch delay
-  if (document.fonts) {
-    const fam = `'${state.settings.fontFamily || 'Inter'}'`;
-    ['300 16px', '400 16px', '500 16px', '700 16px']
-      .forEach(s => document.fonts.load(`${s} ${fam}`).catch(() => {}));
-  }
-
   setupDropZone();
   setupVideoPreviewBar();
   setupSettingsListeners();
@@ -3706,5 +3934,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.items.forEach(_releaseItemOutput);
     for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
     _imgCache.clear();
+    for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
+    _frameCache.clear();
+    _mapImgCache.clear();
   }, { once: true });
 });

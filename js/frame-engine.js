@@ -4,6 +4,25 @@
 
 const FrameEngine = (() => {
 
+  const MAX_CANVAS_DIMENSION = 16_384;
+  const MAX_CANVAS_PIXELS = 64_000_000;
+  const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
+
+  function resourceLimitError() {
+    const error = new Error('Media exceeds safe in-browser resource limits');
+    error.code = 'MEDIA_RESOURCE_LIMIT';
+    return error;
+  }
+
+  function assertSafeCanvasSize(width, height) {
+    if (
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      width < 1 || height < 1 ||
+      width > MAX_CANVAS_DIMENSION || height > MAX_CANVAS_DIMENSION ||
+      width * height > MAX_CANVAS_PIXELS
+    ) throw resourceLimitError();
+  }
+
   const FONT_STACKS = {
     'Inter':              "'Inter', Arial, sans-serif",
     'Montserrat':         "'Montserrat', Arial, sans-serif",
@@ -22,6 +41,21 @@ const FrameEngine = (() => {
     'Cinzel':             "'Cinzel', Georgia, serif",
     'Source Serif 4':     "'Source Serif 4', Georgia, serif",
   };
+
+  async function loadFrameFonts(settings) {
+    if (!document.fonts) return;
+    const family = settings.fontFamily || 'Inter';
+    const fam = `'${family}'`;
+    const cameraStyle = settings.cameraNameItalic ? 'italic ' : '';
+    const exifStyle = settings.exifItalic ? 'italic ' : '';
+    const specs = new Set([
+      `${cameraStyle}${settings.cameraNameBold ? '700' : '300'} 16px ${fam}`,
+      `${cameraStyle}${settings.cameraNameBold ? '700' : '500'} 16px ${fam}`,
+      `${cameraStyle}400 16px ${fam}`,
+      `${exifStyle}300 16px ${fam}`,
+    ]);
+    await Promise.all([...specs].map(spec => document.fonts.load(spec).catch(() => {})));
+  }
 
   /**
    * Core synchronous renderer — works at whatever resolution img was loaded at.
@@ -52,11 +86,13 @@ const FrameEngine = (() => {
 
     const canvasW = Math.round(W + sB * 2);
     const canvasH = imageLayout.canvasH;
+    assertSafeCanvasSize(canvasW, canvasH);
 
     const canvas = document.createElement('canvas');
     canvas.width  = canvasW;
     canvas.height = canvasH;
     const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas rendering is unavailable');
 
     if (settings.frameBackground === 'blur') {
       drawBlurBackground(ctx, img, canvasW, canvasH, settings);
@@ -100,9 +136,15 @@ const FrameEngine = (() => {
 
     return new Promise((resolve, reject) => {
       const out = new Image();
-      out.onload  = () => resolve(out);
-      out.onerror = reject;
-      out.src = tmp.toDataURL('image/jpeg', 0.9);
+      tmp.toBlob(blob => {
+        tmp.width = 0;
+        tmp.height = 0;
+        if (!blob) { reject(new Error('Preview scaling failed')); return; }
+        const url = URL.createObjectURL(blob);
+        out.onload = () => { URL.revokeObjectURL(url); resolve(out); };
+        out.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Preview scaling failed')); };
+        out.src = url;
+      }, 'image/jpeg', 0.9);
     });
   }
 
@@ -112,21 +154,13 @@ const FrameEngine = (() => {
    * Pass mapOverlayImg (HTMLImageElement) to draw a Passage-style map overlay.
    */
   async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null } = {}) {
-    const family = settings.fontFamily || 'Inter';
-
-    if (document.fonts) {
-      const fam = `'${family}'`;
-      const specs = [
-        `300 16px ${fam}`, `400 16px ${fam}`, `500 16px ${fam}`, `700 16px ${fam}`,
-        `italic 300 16px ${fam}`, `italic 400 16px ${fam}`, `italic 500 16px ${fam}`, `italic 700 16px ${fam}`,
-      ];
-      // load() resolves even for unavailable variants — safe to Promise.all
-      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
-    }
+    await loadFrameFonts(settings);
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx) : img;
     const base = renderFrame(renderImg, exif, settings, mapOverlayImg);
-    return applyPostProcess(base, settings);
+    const result = applyPostProcess(base, settings);
+    if (result !== base) { base.width = 0; base.height = 0; }
+    return result;
   }
 
   // ─── Drawing helpers ──────────────────────────────────────────────────────
@@ -517,10 +551,12 @@ const FrameEngine = (() => {
     const pad = Math.round(Math.max(tW, tH) * (outerPadding || 0) / 100);
     const fW = tW + pad * 2, fH = tH + pad * 2;
     if (fW === W && fH === H) return src;
+    assertSafeCanvasSize(fW, fH);
 
     const out = document.createElement('canvas');
     out.width = fW; out.height = fH;
     const ctx = out.getContext('2d');
+    if (!ctx) throw new Error('Canvas rendering is unavailable');
     if (settings.frameBackground === 'blur') {
       drawBlurBackground(ctx, src, fW, fH, settings);
     } else {
@@ -559,8 +595,8 @@ const FrameEngine = (() => {
                : format === 'webp' ? 'image/webp'
                :                     'image/jpeg';
     // PNG is lossless — no quality arg
-    return new Promise(resolve =>
-      canvas.toBlob(blob => resolve(blob), mime, format === 'png' ? undefined : quality)
+    return new Promise((resolve, reject) =>
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Image encoding failed')), mime, format === 'png' ? undefined : quality)
     );
   }
 
@@ -581,16 +617,46 @@ const FrameEngine = (() => {
    * @param {File}   file      - video file
    * @param {number} [atSecond=0] - timestamp to seek to
    */
-  function captureVideoFrame(file, atSecond = 0) {
+  function captureVideoFrame(file, atSecond = 0, { signal, timeoutMs = 15_000 } = {}) {
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
       video.muted   = true;
       video.preload = 'metadata';
-      let captured  = false;
+      let captured = false;
+      let settled = false;
+      const timeout = setTimeout(() => fail(new Error('Video thumbnail timed out')), timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
+        video.onloadedmetadata = null;
+        video.onseeked = null;
+        video.onerror = null;
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const succeed = img => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(img);
+      };
+      const abort = () => fail(new DOMException('Thumbnail cancelled', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
-        const t = Math.min(atSecond, Math.max(0, video.duration - 0.05));
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        const t = Math.min(atSecond, Math.max(0, duration - 0.05));
         video.currentTime = t;
       };
 
@@ -603,24 +669,29 @@ const FrameEngine = (() => {
         const c = document.createElement('canvas');
         c.width  = Math.max(1, Math.round(sourceW * scale));
         c.height = Math.max(1, Math.round(sourceH * scale));
-        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        URL.revokeObjectURL(url);
+        const context = c.getContext('2d');
+        if (!context) { c.width = 0; c.height = 0; fail(new Error('Canvas rendering is unavailable')); return; }
+        try {
+          context.drawImage(video, 0, 0, c.width, c.height);
+        } catch (error) {
+          c.width = 0;
+          c.height = 0;
+          fail(error);
+          return;
+        }
         c.toBlob(blob => {
           c.width = 0;
           c.height = 0;
-          if (!blob) { reject(new Error('Video thumbnail encoding failed')); return; }
+          if (!blob) { fail(new Error('Video thumbnail encoding failed')); return; }
           const thumbUrl = URL.createObjectURL(blob);
           const img = new Image();
-          img.onload = () => { URL.revokeObjectURL(thumbUrl); resolve(img); };
-          img.onerror = () => { URL.revokeObjectURL(thumbUrl); reject(new Error('Video thumbnail load failed')); };
+          img.onload = () => { URL.revokeObjectURL(thumbUrl); succeed(img); };
+          img.onerror = () => { URL.revokeObjectURL(thumbUrl); fail(new Error('Video thumbnail load failed')); };
           img.src = thumbUrl;
         }, 'image/jpeg', 0.88);
       };
 
-      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.onerror = () => fail(new Error('Video load failed'));
       video.src  = url;
       video.load();
     });
@@ -632,12 +703,7 @@ const FrameEngine = (() => {
    */
   async function _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond = 10_000_000 } = {}) {
     // Font pre-load
-    const family = settings.fontFamily || 'Inter';
-    if (document.fonts) {
-      const fam   = `'${family}'`;
-      const specs = ['300','400','500','700'].flatMap(w => [`${w} 16px ${fam}`, `italic ${w} 16px ${fam}`]);
-      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
-    }
+    await loadFrameFonts(settings);
 
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);
@@ -840,14 +906,7 @@ const FrameEngine = (() => {
 
     // ── MediaRecorder fallback (includes audio) ────────────────────────────────
     // Pre-load fonts (same as photo path)
-    const family = settings.fontFamily || 'Inter';
-    if (document.fonts) {
-      const fam   = `'${family}'`;
-      const specs = ['300', '400', '500', '700'].flatMap(w => [
-        `${w} 16px ${fam}`, `italic ${w} 16px ${fam}`,
-      ]);
-      await Promise.all(specs.map(s => document.fonts.load(s).catch(() => {})));
-    }
+    await loadFrameFonts(settings);
 
     const sourceHasAudio = await _fileHasAudioTrackHint(file);
 
@@ -917,11 +976,22 @@ const FrameEngine = (() => {
 
         const canvasW = Math.round(W + sB * 2);
         const canvasH = imageLayout.canvasH;
+        const duration = video.duration || 0;
+        try {
+          assertSafeCanvasSize(canvasW, canvasH);
+          if (duration > 0 && duration * videoBitsPerSecond / 8 > MAX_ESTIMATED_VIDEO_BYTES) {
+            throw resourceLimitError();
+          }
+        } catch (error) {
+          fail(error);
+          return;
+        }
 
         canvas = document.createElement('canvas');
         canvas.width  = canvasW;
         canvas.height = canvasH;
         const ctx     = canvas.getContext('2d');
+        if (!ctx) { fail(new Error('Canvas rendering is unavailable')); return; }
 
         const layout = {
           canvasW, canvasH,
@@ -931,7 +1001,6 @@ const FrameEngine = (() => {
           frameColor: settings.frameColor || '#F0F0F0',
         };
         const frameColor = settings.frameColor || '#F0F0F0';
-        const duration   = video.duration || 0;
 
         // ── Preserve the source audio without playing it on the page ──
         let audioTrack = null;

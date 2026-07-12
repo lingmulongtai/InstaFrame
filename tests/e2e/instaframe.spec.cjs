@@ -54,6 +54,44 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
 
+test('dynamic panels and selectors expose keyboard state without hidden focus targets', async ({ page }) => {
+  const customize = page.locator('#customizePanel');
+  await expect(customize).toHaveAttribute('aria-hidden', 'true');
+  expect(await customize.evaluate(element => element.inert)).toBe(true);
+
+  await page.locator('#customizeBtn').press('Enter');
+  await expect(page.locator('#customizeBtn')).toHaveAttribute('aria-expanded', 'true');
+  expect(await customize.evaluate(element => element.inert)).toBe(false);
+  expect(await page.locator('#sidebarScroll').evaluate(element => element.inert)).toBe(true);
+  const customizeAxe = await new AxeBuilder({ page }).include('#customizePanel').analyze();
+  const seriousCustomizeViolations = customizeAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact));
+  expect(seriousCustomizeViolations.map(violation => violation.id), JSON.stringify(seriousCustomizeViolations, null, 2)).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#customizeBtn')).toBeFocused();
+  await expect(page.locator('#customizeBtn')).toHaveAttribute('aria-expanded', 'false');
+
+  await uploadJpegs(page);
+  await expect(page.locator('#preview-1')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('.preview-exif-drawer-header').press('Enter');
+  await expect(page.locator('#previewExifContent')).toHaveAttribute('aria-hidden', 'true');
+  expect(await page.locator('#previewExifContent').evaluate(element => element.inert)).toBe(true);
+  await page.locator('.preview-exif-drawer-header').press('Enter');
+
+  await page.locator('#previewQualityBtn').press('Enter');
+  await expect(page.locator('#previewQualityBtn')).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#previewQualityBtn')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+  await expect(page.locator('.pq-option[data-q="draft"]')).toHaveAttribute('aria-checked', 'true');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#tabPreviewBtn').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#tabPhotosBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#tabPhotosBtn')).toBeFocused();
+});
+
 test('JPEG upload renders a preview and exports a framed image', async ({ page }) => {
   await uploadJpegs(page);
   await expect(page.locator('#live-exif-model')).toHaveValue('X-T5');
@@ -144,6 +182,49 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await page.locator('#downloadAllBtn').click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/instaframe.*\.zip$/i);
+});
+
+test('batch encoding failure restores controls and reports the error', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    window.FrameEngine.canvasToBlob = async () => { throw new Error('simulated encoder failure'); };
+  });
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#toast')).toContainText(/could not finish|完了できません/);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+});
+
+test('heavy local processors load only when their features are used', async ({ page }) => {
+  const loadedResources = () => page.evaluate(() => (
+    performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname)
+  ));
+
+  await expect.poll(loadedResources).not.toContain('/vendor/exifr.js');
+  await expect.poll(loadedResources).not.toContain('/vendor/jszip.min.js');
+  expect((await loadedResources()).filter(pathname => pathname.endsWith('.woff2'))).toEqual([]);
+
+  await uploadJpegs(page, 2);
+  await expect.poll(loadedResources).toContain('/vendor/exifr.js');
+  expect(await loadedResources()).not.toContain('/vendor/jszip.min.js');
+  const loadedFonts = (await loadedResources()).filter(pathname => pathname.endsWith('.woff2'));
+  expect(loadedFonts.length).toBeGreaterThan(0);
+  expect(loadedFonts.length).toBeLessThanOrEqual(4);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  await downloadPromise;
+  await expect.poll(loadedResources).toContain('/vendor/jszip.min.js');
+});
+
+test('oversized source files are rejected before decoding', async ({ page }) => {
+  await page.evaluate(async () => {
+    const file = new File(['not-decoded'], 'too-large.jpg', { type: 'image/jpeg' });
+    Object.defineProperty(file, 'size', { value: 257 * 1024 * 1024 });
+    await window.addFiles([file]);
+  });
+  await expect(page.locator('#imageCounter')).toHaveText('');
+  await expect(page.locator('#toast')).toContainText(/256 MiB|256 MiB/);
 });
 
 test('batch generation can be cancelled while keeping pending items', async ({ page }) => {
