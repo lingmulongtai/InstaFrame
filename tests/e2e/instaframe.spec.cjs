@@ -910,6 +910,60 @@ test('a hung EXIF read cannot block later files in the import queue', async ({ p
   await expect(page.locator('#live-exif-make')).toHaveValue('NEXT FILE');
 });
 
+test('a stalled source image decode cannot block the import queue', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const nativeImage = window.Image;
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    window.__imageDecodeGuardStats = { finished: false, sourceRemoved: false, urlRevoked: false };
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 20_000 ? 25 : delay, ...args)
+    );
+    window.exifr = { parse: () => Promise.resolve(null) };
+    window.Image = class StalledImage {
+      constructor() {
+        this.complete = false;
+        this.naturalWidth = 0;
+        this.naturalHeight = 0;
+      }
+      set src(value) {
+        this._src = value;
+        window.__stalledImageUrl = value;
+      }
+      get src() { return this._src || ''; }
+      removeAttribute(name) {
+        if (name === 'src') {
+          this._src = '';
+          window.__imageDecodeGuardStats.sourceRemoved = true;
+        }
+      }
+    };
+    URL.revokeObjectURL = url => {
+      if (url === window.__stalledImageUrl) window.__imageDecodeGuardStats.urlRevoked = true;
+      nativeRevokeObjectURL(url);
+    };
+    window.addFiles([
+      new File([bytes], 'stalled-decode.jpg', { type: 'image/jpeg' }),
+      new File([bytes], 'later-file.jpg', { type: 'image/jpeg' }),
+    ]).finally(() => {
+      window.Image = nativeImage;
+      window.setTimeout = nativeSetTimeout;
+      URL.revokeObjectURL = nativeRevokeObjectURL;
+      window.__imageDecodeGuardStats.finished = true;
+    });
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__imageDecodeGuardStats)).toEqual({
+    finished: true,
+    sourceRemoved: true,
+    urlRevoked: true,
+  });
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+});
+
 test('video thumbnail decoding is limited to two active jobs', async ({ page }) => {
   await page.evaluate(async () => {
     const releases = [];

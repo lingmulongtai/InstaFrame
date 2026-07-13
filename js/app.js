@@ -80,6 +80,7 @@ const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
 const VENDOR_SCRIPT_GUARD_MS = 12_000;
 const LOCATION_FETCH_GUARD_MS = 10_000;
+const PREVIEW_IMAGE_DECODE_GUARD_MS = 20_000;
 const _vendorScriptLoads = new Map();
 const _locationFetchControllers = new Set();
 let _importQueueTail = Promise.resolve();
@@ -2803,7 +2804,11 @@ async function _decodePreviewImage(item, signal, retainUncached) {
   const img    = new Image();
   await new Promise((resolve, reject) => {
     let settled = false;
-    const cleanup = () => signal.removeEventListener('abort', abort);
+    let timeoutId = null;
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      signal.removeEventListener('abort', abort);
+    };
     const succeed = () => {
       if (settled) return;
       settled = true;
@@ -2827,6 +2832,13 @@ async function _decodePreviewImage(item, signal, retainUncached) {
     if (signal.aborted) { abort(); return; }
     img.onload  = succeed;
     img.onerror = () => fail(new Error('Image load error'));
+    timeoutId = setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');
+      URL.revokeObjectURL(objUrl);
+      fail(new Error('Image load timed out'));
+    }, PREVIEW_IMAGE_DECODE_GUARD_MS);
     img.src = objUrl;
     if (img.complete && img.naturalWidth) succeed();
   }).catch(e => {
