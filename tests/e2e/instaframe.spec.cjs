@@ -296,6 +296,53 @@ test('photo cards replace full-resolution image decodes with bounded canvases', 
   await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
 });
 
+test('photo card decoders stay bounded during a large import', async ({ page }) => {
+  await page.evaluate(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__photoThumbnailReleases = [];
+    window.__activePhotoThumbnailDecoders = 0;
+    window.__maxPhotoThumbnailDecoders = 0;
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__activePhotoThumbnailDecoders += 1;
+          window.__maxPhotoThumbnailDecoders = Math.max(
+            window.__maxPhotoThumbnailDecoders,
+            window.__activePhotoThumbnailDecoders
+          );
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          window.__photoThumbnailReleases.push(() => {
+            delete this.complete;
+            descriptor.set.call(this, value);
+          });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+    const settle = event => {
+      if (!event.target.classList?.contains('thumb-orig')) return;
+      window.__activePhotoThumbnailDecoders -= 1;
+    };
+    document.addEventListener('load', settle, true);
+    document.addEventListener('error', settle, true);
+  });
+
+  await uploadJpegs(page, 6);
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailReleases.length)).toBe(2);
+
+  for (let index = 0; index < 6; index += 1) {
+    await expect.poll(() => page.evaluate(() => window.__photoThumbnailReleases.length))
+      .toBeGreaterThan(index);
+    await page.evaluate(releaseIndex => window.__photoThumbnailReleases[releaseIndex](), index);
+  }
+
+  await expect(page.locator('canvas.thumb-source')).toHaveCount(6);
+  expect(await page.evaluate(() => window.__maxPhotoThumbnailDecoders)).toBe(2);
+});
+
 test('failed photo thumbnail compaction releases its decoded image and canvas', async ({ page }) => {
   await page.evaluate(() => {
     const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
@@ -363,6 +410,55 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBeGreaterThan(0);
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
+});
+
+test('BFCache restore restarts a pending photo card thumbnail', async ({ page }) => {
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    window.__pendingPhotoThumbnailUrls = new Set();
+    window.__pendingPhotoThumbnailReleases = [];
+    URL.createObjectURL = value => create(value);
+    URL.revokeObjectURL = url => {
+      window.__pendingPhotoThumbnailUrls.delete(url);
+      revoke(url);
+    };
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__pendingPhotoThumbnailUrls.add(String(value));
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          window.__pendingPhotoThumbnailReleases.push(() => {
+            delete this.complete;
+            descriptor.set.call(this, value);
+          });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'suspended-photo-thumbnail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__pendingPhotoThumbnailReleases.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__pendingPhotoThumbnailUrls.size)).toBe(1);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect.poll(() => page.evaluate(() => window.__pendingPhotoThumbnailUrls.size)).toBe(0);
+  await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(() => page.evaluate(() => window.__pendingPhotoThumbnailReleases.length)).toBe(2);
+  await page.evaluate(() => window.__pendingPhotoThumbnailReleases[1]());
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__pendingPhotoThumbnailUrls.size)).toBe(0);
 });
 
 test('BFCache restore restarts a video thumbnail interrupted during suspension', async ({ page }) => {
