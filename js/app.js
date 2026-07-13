@@ -1664,6 +1664,26 @@ function _videoExt(blob) {
   return blob.type.includes('mp4') ? 'mp4' : 'webm';
 }
 
+function _uniqueZipEntryName(name, usedNames) {
+  const normalize = value => value.toLowerCase();
+  if (!usedNames.has(normalize(name))) {
+    usedNames.add(normalize(name));
+    return name;
+  }
+
+  const extensionIndex = name.lastIndexOf('.');
+  const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name;
+  const extension = extensionIndex > 0 ? name.slice(extensionIndex) : '';
+  let copy = 2;
+  let candidate;
+  do {
+    candidate = `${stem} (${copy})${extension}`;
+    copy += 1;
+  } while (usedNames.has(normalize(candidate)));
+  usedNames.add(normalize(candidate));
+  return candidate;
+}
+
 async function downloadSingle(id, { signal = null, runToken = null } = {}) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
@@ -1809,6 +1829,7 @@ async function downloadAll() {
   let encodedPhotoBytes = 0;
   let archiveInputBytes = 0;
   let packedEntries = 0;
+  const usedZipEntryNames = new Set();
 
   function addZipEntry(name, blob, encodedPhoto = false) {
     const nextPhotoBytes = encodedPhotoBytes + (encodedPhoto ? (blob.size || 0) : 0);
@@ -1821,7 +1842,7 @@ async function downloadAll() {
       nextEntries
     );
     if (estimatedPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
-    zip.file(name, blob);
+    zip.file(_uniqueZipEntryName(name, usedZipEntryNames), blob);
     encodedPhotoBytes = nextPhotoBytes;
     archiveInputBytes = nextArchiveBytes;
     packedEntries = nextEntries;
