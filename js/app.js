@@ -77,6 +77,7 @@ const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
+const METADATA_READ_GUARD_MS = 15_000;
 const _vendorScriptLoads = new Map();
 let _importQueueTail = Promise.resolve();
 const APP_ASSET_VERSION = (() => {
@@ -653,6 +654,15 @@ function buildFontSelect() {
 }
 
 // ─── EXIF / Metadata Reading ──────────────────────────────────────────────────
+function _withMetadataReadGuard(promise) {
+  let timeoutId = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Metadata read timed out')), METADATA_READ_GUARD_MS);
+  });
+  return Promise.race([Promise.resolve(promise), timeout])
+    .finally(() => clearTimeout(timeoutId));
+}
+
 function isVideoFile(file) {
   return file.type.startsWith('video/') ||
     /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(file.name);
@@ -662,9 +672,9 @@ async function readVideoMetadata(file) {
   // exifr can read some QuickTime/XMP metadata from MP4/MOV
   try {
     const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
-    const raw = await exifrApi.parse(file, {
+    const raw = await _withMetadataReadGuard(exifrApi.parse(file, {
       pick: ['Make', 'Model', 'Software', 'Author'],
-    });
+    }));
     if (raw) {
       return {
         make:         cleanStr(raw.Make     || raw.Author   || ''),
@@ -684,11 +694,11 @@ async function readVideoMetadata(file) {
 async function readExif(file) {
   try {
     const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
-    const raw = await exifrApi.parse(file, {
+    const raw = await _withMetadataReadGuard(exifrApi.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
              'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings',
              'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef'],
-    });
+    }));
     if (!raw) return emptyExif();
 
     // Parse GPS coordinates if present

@@ -844,6 +844,37 @@ test('concurrent imports share the aggregate item limit', async ({ page }) => {
   await expect(page.locator('#toast')).toContainText(/2/);
 });
 
+test('a hung EXIF read cannot block later files in the import queue', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 25 : delay, ...args)
+    );
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    window.__metadataGuardStats = { parseCalls: 0, finished: false };
+    window.exifr = {
+      parse: () => {
+        window.__metadataGuardStats.parseCalls += 1;
+        if (window.__metadataGuardStats.parseCalls === 1) return new Promise(() => {});
+        return Promise.resolve({ Make: 'NEXT FILE' });
+      },
+    };
+    window.addFiles([
+      new File([bytes], 'hung-exif.jpg', { type: 'image/jpeg' }),
+      new File([bytes], 'next-exif.jpg', { type: 'image/jpeg' }),
+    ]).then(() => { window.__metadataGuardStats.finished = true; });
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__metadataGuardStats)).toEqual({
+    parseCalls: 2,
+    finished: true,
+  });
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await page.locator('#preview-2').click();
+  await expect(page.locator('#live-exif-make')).toHaveValue('NEXT FILE');
+});
+
 test('video thumbnail decoding is limited to two active jobs', async ({ page }) => {
   await page.evaluate(async () => {
     const releases = [];
