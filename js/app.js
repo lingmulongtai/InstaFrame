@@ -845,8 +845,10 @@ function _withMetadataReadGuard(promise) {
 }
 
 function isVideoFile(file) {
-  return file.type.startsWith('video/') ||
-    /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(file.name);
+  const type = String(file?.type || '').toLowerCase();
+  if (type.startsWith('video/')) return true;
+  if (type.startsWith('image/')) return false;
+  return /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(String(file?.name || ''));
 }
 
 async function readVideoMetadata(file) {

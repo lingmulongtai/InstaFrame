@@ -1505,6 +1505,40 @@ test('unsupported media is rejected visibly without hiding accepted files', asyn
   await expect(page.locator('#toast')).toContainText(/未対応.*1件/);
 });
 
+test('explicit media MIME wins over misleading extensions and empty MIME falls back', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'misnamed-photo.mp4',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  await expect(page.locator('#item-1 .video-badge')).toHaveCount(0);
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+  await expect(page.locator('#livePreviewCanvas')).toBeVisible();
+  await expect(page.locator('#live-exif-model')).toHaveValue('X-T5');
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'misnamed-video.jpg',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#item-2 .video-badge')).toHaveCount(1);
+
+  await page.evaluate(async ({ jpegBase64, webmBase64 }) => {
+    const decode = base64 => Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    await window.addFiles([
+      new File([decode(webmBase64)], 'fallback-video.webm'),
+      new File([decode(jpegBase64)], 'fallback-photo.jpg'),
+    ]);
+  }, {
+    jpegBase64: createJpeg().toString('base64'),
+    webmBase64: createWebm().toString('base64'),
+  });
+  await expect(page.locator('#item-3 .video-badge')).toHaveCount(1);
+  await expect(page.locator('#item-4 .video-badge')).toHaveCount(0);
+});
+
 test('decoded photos above 60 megapixels fail before entering preview caches', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(async base64 => {
