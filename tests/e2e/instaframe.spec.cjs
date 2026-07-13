@@ -377,10 +377,13 @@ test('card progress remains described without competing with the export live reg
 });
 
 test('share dialog supports axe, Escape, and focus return', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
   await page.locator('#shareAppBtn').focus();
   await page.locator('#shareAppBtn').press('Enter');
   await expect(page.locator('#shareAppModal')).toHaveClass(/open/);
   await expect(page.locator('#shareAppCloseBtn')).toBeFocused();
+  await expect(page.locator('#shareUrlInput')).toHaveAccessibleName('Share URL');
   const results = await new AxeBuilder({ page }).include('#shareAppModal').analyze();
   expect(results.violations.filter(violation => ['critical', 'serious'].includes(violation.impact))).toEqual([]);
   await page.evaluate(() => {
@@ -406,6 +409,11 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
   await page.keyboard.press('Escape');
   await expect(page.locator('#shareAppModal')).not.toHaveClass(/open/);
   await expect(page.locator('#shareAppBtn')).toBeFocused();
+
+  await page.locator('#langToggleBtn').click();
+  await page.locator('#shareAppBtn').click();
+  await expect(page.locator('#shareUrlInput')).toHaveAccessibleName('共有URL');
+  await page.keyboard.press('Escape');
 });
 
 test('video shortcuts do not steal Space from destructive dialog buttons', async ({ page }) => {
