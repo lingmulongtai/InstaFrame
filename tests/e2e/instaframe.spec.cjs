@@ -1768,6 +1768,54 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
+test('a suspended export cannot unlock a newer export after BFCache restore', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const nativeLoadImage = window.FrameEngine.loadImage;
+    let loadCalls = 0;
+    window.__oldExportStarted = false;
+    window.__newExportStarted = false;
+    window.FrameEngine.loadImage = (file, options = {}) => {
+      loadCalls += 1;
+      if (loadCalls === 1) {
+        window.__oldExportStarted = true;
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => {
+            window.__releaseOldExport = () => reject(new DOMException('Export cancelled', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      if (loadCalls === 2) {
+        window.__newExportStarted = true;
+        return new Promise((resolve, reject) => {
+          window.__releaseNewExport = () => nativeLoadImage(file, options).then(resolve, reject);
+        });
+      }
+      return nativeLoadImage(file, options);
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__oldExportStarted)).toBe(true);
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__newExportStarted)).toBe(true);
+  await page.evaluate(() => window.__releaseOldExport());
+  await page.waitForTimeout(250);
+
+  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/processing/);
+
+  await page.evaluate(() => window.__releaseNewExport());
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('.status-dot.done')).toHaveCount(2);
+});
+
 test('changing frame settings aborts active work and invalidates the whole batch', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {

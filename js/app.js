@@ -276,7 +276,6 @@ const _imgFailed     = new Set(); // item IDs that failed image load — skip re
 const _downloadUrlTimers = new Map(); // active download Blob URL → delayed cleanup timer
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _previewRenderController = null;
-let   _exportCancelRequested = false;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
 let   _activePhotoThumbnails = 0;
@@ -1465,6 +1464,22 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   return shouldUpdate && item.status === 'done';
 }
 
+function _ownsGlobalExport(controller) {
+  return _activeExportController === controller;
+}
+
+function _showOwnedExportProgress(controller, label, progress) {
+  if (_ownsGlobalExport(controller)) showProgress(label, progress);
+}
+
+function _finishOwnedGlobalExport(controller) {
+  if (!_ownsGlobalExport(controller)) return false;
+  _activeExportController = null;
+  setGlobalBusy(false);
+  hideProgress();
+  return true;
+}
+
 async function generateAll() {
   if (_globalExportBusy) return;
   const pending = state.items.filter(i => i.status === 'pending');
@@ -1477,36 +1492,33 @@ async function generateAll() {
     return;
   }
 
-  _exportCancelRequested = false;
   const controller = new AbortController();
   _activeExportController = controller;
   setGlobalBusy(true);
   const total = pending.length;
 
   for (let idx = 0; idx < total; idx++) {
-    if (_exportCancelRequested) break;
+    if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
     const item     = pending[idx];
     const basePct  = idx / total;
     const itemSlot = 1 / total;
     const prefix   = `${idx + 1} / ${total}`;
 
-    showProgress(
+    _showOwnedExportProgress(controller,
       `${prefix}  —  ${item.isVideo ? '▶ ' : ''}${item.file.name}`,
       basePct
     );
 
     await generateItem(item, p => {
       const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
-      showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
+      _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
     }, controller.signal);
   }
 
-  const cancelled = _exportCancelRequested;
+  if (!_ownsGlobalExport(controller)) return;
+  const cancelled = controller.signal.aborted;
   const failedCount = pending.filter(item => item.status === 'error').length;
-  setGlobalBusy(false);
-  hideProgress();
-  _exportCancelRequested = false;
-  if (_activeExportController === controller) _activeExportController = null;
+  if (!_finishOwnedGlobalExport(controller)) return;
   if (cancelled) showToast(t('msgExportCancelled'), 'warn');
   else if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
   else showToast(t('msgDone'), 'success');
@@ -1515,19 +1527,20 @@ async function generateAll() {
 async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
-  _exportCancelRequested = false;
   setGlobalBusy(true);
   item.status    = 'pending';
   _releaseItemOutput(item);
   const controller = new AbortController();
   _activeExportController = controller;
-  showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-  await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
-  const cancelled = _exportCancelRequested || controller.signal.aborted;
-  setGlobalBusy(false);
-  hideProgress();
-  if (_activeExportController === controller) _activeExportController = null;
-  _exportCancelRequested = false;
+  _showOwnedExportProgress(controller, `${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
+  await generateItem(
+    item,
+    p => _showOwnedExportProgress(controller, `${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
+    controller.signal
+  );
+  if (!_ownsGlobalExport(controller)) return;
+  const cancelled = controller.signal.aborted;
+  if (!_finishOwnedGlobalExport(controller)) return;
   if (cancelled) showToast(t('msgExportCancelled'), 'warn');
 }
 
@@ -1536,12 +1549,11 @@ async function applyAndDownloadSingle(id) {
   const item = state.items.find(i => i.id === id);
   if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
 
-  _exportCancelRequested = false;
   const controller = new AbortController();
   const downloadRunToken = {};
   _activeExportController = controller;
   setGlobalBusy(true);
-  showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
+  _showOwnedExportProgress(controller, `${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
 
   try {
     if (item.status !== 'done') {
@@ -1550,29 +1562,26 @@ async function applyAndDownloadSingle(id) {
       _releaseItemOutput(item);
       await generateItem(
         item,
-        p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
+        p => _showOwnedExportProgress(controller, `${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
         controller.signal
       );
     }
 
-    if (!_exportCancelRequested && !controller.signal.aborted && item.status === 'done') {
+    if (_ownsGlobalExport(controller) && !controller.signal.aborted && item.status === 'done') {
       item.exportController = controller;
       item.exportRunToken = downloadRunToken;
-      showProgress(t('progressPreparing'), 1);
+      _showOwnedExportProgress(controller, t('progressPreparing'), 1);
       await downloadSingle(id, { signal: controller.signal, runToken: downloadRunToken });
     }
   } catch (error) {
-    if (error?.name !== 'AbortError') showToast(t('msgExportFailed'), 'error');
+    if (error?.name !== 'AbortError' && _ownsGlobalExport(controller)) showToast(t('msgExportFailed'), 'error');
   } finally {
-    const cancelled = _exportCancelRequested || controller.signal.aborted;
+    const cancelled = controller.signal.aborted;
     if (item.exportRunToken === downloadRunToken) {
       item.exportController = null;
       item.exportRunToken = null;
     }
-    setGlobalBusy(false);
-    hideProgress();
-    if (_activeExportController === controller) _activeExportController = null;
-    _exportCancelRequested = false;
+    if (!_finishOwnedGlobalExport(controller)) return;
     if (cancelled) showToast(t('msgExportCancelled'), 'warn');
   }
 }
@@ -1678,7 +1687,6 @@ async function downloadAll() {
     return;
   }
 
-  _exportCancelRequested = false;
   const controller = new AbortController();
   _activeExportController = controller;
   setGlobalBusy(true);
@@ -1688,38 +1696,34 @@ async function downloadAll() {
   if (pending.length) {
     const total = pending.length;
     for (let idx = 0; idx < total; idx++) {
-      if (_exportCancelRequested) break;
+      if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
       const item    = pending[idx];
       const basePct = idx / total;
       const slot    = 1 / total;
       const prefix  = `${idx + 1} / ${total}`;
-      showProgress(`${prefix}  —  ${item.file.name}`, basePct);
+      _showOwnedExportProgress(controller, `${prefix}  —  ${item.file.name}`, basePct);
       await generateItem(item, p => {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
-        showProgress(`${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
+        _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
       }, controller.signal);
     }
   }
 
-  if (_exportCancelRequested) {
-    setGlobalBusy(false);
-    hideProgress();
-    _exportCancelRequested = false;
-    if (_activeExportController === controller) _activeExportController = null;
+  if (!_ownsGlobalExport(controller)) return;
+  if (controller.signal.aborted) {
+    _finishOwnedGlobalExport(controller);
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
 
   const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
   if (!done.length) {
-    setGlobalBusy(false);
-    hideProgress();
-    if (_activeExportController === controller) _activeExportController = null;
+    _finishOwnedGlobalExport(controller);
     showToast(t('msgNoImages'), 'warn');
     return;
   }
 
-  showProgress(t('progressPreparing'), 0);
+  _showOwnedExportProgress(controller, t('progressPreparing'), 0);
 
   let JSZipCtor;
   try {
@@ -1729,11 +1733,9 @@ async function downloadAll() {
       'Export cancelled'
     );
   } catch (error) {
-    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
-    setGlobalBusy(false);
-    hideProgress();
-    _exportCancelRequested = false;
-    if (_activeExportController === controller) _activeExportController = null;
+    if (!_ownsGlobalExport(controller)) return;
+    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
+    _finishOwnedGlobalExport(controller);
     showToast(t(cancelled ? 'msgExportCancelled' : 'msgDependencyLoadFailed'), cancelled ? 'warn' : 'error');
     return;
   }
@@ -1765,9 +1767,13 @@ async function downloadAll() {
 
   try {
     for (let i = 0; i < total; i++) {
-      if (_exportCancelRequested) break;
+      if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
       const item = done[i];
-      showProgress(tf('progressPacking', { current: i + 1, total, name: item.file.name }), (i / total) * 0.7);
+      _showOwnedExportProgress(
+        controller,
+        tf('progressPacking', { current: i + 1, total, name: item.file.name }),
+        (i / total) * 0.7
+      );
 
       if (item.isVideo && item.videoBlob) {
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
@@ -1779,11 +1785,9 @@ async function downloadAll() {
       }
     }
   } catch (error) {
-    setGlobalBusy(false);
-    hideProgress();
-    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
-    _exportCancelRequested = false;
-    if (_activeExportController === controller) _activeExportController = null;
+    if (!_ownsGlobalExport(controller)) return;
+    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
+    _finishOwnedGlobalExport(controller);
     const messageKey = cancelled
       ? 'msgExportCancelled'
       : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
@@ -1791,11 +1795,9 @@ async function downloadAll() {
     return;
   }
 
-  if (_exportCancelRequested) {
-    setGlobalBusy(false);
-    hideProgress();
-    _exportCancelRequested = false;
-    if (_activeExportController === controller) _activeExportController = null;
+  if (!_ownsGlobalExport(controller)) return;
+  if (controller.signal.aborted) {
+    _finishOwnedGlobalExport(controller);
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
@@ -1803,7 +1805,7 @@ async function downloadAll() {
   let zipBlob;
   try {
     zipBlob = await _generateZipBlob(zip, controller.signal, meta => {
-      showProgress(t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
+      _showOwnedExportProgress(controller, t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
     });
     const actualPeak = InstaFrameCore.estimateZipPeakBytes(
       retainedBytes,
@@ -1813,11 +1815,9 @@ async function downloadAll() {
     );
     if (actualPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
   } catch (error) {
-    setGlobalBusy(false);
-    hideProgress();
-    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
-    _exportCancelRequested = false;
-    if (_activeExportController === controller) _activeExportController = null;
+    if (!_ownsGlobalExport(controller)) return;
+    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
+    _finishOwnedGlobalExport(controller);
     const messageKey = cancelled
       ? 'msgExportCancelled'
       : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
@@ -1825,11 +1825,14 @@ async function downloadAll() {
     return;
   }
 
+  if (!_ownsGlobalExport(controller)) return;
+  if (controller.signal.aborted) {
+    _finishOwnedGlobalExport(controller);
+    showToast(t('msgExportCancelled'), 'warn');
+    return;
+  }
   triggerDownload(zipBlob, 'instaframe_export.zip');
-  setGlobalBusy(false);
-  hideProgress();
-  _exportCancelRequested = false;
-  if (_activeExportController === controller) _activeExportController = null;
+  _finishOwnedGlobalExport(controller);
 }
 
 function triggerDownload(blob, filename) {
@@ -2085,7 +2088,6 @@ function markItemsPending(predicate = () => true) {
     predicate(item) && (item.status === 'done' || item.status === 'processing')
   );
   if (affected.length && _globalExportBusy && _activeExportController && !_activeExportController.signal.aborted) {
-    _exportCancelRequested = true;
     _activeExportController.abort();
   }
   affected.forEach(item => {
@@ -5449,8 +5451,9 @@ function _releasePageResources() {
   clearTimeout(_livePreviewTimer);
   _livePreviewTimer = null;
   _renderSeq += 1;
-  _exportCancelRequested = true;
-  _activeExportController?.abort();
+  const activeExportController = _activeExportController;
+  _activeExportController = null;
+  activeExportController?.abort();
   _previewRenderController?.abort();
   _previewRenderController = null;
   _disposeLiveVideoSource();
@@ -5494,7 +5497,6 @@ function _restorePageResources() {
   const restoreWaiters = [..._pageRestoreWaiters];
   _pageRestoreWaiters.clear();
   restoreWaiters.forEach(resolve => resolve());
-  _exportCancelRequested = false;
   _activeExportController = null;
   setGlobalBusy(false);
   hideProgress();
@@ -5563,7 +5565,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
   document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
-    _exportCancelRequested = true;
     _activeExportController?.abort();
   });
   document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
