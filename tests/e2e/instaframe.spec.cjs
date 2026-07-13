@@ -2896,7 +2896,7 @@ test('video metadata watchdog releases stalled sources in both export pipelines'
   });
 });
 
-test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports', async ({ page }) => {
+test('video progress and finalization watchdogs release stalled exports', async ({ page }) => {
   await installFakeWebCodecs(page);
   const result = await page.evaluate(async () => {
     const createElement = document.createElement;
@@ -2905,6 +2905,8 @@ test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports'
     const NativeMediaRecorder = window.MediaRecorder;
     const recorders = [];
     const outputTracks = [];
+    let endPlayback = false;
+    let emitRecorderStop = true;
 
     document.createElement = (tagName, options) => {
       if (String(tagName).toLowerCase() !== 'video') return createElement(tagName, options);
@@ -2917,7 +2919,18 @@ test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports'
         ended: false,
         paused: true,
         src: '',
-        play() { this.paused = false; return Promise.resolve(); },
+        play() {
+          this.paused = false;
+          if (endPlayback) {
+            setTimeout(() => {
+              this.currentTime = this.duration;
+              this.ended = true;
+              this.paused = true;
+              this.onended?.();
+            }, 0);
+          }
+          return Promise.resolve();
+        },
         pause() { this.paused = true; },
         load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
         requestVideoFrameCallback(callback) { this.pendingFrameCallback = callback; return 1; },
@@ -2944,7 +2957,7 @@ test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports'
       stop() {
         if (this.state === 'inactive') return;
         this.state = 'inactive';
-        queueMicrotask(() => this.onstop?.());
+        if (emitRecorderStop) queueMicrotask(() => this.onstop?.());
       }
     };
 
@@ -2965,6 +2978,21 @@ test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports'
           outcomes.push(error.code || error.name);
         }
       }
+      endPlayback = true;
+      emitRecorderStop = false;
+      try {
+        await window.FrameEngine.renderVideoFrameWhenReady(
+          new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], 'finalization-stall.webm', {
+            type: 'video/webm',
+          }),
+          {},
+          {},
+          { preserveAudio: true, metadataTimeoutMs: 100, progressTimeoutMs: 40 }
+        );
+        outcomes.push('resolved');
+      } catch (error) {
+        outcomes.push(error.code || error.name);
+      }
       return {
         outcomes,
         recorderStates: recorders.map(recorder => recorder.state),
@@ -2984,9 +3012,9 @@ test('video progress watchdog stops stalled MediaRecorder and WebCodecs exports'
   });
 
   expect(result).toEqual({
-    outcomes: ['MEDIA_TIMEOUT', 'MEDIA_TIMEOUT'],
-    recorderStates: ['inactive'],
-    outputTracksStopped: [true],
+    outcomes: ['MEDIA_TIMEOUT', 'MEDIA_TIMEOUT', 'MEDIA_TIMEOUT'],
+    recorderStates: ['inactive', 'inactive'],
+    outputTracksStopped: [true, true],
     activeUrls: 0,
     encoderStates: ['closed'],
     canvasesReleased: true,
