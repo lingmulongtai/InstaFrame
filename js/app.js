@@ -76,7 +76,9 @@ const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
 const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
+const MAX_ACTIVE_PHOTO_THUMBNAILS = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
+const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const LIVE_VIDEO_PREVIEW_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
@@ -273,6 +275,8 @@ let   _previewRenderController = null;
 let   _exportCancelRequested = false;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
+let   _activePhotoThumbnails = 0;
+const _photoThumbnailQueue = [];
 let   _activeVideoThumbnails = 0;
 const _videoThumbnailQueue = [];
 let   _exportProgressPreviousFocus = null;
@@ -879,6 +883,40 @@ function emptyExif() {
   return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'', latitude: null, longitude: null };
 }
 
+function _drainPhotoThumbnailQueue() {
+  while (_activePhotoThumbnails < MAX_ACTIVE_PHOTO_THUMBNAILS && _photoThumbnailQueue.length) {
+    const entry = _photoThumbnailQueue.shift();
+    if (entry.item.photoThumbnailController?.signal.aborted) {
+      entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+      continue;
+    }
+    _activePhotoThumbnails += 1;
+    Promise.resolve()
+      .then(entry.task)
+      .then(entry.resolve, entry.reject)
+      .finally(() => {
+        _activePhotoThumbnails -= 1;
+        _drainPhotoThumbnailQueue();
+      });
+  }
+}
+
+function _queuePhotoThumbnail(item, task) {
+  return new Promise((resolve, reject) => {
+    _photoThumbnailQueue.push({ item, task, resolve, reject });
+    _drainPhotoThumbnailQueue();
+  });
+}
+
+function _cancelQueuedPhotoThumbnail(item) {
+  for (let index = _photoThumbnailQueue.length - 1; index >= 0; index -= 1) {
+    const entry = _photoThumbnailQueue[index];
+    if (entry.item !== item) continue;
+    _photoThumbnailQueue.splice(index, 1);
+    entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+  }
+}
+
 function _drainVideoThumbnailQueue() {
   while (_activeVideoThumbnails < MAX_ACTIVE_VIDEO_THUMBNAILS && _videoThumbnailQueue.length) {
     const entry = _videoThumbnailQueue.shift();
@@ -1104,6 +1142,9 @@ async function _addFiles(files) {
       exif,
       canvas:    null,
       videoBlob: null,
+      photoThumbnailController: null,
+      photoThumbnailPromise: null,
+      photoThumbnailNeedsRestart: false,
       thumbnailController: null,
       thumbnailPromise: null,
       thumbnailNeedsRestart: false,
@@ -3114,6 +3155,9 @@ function _releaseItemOutput(item) {
   item.thumbnailController?.abort();
   _cancelQueuedVideoThumbnail(item);
   item.thumbnailController = null;
+  item.photoThumbnailController?.abort();
+  _cancelQueuedPhotoThumbnail(item);
+  item.photoThumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
   item.videoBlob = null;
@@ -3598,9 +3642,12 @@ async function renderLivePreview() {
 // ─── DOM Rendering ────────────────────────────────────────────────────────────
 function _releaseCardThumbnailUrl(card) {
   const thumbnail = card?.querySelector?.('img.thumb-orig');
-  if (!thumbnail?._objectUrl) return;
-  URL.revokeObjectURL(thumbnail._objectUrl);
-  thumbnail._objectUrl = null;
+  if (!thumbnail) return;
+  if (thumbnail._objectUrl) {
+    URL.revokeObjectURL(thumbnail._objectUrl);
+    thumbnail._objectUrl = null;
+  }
+  thumbnail.removeAttribute('src');
 }
 
 function _discardCardPhotoThumbnail(card, thumbnail, canvas = null) {
@@ -3639,6 +3686,88 @@ function _compactCardPhotoThumbnail(card, thumbnail) {
   }
 }
 
+function _startPhotoThumbnail(item) {
+  if (!item || item.isVideo || !state.items.includes(item) || item.photoThumbnailPromise) {
+    return item?.photoThumbnailPromise || null;
+  }
+  const card = document.getElementById(`item-${item.id}`);
+  const thumbnail = card?.querySelector('img.thumb-orig');
+  if (!card || !thumbnail || card.querySelector('canvas.thumb-source')) {
+    item.photoThumbnailNeedsRestart = false;
+    return null;
+  }
+
+  const controller = new AbortController();
+  const { signal } = controller;
+  item.photoThumbnailController = controller;
+  item.photoThumbnailNeedsRestart = false;
+  let thumbnailGuard = null;
+
+  const thumbnailPromise = _queuePhotoThumbnail(item, () => new Promise((resolve, reject) => {
+    if (signal.aborted || !state.items.includes(item) || !card.isConnected) {
+      reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+      return;
+    }
+    thumbnailGuard = setTimeout(() => controller.abort(), PHOTO_THUMBNAIL_GUARD_MS);
+    const objectUrl = URL.createObjectURL(item.file);
+    thumbnail._objectUrl = objectUrl;
+    let settled = false;
+    const cleanup = () => {
+      thumbnail.removeEventListener('load', loaded);
+      thumbnail.removeEventListener('error', failed);
+      signal.removeEventListener('abort', aborted);
+    };
+    const finish = (callback, value, action) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (action === 'compact') _compactCardPhotoThumbnail(card, thumbnail);
+      else if (action === 'discard') _discardCardPhotoThumbnail(card, thumbnail);
+      callback(value);
+    };
+    const loaded = () => {
+      if (!thumbnail.naturalWidth || !thumbnail.naturalHeight) {
+        failed();
+        return;
+      }
+      finish(resolve, undefined, 'compact');
+    };
+    const failed = () => finish(resolve, undefined, 'discard');
+    const aborted = () => finish(
+      reject,
+      new DOMException('Thumbnail cancelled', 'AbortError'),
+      'discard'
+    );
+    thumbnail.addEventListener('load', loaded);
+    thumbnail.addEventListener('error', failed);
+    signal.addEventListener('abort', aborted, { once: true });
+    thumbnail.src = objectUrl;
+    if (thumbnail.complete) queueMicrotask(thumbnail.naturalWidth ? loaded : failed);
+  }))
+    .catch(error => {
+      if (error?.name !== 'AbortError') _discardCardPhotoThumbnail(card, thumbnail);
+    })
+    .finally(() => {
+      clearTimeout(thumbnailGuard);
+      if (item.photoThumbnailController === controller) item.photoThumbnailController = null;
+      if (item.photoThumbnailPromise === thumbnailPromise) item.photoThumbnailPromise = null;
+    });
+  item.photoThumbnailPromise = thumbnailPromise;
+  return thumbnailPromise;
+}
+
+function _restartInterruptedPhotoThumbnail(item) {
+  if (!item?.photoThumbnailNeedsRestart || !state.items.includes(item)) return;
+  const restart = () => {
+    if (!item.photoThumbnailNeedsRestart || !state.items.includes(item)) return;
+    const card = document.getElementById(`item-${item.id}`);
+    item.photoThumbnailNeedsRestart = false;
+    if (!card?.querySelector('canvas.thumb-source')) _startPhotoThumbnail(item);
+  };
+  if (item.photoThumbnailPromise) void item.photoThumbnailPromise.then(restart, restart);
+  else restart();
+}
+
 function renderItem(item) {
   const grid = document.getElementById('imageGrid');
   const emptyMsg = document.getElementById('emptyMsg');
@@ -3648,12 +3777,10 @@ function renderItem(item) {
   card.className = 'image-card';
   card.id = `item-${item.id}`;
 
-  const thumbSrc = item.isVideo ? '' : URL.createObjectURL(item.file);
-
   card.innerHTML = `
     <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}" aria-describedby="status-badge-${item.id}">
       ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
-      <img class="thumb-orig" src="${thumbSrc}" alt="">
+      <img class="thumb-orig" alt="">
       <div class="card-status" id="status-badge-${item.id}">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
@@ -3672,15 +3799,6 @@ function renderItem(item) {
     </div>
   `;
 
-  if (thumbSrc) {
-    const thumb = card.querySelector('img.thumb-orig');
-    if (thumb) thumb._objectUrl = thumbSrc;
-    const compactThumbnail = () => _compactCardPhotoThumbnail(card, thumb);
-    thumb?.addEventListener('load', compactThumbnail, { once: true });
-    thumb?.addEventListener('error', () => _discardCardPhotoThumbnail(card, thumb), { once: true });
-    if (thumb?.complete) compactThumbnail();
-  }
-
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
     selectItem(item.id);
@@ -3695,6 +3813,7 @@ function renderItem(item) {
   });
 
   grid.appendChild(card);
+  if (!item.isVideo) _startPhotoThumbnail(item);
 }
 
 function updateItemStatus(item) {
@@ -5215,6 +5334,7 @@ function _releasePageResources() {
   state.items.forEach(item => {
     const outputWasActive = item.status === 'done' || item.status === 'processing';
     if (item.isVideo && item.thumbnailPromise) item.thumbnailNeedsRestart = true;
+    if (!item.isVideo && item.photoThumbnailPromise) item.photoThumbnailNeedsRestart = true;
     _releaseItemOutput(item);
     if (outputWasActive) {
       item.status = 'pending';
@@ -5249,6 +5369,7 @@ function _restorePageResources() {
   state.items.forEach(item => {
     updateItemStatus(item);
     updateItemPreview(item);
+    _restartInterruptedPhotoThumbnail(item);
     _restartInterruptedVideoThumbnail(item);
   });
   updateUI();
