@@ -10,12 +10,28 @@ const FrameEngine = (() => {
   const MAX_PENDING_VIDEO_ENCODES = 4;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
+  const VIDEO_METADATA_GUARD_MS = 15_000;
+  const VIDEO_PROGRESS_GUARD_MS = 60_000;
   let textBackgroundSampler = null;
 
   function resourceLimitError() {
     const error = new Error('Media exceeds safe in-browser resource limits');
     error.code = 'MEDIA_RESOURCE_LIMIT';
     return error;
+  }
+
+  function mediaTimeoutError(phase) {
+    const error = new Error(`Video ${phase} timed out`);
+    error.code = 'MEDIA_TIMEOUT';
+    return error;
+  }
+
+  function resolveGuardTimeout(value, fallback) {
+    if (value == null) return fallback;
+    const requested = Number(value);
+    return Number.isFinite(requested) && requested > 0
+      ? Math.max(1, Math.floor(requested))
+      : fallback;
   }
 
   function resolveVideoOutputLimit(maxOutputBytes) {
@@ -899,6 +915,8 @@ const FrameEngine = (() => {
     onProgress,
     videoBitsPerSecond = 10_000_000,
     maxOutputBytes = MAX_ESTIMATED_VIDEO_BYTES,
+    metadataTimeoutMs = VIDEO_METADATA_GUARD_MS,
+    progressTimeoutMs = VIDEO_PROGRESS_GUARD_MS,
     signal,
   } = {}) {
     assertNotAborted(signal);
@@ -917,6 +935,8 @@ const FrameEngine = (() => {
       let settled = false;
       let finalizing = false;
       let backpressurePauseGeneration = 0;
+      let metadataTimer = null;
+      let progressTimer = null;
 
       const playVideo = () => {
         const pauseGeneration = backpressurePauseGeneration;
@@ -932,6 +952,10 @@ const FrameEngine = (() => {
           video.cancelVideoFrameCallback(frameCallbackId);
         }
         frameCallbackId = null;
+        if (metadataTimer != null) clearTimeout(metadataTimer);
+        if (progressTimer != null) clearTimeout(progressTimer);
+        metadataTimer = null;
+        progressTimer = null;
         video.onloadedmetadata = null;
         video.onended = null;
         video.onerror = null;
@@ -958,10 +982,19 @@ const FrameEngine = (() => {
         reject(error);
       };
       const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+      const armProgressWatchdog = () => {
+        if (progressTimer != null) clearTimeout(progressTimer);
+        progressTimer = setTimeout(
+          () => fail(mediaTimeoutError('frame progress')),
+          resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS)
+        );
+      };
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
+        if (metadataTimer != null) clearTimeout(metadataTimer);
+        metadataTimer = null;
         try {
           assertNotAborted(signal);
           const W = video.videoWidth, H = video.videoHeight;
@@ -1069,6 +1102,7 @@ const FrameEngine = (() => {
                 frame?.close();
               }
               frameIndex += 1;
+              armProgressWatchdog();
               if (onProgress && duration > 0) onProgress(Math.min((metadata.mediaTime || 0) / duration, 0.99));
               if (settled || finalizing) return;
 
@@ -1086,6 +1120,7 @@ const FrameEngine = (() => {
 
           video.onended = finalize;
           video.playbackRate = 16;
+          armProgressWatchdog();
           frameCallbackId = video.requestVideoFrameCallback(onFrame);
           playVideo().catch(fail);
         } catch (error) {
@@ -1094,6 +1129,10 @@ const FrameEngine = (() => {
       };
 
       video.onerror = () => fail(new Error('Video load failed'));
+      metadataTimer = setTimeout(
+        () => fail(mediaTimeoutError('metadata loading')),
+        resolveGuardTimeout(metadataTimeoutMs, VIDEO_METADATA_GUARD_MS)
+      );
       video.src  = url;
       video.load();
     });
@@ -1173,6 +1212,8 @@ const FrameEngine = (() => {
     videoBitsPerSecond = 10_000_000,
     preserveAudio = true,
     maxOutputBytes,
+    metadataTimeoutMs,
+    progressTimeoutMs,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -1189,11 +1230,14 @@ const FrameEngine = (() => {
           onProgress,
           videoBitsPerSecond,
           maxOutputBytes: outputByteLimit,
+          metadataTimeoutMs,
+          progressTimeoutMs,
           signal,
         });
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
         if (error?.code === 'MEDIA_RESOURCE_LIMIT') throw error;
+        if (error?.code === 'MEDIA_TIMEOUT') throw error;
         assertNotAborted(signal);
         // Fall through to MediaRecorder path on any error
       }
@@ -1218,6 +1262,8 @@ const FrameEngine = (() => {
       let recorder = null;
       let rafId = null;
       let stopTimer = null;
+      let metadataTimer = null;
+      let progressTimer = null;
       let settled = false;
       let cleaned = false;
 
@@ -1229,6 +1275,10 @@ const FrameEngine = (() => {
         video.onerror = null;
         if (rafId != null) cancelAnimationFrame(rafId);
         if (stopTimer != null) clearTimeout(stopTimer);
+        if (metadataTimer != null) clearTimeout(metadataTimer);
+        if (progressTimer != null) clearTimeout(progressTimer);
+        metadataTimer = null;
+        progressTimer = null;
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch (_) {}
         }
@@ -1264,6 +1314,14 @@ const FrameEngine = (() => {
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) { abort(); return; }
 
+      const armProgressWatchdog = () => {
+        if (progressTimer != null) clearTimeout(progressTimer);
+        progressTimer = setTimeout(
+          () => fail(mediaTimeoutError('frame progress')),
+          resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS)
+        );
+      };
+
       const stopRecorderAfterFlush = () => {
         if (settled || stopTimer != null) return;
         if (rafId != null) {
@@ -1279,6 +1337,8 @@ const FrameEngine = (() => {
 
       video.onloadedmetadata = () => {
         if (settled || signal?.aborted) return;
+        if (metadataTimer != null) clearTimeout(metadataTimer);
+        metadataTimer = null;
         try {
           assertNotAborted(signal);
           const W = video.videoWidth;
@@ -1343,6 +1403,7 @@ const FrameEngine = (() => {
         });
         const chunks = [];
         let recordedBytes = 0;
+        let lastMediaTime = -1;
         recorder.ondataavailable = event => {
           if (event.data.size <= 0 || settled) return;
           recordedBytes += event.data.size;
@@ -1369,7 +1430,11 @@ const FrameEngine = (() => {
         recorder.onerror = event => {
           fail(event.error || new Error('Video recording failed'));
         };
-        video.onended = stopRecorderAfterFlush;
+        video.onended = () => {
+          if (progressTimer != null) clearTimeout(progressTimer);
+          progressTimer = null;
+          stopRecorderAfterFlush();
+        };
 
         function drawLoop() {
           try {
@@ -1377,7 +1442,13 @@ const FrameEngine = (() => {
             assertNotAborted(signal);
             baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
 
-            if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
+            const mediaTime = Number(video.currentTime) || 0;
+            if (mediaTime > lastMediaTime) {
+              lastMediaTime = mediaTime;
+              armProgressWatchdog();
+            }
+
+            if (onProgress && duration > 0) onProgress(Math.min(mediaTime / duration, 1));
 
             if (!video.ended && !video.paused) {
               rafId = requestAnimationFrame(drawLoop);
@@ -1390,6 +1461,7 @@ const FrameEngine = (() => {
         }
 
           recorder.start(200);
+          armProgressWatchdog();
           video.play()
             .then(() => {
               if (settled || signal?.aborted) return;
@@ -1405,6 +1477,10 @@ const FrameEngine = (() => {
       };
 
       video.onerror = () => fail(new Error('Video load failed'));
+      metadataTimer = setTimeout(
+        () => fail(mediaTimeoutError('metadata loading')),
+        resolveGuardTimeout(metadataTimeoutMs, VIDEO_METADATA_GUARD_MS)
+      );
       video.src  = url;
       video.load();
     });
