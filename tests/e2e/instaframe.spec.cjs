@@ -839,6 +839,33 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
   await page.keyboard.press('Escape');
 });
 
+test('a late clipboard result cannot update a newly reopened share dialog', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: () => new Promise(resolve => {
+          window.__resolveStaleClipboardWrite = resolve;
+        }),
+      },
+    });
+  });
+
+  await page.locator('#shareAppBtn').click();
+  await page.locator('#copyShareUrlBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__resolveStaleClipboardWrite)).toBe('function');
+  await page.locator('#shareAppCloseBtn').click();
+  await page.locator('#shareAppBtn').click();
+
+  const status = page.locator('#shareModalStatus');
+  await expect(status).toBeEmpty();
+  await page.evaluate(() => window.__resolveStaleClipboardWrite());
+  await page.waitForTimeout(100);
+
+  await expect(status).toBeEmpty();
+  await expect(page.locator('#toast')).toBeHidden();
+});
+
 test('video shortcuts do not steal Space from destructive dialog buttons', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'keyboard-video.webm',
