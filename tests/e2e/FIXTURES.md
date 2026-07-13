@@ -2,6 +2,8 @@
 
 `codec-fixture.mp4` is a 0.6-second synthetic 96×64 test pattern with mono audio. It contains H.264 Baseline video and AAC-LC audio in an MP4 container, so it does not contain third-party media.
 
+The cross-browser contract proves that Chromium, Firefox, and Microsoft Edge decode a video frame from this fixture; WebKit may instead report an explicit codec error. It does not assert that the input AAC track was decoded or preserved. Audio-track preservation is covered separately by the Linux Chromium WebM export test.
+
 It was generated with FFmpeg 8.0.1:
 
 ```text

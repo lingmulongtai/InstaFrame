@@ -46,9 +46,9 @@
 | WebP | 標準対応 | Chromium・Firefox・WebKit・Microsoft Edgeで実WebP入力のデコード、プレビュー、RIFF/WebP署名の出力を自動検証 |
 | HEIC / HEIF | 条件付き | Safariなどネイティブ対応ブラウザのみ。未対応・破損時の明示エラーは検証済みだが、有効なHEICの成功経路はCI対象外 |
 | WebM (VP8 / VP9) | 条件付き | VP8入力はChromium・Firefox・Microsoft Edgeでプレビュー成功を検証。Playwright WebKitは実行環境のコーデック差を許容し、実寸のあるデコード済みフレームまたは明示的な非対応エラーのどちらかを検証します。Linux Chromiumでは動画出力と音声トラック保持も検証。VP9入力はブラウザのコーデック対応に依存し、CI対象外 |
-| MP4 (H.264 / AAC) | 条件付き | 有効な音声付きMP4 fixtureを4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード済みプレビューを必須とし、Playwright WebKitは明示的なコーデックエラーを許容 |
-| MOV (H.264 / AAC) | 条件付き | 同じ映像・音声をQuickTimeコンテナへ再格納した有効fixtureを4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容 |
-| M4V (H.264 / AAC) | 条件付き | 検証済みMP4 fixtureを`.m4v`・`video/x-m4v`として4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容 |
+| MP4 (H.264 / AAC) | 条件付き | H.264 Baseline映像とAAC-LC音声を含む有効なMP4 fixtureを4ブラウザCIへ入力。Chromium・Firefox・Microsoft Edgeでは映像フレームのデコード済みプレビューを必須とし、Playwright WebKitでは明示的なコーデックエラーを許容。入力AAC音声のデコード・保持はこの契約の検証対象外 |
+| MOV (H.264 / AAC) | 条件付き | 同じ映像・音声をQuickTimeコンテナへ再格納した有効fixtureを4ブラウザCIへ入力。映像プレビューの要件と入力AAC音声の未検証範囲はMP4と同じ |
+| M4V (H.264 / AAC) | 条件付き | 検証済みMP4 fixtureを`.m4v`・`video/x-m4v`として4ブラウザCIへ入力。映像プレビューの要件と入力AAC音声の未検証範囲はMP4と同じ |
 | AVI / MKV / 3GP | 条件付き | コンテナと内部コーデックの両方をブラウザが再生できる場合のみ |
 
 表はファイル選択画面で案内する主要形式です。ドラッグ＆ドロップでは、このほかの`image/*`・`video/*`もブラウザがネイティブデコードできる場合に利用できます。未対応ファイルを選択した場合は、処理を黙って失敗させず、デコードできないことを画面に表示します。
@@ -150,7 +150,7 @@ npm.cmd test
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと
 - モバイル表示とEXIF編集パネル
 - Chromium・Firefox・Microsoft EdgeでのVP8 WebM動画プレビューと、WebKitでのデコード成功または明示的な非対応エラー
-- 有効なH.264/AAC MP4・QuickTime MOV・M4V入力の4ブラウザ契約（Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容）
+- H.264 Baseline映像とAAC-LC音声を含むMP4・QuickTime MOV・M4V入力の4ブラウザ契約（Chromium・Firefox・Microsoft Edgeは映像フレームのデコード必須、Playwright WebKitは明示エラーを許容。入力AAC音声のデコード・保持は対象外）
 - Linux Chromium CIでの音声付きWebMフレーム合成 → 動画・音声トラックを保持した書き出し
 
 ## デプロイ
