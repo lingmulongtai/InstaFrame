@@ -11,6 +11,7 @@
   const MAX_PREVIEW_ZOOM = 12;
   const PREVIEW_ZOOM_SLIDER_MIN = 50;
   const PREVIEW_ZOOM_SLIDER_MAX = 1200;
+  const MAX_SAFE_CANVAS_SIDE = 16_384;
 
   function normalizePreviewQuality(value) {
     return PREVIEW_QUALITIES.includes(value) ? value : 'auto';
@@ -60,7 +61,12 @@
     const width = Math.max(1, Number(cssWidth) || 1);
     const height = Math.max(1, Number(cssHeight) || 1);
     const budget = Math.max(1, Number(maxPixels) || 1);
-    return Math.min(requested, Math.max(0.25, Math.sqrt(budget / (width * height))));
+    const pixelBudgetScale = Math.sqrt(budget / (width * height));
+    const sideBudgetScale = Math.min(
+      MAX_SAFE_CANVAS_SIDE / width,
+      MAX_SAFE_CANVAS_SIDE / height
+    );
+    return Math.min(requested, pixelBudgetScale, sideBudgetScale);
   }
 
   /** Conservative ZIP peak: retained outputs + photo entry blobs + archive blob. */
@@ -101,6 +107,7 @@
     MAX_PREVIEW_ZOOM,
     PREVIEW_ZOOM_SLIDER_MIN,
     PREVIEW_ZOOM_SLIDER_MAX,
+    MAX_SAFE_CANVAS_SIDE,
     normalizePreviewQuality,
     getPreviewZoomForSliderValue,
     getPreviewSliderValueForZoom,
