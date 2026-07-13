@@ -734,6 +734,29 @@ test('language switching preserves card identity, selection, and video thumbnail
   await expect(page.locator('#preview-2')).toHaveAttribute('aria-label', /selected-video\.webm/);
 });
 
+test('language switching retranslates persistent media errors', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'language-error.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+
+  await page.locator('#livePreviewVideo').dispatchEvent('error');
+
+  const badge = page.locator('#status-badge-1');
+  const previewError = page.locator('#livePreviewError');
+  await expect(badge).toHaveAttribute('aria-label', /cannot be decoded by this browser/);
+  await expect(previewError).toContainText('cannot be decoded by this browser');
+
+  await page.locator('#langToggleBtn').click();
+
+  await expect(badge).toHaveAttribute('aria-label', /このブラウザでデコードできません/);
+  await expect(previewError).toContainText('このブラウザでデコードできません');
+});
+
 test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'settings-video.webm',
