@@ -203,14 +203,28 @@ let _locationPrivacyPreviousFocus = null;
 let _destructiveConfirmResolver = null;
 let _destructiveConfirmPreviousFocus = null;
 
+function _syncModalBackgroundInert() {
+  const modalOpen = !!document.querySelector('.map-modal.open');
+  const appShell = document.querySelector('.app-shell');
+  const mobileTabBar = document.getElementById('mobileTabBar');
+  if (appShell) appShell.inert = modalOpen;
+  if (mobileTabBar) mobileTabBar.inert = modalOpen;
+}
+
+function _setModalOpen(modal, open) {
+  if (!modal) return;
+  modal.classList.toggle('open', open);
+  _syncModalBackgroundInert();
+}
+
 function _openLocationPrivacyModal() {
   _locationPrivacyPreviousFocus = document.activeElement;
-  document.getElementById('locationPrivacyModal')?.classList.add('open');
+  _setModalOpen(document.getElementById('locationPrivacyModal'), true);
   document.getElementById('locationPrivacyOnceBtn')?.focus();
 }
 
 function _closeLocationPrivacyModal() {
-  document.getElementById('locationPrivacyModal')?.classList.remove('open');
+  _setModalOpen(document.getElementById('locationPrivacyModal'), false);
   if (_locationPrivacyPreviousFocus?.focus) _locationPrivacyPreviousFocus.focus();
   _locationPrivacyPreviousFocus = null;
 }
@@ -230,7 +244,10 @@ function setupModalAccessibility() {
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (!modal.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -242,7 +259,7 @@ function setupModalAccessibility() {
 
 function _finishDestructiveConfirmation(confirmed) {
   const modal = document.getElementById('destructiveConfirmModal');
-  modal?.classList.remove('open');
+  _setModalOpen(modal, false);
   const resolve = _destructiveConfirmResolver;
   _destructiveConfirmResolver = null;
   if (!confirmed && _destructiveConfirmPreviousFocus?.isConnected) {
@@ -266,7 +283,7 @@ function requestDestructiveConfirmation({ clearAll = false, filename = '' } = {}
   }
   if (accept) accept.textContent = t(clearAll ? 'clearConfirmAction' : 'deleteConfirmAction');
   _destructiveConfirmPreviousFocus = document.activeElement;
-  modal.classList.add('open');
+  _setModalOpen(modal, true);
   document.getElementById('destructiveConfirmCancelBtn')?.focus();
   return new Promise(resolve => { _destructiveConfirmResolver = resolve; });
 }
@@ -2110,7 +2127,7 @@ async function openMapPicker() {
     ? activeElement
     : document.getElementById('openMapPickerBtn');
   if (!await requestLocationNetworkConsent()) return;
-  modal.classList.add('open');
+  _setModalOpen(modal, true);
   modal.setAttribute('aria-busy', 'true');
   modal._previousFocus = previousFocus;
   document.getElementById('mapPickerCloseBtn')?.focus();
@@ -2196,7 +2213,7 @@ function _selectMapCoordinates({ lat, lng }) {
 function closeMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (modal) {
-    modal.classList.remove('open');
+    _setModalOpen(modal, false);
     modal.setAttribute('aria-busy', 'false');
     modal._previousFocus?.focus?.();
     modal._previousFocus = null;
@@ -2261,15 +2278,15 @@ function openShareAppModal() {
   _refreshShareLinks();
   const status = document.getElementById('shareModalStatus');
   if (status) status.textContent = '';
-  modal.classList.add('open');
   modal._previousFocus = document.activeElement;
+  _setModalOpen(modal, true);
   document.getElementById('shareAppCloseBtn')?.focus();
 }
 
 function closeShareAppModal() {
   const modal = document.getElementById('shareAppModal');
   if (modal) {
-    modal.classList.remove('open');
+    _setModalOpen(modal, false);
     modal._previousFocus?.focus?.();
     modal._previousFocus = null;
   }
@@ -4303,6 +4320,8 @@ function setupMobileTabs() {
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
     const activeElement = document.activeElement;
+    const openModalContainsFocus = [...document.querySelectorAll('.map-modal.open')]
+      .some(modal => modal.contains(activeElement));
     const mobileNow = isMobile();
     const layoutChanged = mobileNow !== mobileLayoutActive;
     if (!mobileNow) {
@@ -4310,13 +4329,13 @@ function setupMobileTabs() {
         || (layoutChanged ? lastFocusedMobileTab : null);
       document.body.removeAttribute('data-mobile-tab');
       _syncMobileTabPanels(tabBar, '', false);
-      if (focusedTab) desktopFocusTarget(focusedTab)?.focus();
+      if (focusedTab && !openModalContainsFocus) desktopFocusTarget(focusedTab)?.focus();
     }
     else if (layoutChanged || !document.body.getAttribute('data-mobile-tab')) {
       const activePanel = activeElement?.closest?.('.mobile-tab-panel');
       const activeTab = tabForPanel(activePanel) || 'preview';
       _setMobileTabState(tabBar, activeTab);
-      if (!activePanel && activeElement !== document.body) {
+      if (!activePanel && activeElement !== document.body && !openModalContainsFocus) {
         tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
       }
     }
