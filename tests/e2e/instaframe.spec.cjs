@@ -745,6 +745,41 @@ test('heavy local processors load only when their features are used', async ({ p
   await expect.poll(loadedResources).toContain('/vendor/jszip.min.js');
 });
 
+test('a stalled vendor script times out and can be retried', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeAppendChild = document.head.appendChild;
+    const nativeSetTimeout = window.setTimeout;
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 12_000 ? 25 : delay, ...args)
+    );
+    document.head.appendChild = function holdVendorScript(node) {
+      if (node instanceof HTMLScriptElement && node.src.includes('/vendor/jszip.min.js')) return node;
+      return nativeAppendChild.call(this, node);
+    };
+
+    let firstError = '';
+    try {
+      await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
+    } catch (error) {
+      firstError = error.message;
+    } finally {
+      document.head.appendChild = nativeAppendChild;
+      window.setTimeout = nativeSetTimeout;
+    }
+
+    const constructor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
+    return {
+      firstError,
+      retryLoaded: typeof constructor === 'function',
+      scriptCount: document.querySelectorAll('script[src*="/vendor/jszip.min.js"]').length,
+    };
+  });
+
+  expect(result.firstError).toContain('Timed out loading vendor/jszip.min.js');
+  expect(result.retryLoaded).toBe(true);
+  expect(result.scriptCount).toBe(1);
+});
+
 test('a release revision follows the app into lazy EXIF and ZIP dependencies', async ({ page }) => {
   const revision = 'abcdef123456';
   await page.route('http://127.0.0.1:4173/', async route => {

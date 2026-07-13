@@ -78,6 +78,7 @@ const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
+const VENDOR_SCRIPT_GUARD_MS = 12_000;
 const _vendorScriptLoads = new Map();
 let _importQueueTail = Promise.resolve();
 const APP_ASSET_VERSION = (() => {
@@ -126,11 +127,30 @@ function loadVendorScript(src, globalName) {
     const script = document.createElement('script');
     script.src = assetUrl;
     script.async = true;
-    script.addEventListener('load', () => {
-      if (window[globalName]) resolve(window[globalName]);
-      else reject(new Error(`Vendor script did not expose ${globalName}`));
-    }, { once: true });
-    script.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
+    let settled = false;
+    let timeoutId = null;
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      script.removeEventListener('load', loaded);
+      script.removeEventListener('error', failed);
+    };
+    const finish = (callback, value, removeScript = false) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (removeScript) script.remove();
+      callback(value);
+    };
+    const loaded = () => {
+      if (window[globalName]) finish(resolve, window[globalName]);
+      else finish(reject, new Error(`Vendor script did not expose ${globalName}`), true);
+    };
+    const failed = () => finish(reject, new Error(`Could not load ${src}`), true);
+    script.addEventListener('load', loaded);
+    script.addEventListener('error', failed);
+    timeoutId = setTimeout(() => {
+      finish(reject, new Error(`Timed out loading ${src}`), true);
+    }, VENDOR_SCRIPT_GUARD_MS);
     document.head.appendChild(script);
   }).catch(error => {
     _vendorScriptLoads.delete(assetUrl);
