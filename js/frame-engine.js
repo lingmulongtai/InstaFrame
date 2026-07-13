@@ -710,11 +710,27 @@ const FrameEngine = (() => {
       video.preload = 'metadata';
       let captured = false;
       let settled = false;
+      let thumbnailCanvas = null;
+      let thumbnailImage = null;
+      let thumbnailUrl = null;
+      let thumbnailLoaded = false;
       const timeout = setTimeout(() => fail(new Error('Video thumbnail timed out')), timeoutMs);
 
       const cleanup = () => {
         clearTimeout(timeout);
         signal?.removeEventListener('abort', abort);
+        if (thumbnailCanvas) {
+          thumbnailCanvas.width = 0;
+          thumbnailCanvas.height = 0;
+          thumbnailCanvas = null;
+        }
+        if (thumbnailImage) {
+          thumbnailImage.onload = null;
+          thumbnailImage.onerror = null;
+          if (!thumbnailLoaded) thumbnailImage.removeAttribute('src');
+        }
+        if (thumbnailUrl) URL.revokeObjectURL(thumbnailUrl);
+        thumbnailUrl = null;
         video.onloadedmetadata = null;
         video.onseeked = null;
         video.onerror = null;
@@ -752,6 +768,7 @@ const FrameEngine = (() => {
         const sourceH = video.videoHeight || 720;
         const scale = Math.min(1, 640 / sourceW, 360 / sourceH);
         const c = document.createElement('canvas');
+        thumbnailCanvas = c;
         c.width  = Math.max(1, Math.round(sourceW * scale));
         c.height = Math.max(1, Math.round(sourceH * scale));
         const context = c.getContext('2d');
@@ -767,12 +784,17 @@ const FrameEngine = (() => {
         c.toBlob(blob => {
           c.width = 0;
           c.height = 0;
+          if (thumbnailCanvas === c) thumbnailCanvas = null;
+          if (settled) return;
           if (!blob) { fail(new Error('Video thumbnail encoding failed')); return; }
-          const thumbUrl = URL.createObjectURL(blob);
-          const img = new Image();
-          img.onload = () => { URL.revokeObjectURL(thumbUrl); succeed(img); };
-          img.onerror = () => { URL.revokeObjectURL(thumbUrl); fail(new Error('Video thumbnail load failed')); };
-          img.src = thumbUrl;
+          thumbnailUrl = URL.createObjectURL(blob);
+          thumbnailImage = new Image();
+          thumbnailImage.onload = () => {
+            thumbnailLoaded = true;
+            succeed(thumbnailImage);
+          };
+          thumbnailImage.onerror = () => fail(new Error('Video thumbnail load failed'));
+          thumbnailImage.src = thumbnailUrl;
         }, 'image/jpeg', 0.88);
       };
 
