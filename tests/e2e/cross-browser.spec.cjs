@@ -88,15 +88,19 @@ test('PNG and WebP inputs decode and export with real signatures', async ({ page
   await expect(page.locator('#preview-2')).toBeVisible();
 
   await page.locator('label[for="fmt-png"]').click();
-  let downloadPromise = page.waitForEvent('download');
-  await page.locator('#dl-btn-1').click();
-  let bytes = require('node:fs').readFileSync(await (await downloadPromise).path());
+  let [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#dl-btn-1').press('Enter'),
+  ]);
+  let bytes = require('node:fs').readFileSync(await download.path());
   expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
   await page.locator('label[for="fmt-webp"]').click();
-  downloadPromise = page.waitForEvent('download');
-  await page.locator('#dl-btn-2').click();
-  bytes = require('node:fs').readFileSync(await (await downloadPromise).path());
+  [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#dl-btn-2').press('Enter'),
+  ]);
+  bytes = require('node:fs').readFileSync(await download.path());
   expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
   expect(bytes.subarray(8, 12).toString('ascii')).toBe('WEBP');
 });
