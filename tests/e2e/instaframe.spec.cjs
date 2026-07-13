@@ -589,6 +589,62 @@ test('a hung browser video decoder exits pending state through the app-level gua
   await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
 });
 
+test('thumbnail cancellation ignores a late canvas encoder callback without leaking a Blob URL', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+
+    let encoderCallback = null;
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    HTMLCanvasElement.prototype.toBlob = callback => { encoderCallback = callback; };
+    window.Image = class PendingThumbnailImage {
+      set src(value) { this._src = value; }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+    };
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        duration: 1,
+        videoWidth: 320,
+        videoHeight: 180,
+        pause() {},
+        removeAttribute() {},
+        load() { queueMicrotask(() => this.onloadedmetadata?.()); },
+        set currentTime(value) {
+          this._currentTime = value;
+          queueMicrotask(() => this.onseeked?.());
+        },
+      };
+    };
+
+    const controller = new AbortController();
+    const pending = window.FrameEngine.captureVideoFrame(
+      new File(['video'], 'late-thumbnail.webm', { type: 'video/webm' }),
+      0,
+      { signal: controller.signal }
+    ).catch(error => error.name);
+    while (!encoderCallback) await new Promise(resolve => setTimeout(resolve, 0));
+    controller.abort();
+    const outcome = await pending;
+    encoderCallback(new Blob(['late'], { type: 'image/jpeg' }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return { outcome, activeUrls: activeUrls.size };
+  });
+
+  expect(result).toEqual({ outcome: 'AbortError', activeUrls: 0 });
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
