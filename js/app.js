@@ -1111,11 +1111,14 @@ async function generateAll() {
   }
 
   const cancelled = _exportCancelRequested;
+  const failedCount = pending.filter(item => item.status === 'error').length;
   setGlobalBusy(false);
   hideProgress();
   _exportCancelRequested = false;
   if (_activeExportController === controller) _activeExportController = null;
-  showToast(t(cancelled ? 'msgExportCancelled' : 'msgDone'), cancelled ? 'warn' : 'success');
+  if (cancelled) showToast(t('msgExportCancelled'), 'warn');
+  else if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
+  else showToast(t('msgDone'), 'success');
 }
 
 async function regenerateItem(id) {
