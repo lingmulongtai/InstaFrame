@@ -3226,9 +3226,16 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
   await expect(drawer).toBeVisible();
-  const box = await drawer.boundingBox();
+  const [box, historyBox] = await Promise.all([
+    drawer.boundingBox(),
+    page.locator('#previewHistoryWrap').boundingBox(),
+  ]);
   expect(box.width).toBeGreaterThan(250);
   expect(box.width).toBeLessThanOrEqual(382);
+  expect(box.x + box.width).toBeLessThanOrEqual(historyBox.x - 8);
+  await page.evaluate(() => document.documentElement.setAttribute('data-editor-size', 'large'));
+  const largeBox = await drawer.boundingBox();
+  expect(largeBox.x + largeBox.width).toBeLessThanOrEqual(historyBox.x - 8);
   await page.locator('#tabPhotosBtn').click();
   await expect(page.locator('#photosPanel')).toBeVisible();
   await expect(page.locator('#imageSection')).toBeVisible();

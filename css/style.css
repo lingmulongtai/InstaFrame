@@ -2443,7 +2443,18 @@ input[type="range"]:focus-visible {
 
   /* Preview controls */
   .preview-quality-wrap { bottom: 8px; left: 8px; }
-  .preview-history-wrap { right: 8px; top: 8px; }
+  .preview-history-wrap {
+    right: 8px;
+    top: 8px;
+    width: 48px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .preview-history-btn {
+    width: 100%;
+    min-height: 36px;
+    padding: 5px 4px;
+  }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
   /* Video bar: compact on mobile */
@@ -2466,11 +2477,11 @@ input[type="range"]:focus-visible {
     left: 8px;
     top: 8px;
     bottom: 62px;
-    right: 52px;
-    max-width: calc(100% - 60px);
+    right: 68px;
+    max-width: calc(100% - 76px);
   }
   .preview-exif-drawer {
-    width: min(var(--exif-editor-w), calc(100vw - 68px));
+    width: min(var(--exif-editor-w), calc(100vw - 76px));
     max-height: 100%;
   }
   .preview-exif-content { max-height: min(42vh, var(--exif-editor-content-h)); }
