@@ -123,6 +123,16 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   const customizeAxe = await new AxeBuilder({ page }).include('#customizePanel').analyze();
   const seriousCustomizeViolations = customizeAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact));
   expect(seriousCustomizeViolations.map(violation => violation.id), JSON.stringify(seriousCustomizeViolations, null, 2)).toEqual([]);
+  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('.accent-blue').click();
+  await expect(page.locator('.accent-blue')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'false');
+  await page.locator('#accentColorPicker').evaluate(element => {
+    element.value = '#123456';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(page.locator('#accentCustomBtn')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.accent-blue')).toHaveAttribute('aria-pressed', 'false');
   await page.keyboard.press('Escape');
   await expect(page.locator('#customizeBtn')).toBeFocused();
   await expect(page.locator('#customizeBtn')).toHaveAttribute('aria-expanded', 'false');
@@ -155,6 +165,25 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('#tabPhotosBtn')).toBeFocused();
   expect(await page.locator('#dropZone').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
   expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
+});
+
+test('privacy consent changes expose a focused polite status update', async ({ page }) => {
+  await page.locator('#customizeBtn').click();
+  const status = page.locator('#locationPrivacyStatus');
+  await expect(status).toHaveAttribute('role', 'status');
+  await expect(status).toHaveAttribute('aria-live', 'polite');
+  await expect(status).toHaveAttribute('aria-atomic', 'true');
+
+  const manage = page.locator('#manageLocationPrivacyBtn');
+  await manage.click();
+  await page.locator('#locationPrivacyAlwaysBtn').click();
+  await expect(manage).toBeFocused();
+  await expect(status).toContainText(/always|常に/i);
+
+  await manage.click();
+  await page.locator('#locationPrivacyRevokeBtn').click();
+  await expect(manage).toBeFocused();
+  await expect(status).toContainText(/off|オフ/i);
 });
 
 test('JPEG upload renders a preview and exports a framed image', async ({ page }) => {

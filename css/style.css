@@ -391,6 +391,7 @@ html, body {
 .color-option input:focus-visible + .color-swatch,
 .style-toggle-btn input:focus-visible + label,
 .ratio-pill input:focus-visible + label,
+.color-option-custom:focus-visible,
 .color-option-custom:has(input:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -731,6 +732,14 @@ input[type="range"]::-moz-range-thumb {
   border: none;
   padding: 0;
   cursor: pointer;
+}
+
+.accent-color-picker-proxy {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Font select */

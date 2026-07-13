@@ -4011,14 +4011,19 @@ function setupCustomizePanel() {
   const accentPicker   = document.getElementById('accentColorPicker');
   const savedAccent    = prefs.accentColor;
 
-  function _activateSwatch(color) {
+  function _activateSwatch(color, { custom = false } = {}) {
     document.querySelectorAll('.accent-swatch').forEach(s => {
-      s.classList.toggle('active', s.dataset.color === color);
+      const active = !custom && s.dataset.color === color;
+      s.classList.toggle('active', active);
+      s.setAttribute('aria-pressed', String(active));
     });
-    // Also activate custom btn when no preset matches
     const customBtn = document.getElementById('accentCustomBtn');
     const isPreset  = !!document.querySelector(`.accent-swatch[data-color="${color}"]`);
-    if (customBtn) customBtn.classList.toggle('active', !isPreset);
+    const customActive = custom || !isPreset;
+    if (customBtn) {
+      customBtn.classList.toggle('active', customActive);
+      customBtn.setAttribute('aria-pressed', String(customActive));
+    }
     if (accentPicker) accentPicker.value = color;
   }
 
@@ -4032,10 +4037,11 @@ function setupCustomizePanel() {
       });
     });
   }
+  document.getElementById('accentCustomBtn')?.addEventListener('click', () => accentPicker?.click());
   if (accentPicker) {
     accentPicker.addEventListener('input', () => {
       _applyAccentColor(accentPicker.value);
-      _activateSwatch(accentPicker.value);
+      _activateSwatch(accentPicker.value, { custom: true });
       const p = loadPrefs(); p.accentColor = accentPicker.value; savePrefs(p);
     });
   }
