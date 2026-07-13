@@ -7,6 +7,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_DIMENSION = 16_384;
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
+  const MAX_PENDING_VIDEO_ENCODES = 4;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
   let textBackgroundSampler = null;
@@ -979,11 +980,22 @@ const FrameEngine = (() => {
             video: { codec: 'V_VP9', width: canvasW, height: canvasH, frameRate: fps },
             firstTimestampBehavior: 'permissive',
           });
+          let encodedBytes = 0;
 
           encoder = new VideoEncoder({
             output: (chunk, meta) => {
               if (settled) return;
-              try { muxer.addVideoChunk(chunk, meta); } catch (error) { fail(error); }
+              try {
+                const chunkBytes = Number(chunk?.byteLength) || 0;
+                if (chunkBytes > maxOutputBytes - encodedBytes) {
+                  fail(resourceLimitError());
+                  return;
+                }
+                encodedBytes += chunkBytes;
+                muxer.addVideoChunk(chunk, meta);
+              } catch (error) {
+                fail(error);
+              }
             },
             error: fail,
           });
@@ -1022,13 +1034,22 @@ const FrameEngine = (() => {
             }
           };
 
-          const onFrame = (_now, metadata) => {
+          const onFrame = async (_now, metadata) => {
             frameCallbackId = null;
             if (settled || finalizing) return;
             try {
               assertNotAborted(signal);
               const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
               baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
+
+              let resumeAfterDrain = false;
+              if ((Number(encoder.encodeQueueSize) || 0) >= MAX_PENDING_VIDEO_ENCODES) {
+                resumeAfterDrain = !video.ended;
+                video.pause();
+                await encoder.flush();
+                if (settled || finalizing) return;
+                assertNotAborted(signal);
+              }
 
               let frame = null;
               try {
@@ -1039,11 +1060,14 @@ const FrameEngine = (() => {
               }
               frameIndex += 1;
               if (onProgress && duration > 0) onProgress(Math.min((metadata.mediaTime || 0) / duration, 0.99));
+              if (settled || finalizing) return;
 
-              if (!video.ended && !video.paused) {
+              if (!video.ended) {
+                if (resumeAfterDrain && video.paused) await video.play();
+                if (settled || finalizing) return;
                 frameCallbackId = video.requestVideoFrameCallback(onFrame);
               } else {
-                finalize();
+                await finalize();
               }
             } catch (error) {
               fail(error);
