@@ -324,6 +324,52 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
 });
 
+test('BFCache restore restarts a video thumbnail interrupted during suspension', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__thumbnailCaptureCalls = 0;
+    window.__thumbnailAbortCalls = 0;
+    window.__finishSuspendedThumbnail = null;
+    window.FrameEngine.captureVideoFrame = (_file, _time, { signal }) => {
+      window.__thumbnailCaptureCalls += 1;
+      if (window.__thumbnailCaptureCalls === 1) {
+        return new Promise((_, reject) => {
+          signal.addEventListener('abort', () => {
+            window.__thumbnailAbortCalls += 1;
+            window.__finishSuspendedThumbnail = () => reject(
+              new DOMException('Thumbnail cancelled', 'AbortError')
+            );
+          }, { once: true });
+        });
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 64;
+      canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+      return Promise.resolve(canvas);
+    };
+    window.FrameEngine.renderFrameWhenReady = async source => source;
+  });
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'suspended-thumbnail.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__thumbnailCaptureCalls)).toBe(1);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__thumbnailAbortCalls)).toBe(1);
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    window.__finishSuspendedThumbnail();
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__thumbnailCaptureCalls)).toBe(2);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+});
+
 test('translated dynamic controls and location icon radio state stay synchronized', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
