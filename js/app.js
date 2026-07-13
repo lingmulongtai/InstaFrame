@@ -76,6 +76,7 @@ const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
+const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const _vendorScriptLoads = new Map();
 const APP_ASSET_VERSION = (() => {
   try {
@@ -832,6 +833,15 @@ async function addFiles(files) {
 
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
+      const thumbnailController = item.thumbnailController;
+      const thumbnailGuard = setTimeout(() => {
+        if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
+        item.status = 'error';
+        item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
+        updateItemStatus(item);
+        showToast(item.errorMsg, 'error');
+        thumbnailController.abort();
+      }, VIDEO_THUMBNAIL_GUARD_MS);
       _queueVideoThumbnail(item, async () => {
         const thumbnailSignal = item.thumbnailController.signal;
         const img = await FrameEngine.captureVideoFrame(file, 0, { signal: thumbnailSignal });
@@ -871,12 +881,16 @@ async function addFiles(files) {
       })
         .catch(error => {
           if (error?.name === 'AbortError') return;
+          if (item.status === 'error' && item.errorMsg) return;
           item.status = 'error';
           item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
           updateItemStatus(item);
           showToast(item.errorMsg, 'error');
         })
-        .finally(() => { item.thumbnailController = null; });
+        .finally(() => {
+          clearTimeout(thumbnailGuard);
+          if (item.thumbnailController === thumbnailController) item.thumbnailController = null;
+        });
     }
   }
 
