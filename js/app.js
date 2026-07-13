@@ -81,6 +81,7 @@ const LIVE_VIDEO_PREVIEW_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
 const VENDOR_SCRIPT_GUARD_MS = 12_000;
 const LOCATION_FETCH_GUARD_MS = 10_000;
+const MAP_IMAGE_LOAD_GUARD_MS = 15_000;
 const PREVIEW_IMAGE_DECODE_GUARD_MS = 20_000;
 const _vendorScriptLoads = new Map();
 const _locationFetchControllers = new Set();
@@ -601,7 +602,9 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     let settled = false;
+    let timeoutId = null;
     const cleanup = () => {
+      clearTimeout(timeoutId);
       signal?.removeEventListener('abort', abort);
       _mapImgLoadCancels.delete(abort);
       img.onload = null;
@@ -623,6 +626,10 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
     _mapImgLoadCancels.add(abort);
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) { abort(); return; }
+    timeoutId = setTimeout(() => {
+      img.removeAttribute('src');
+      finish(null);
+    }, MAP_IMAGE_LOAD_GUARD_MS);
     img.crossOrigin = 'anonymous';
     img.onload  = () => {
       _trackMapboxLoad();
@@ -631,7 +638,11 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
       finish(img);
     };
     img.onerror = () => finish(null);
-    img.src = url;
+    try { img.src = url; }
+    catch {
+      img.removeAttribute('src');
+      finish(null);
+    }
   });
 }
 
