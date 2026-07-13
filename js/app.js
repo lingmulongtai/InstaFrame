@@ -1131,11 +1131,24 @@ function formatFNumber(v) {
 }
 
 // ─── Item Management ──────────────────────────────────────────────────────────
+function _isSupportedImportCandidate(file) {
+  const type = String(file?.type || '').toLowerCase();
+  const name = String(file?.name || '');
+  return type.startsWith('image/') || type.startsWith('video/') ||
+    /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(name);
+}
+
+function _showImportRejections({ unsupportedCount = 0, rejectedCount = 0 } = {}) {
+  if (!unsupportedCount && !rejectedCount) return;
+  const messages = [];
+  if (unsupportedCount) messages.push(tf('msgMediaTypeUnsupported', { count: unsupportedCount }));
+  if (rejectedCount) messages.push(tf('msgMediaInputLimit', { count: rejectedCount }));
+  showToast(messages.join(' '), 'error');
+}
+
 function _reserveImportFiles(files) {
-  const candidates = Array.from(files || []).filter(file =>
-    file.type.startsWith('image/') || file.type.startsWith('video/') ||
-    /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(file.name)
-  );
+  const submitted = Array.from(files || []);
+  const candidates = submitted.filter(_isSupportedImportCandidate);
   const accepted = [];
   let rejectedCount = 0;
   let reservedBytes = 0;
@@ -1157,6 +1170,7 @@ function _reserveImportFiles(files) {
   _reservedImportBytes += reservedBytes;
   return {
     files: accepted,
+    unsupportedCount: submitted.length - candidates.length,
     rejectedCount,
     generation: _importGeneration,
     remainingItems: accepted.length,
@@ -1190,9 +1204,7 @@ function addFiles(files) {
   // batches that are already known to exceed the browser-safe limits.
   const reservation = _reserveImportFiles(files);
   if (!reservation.files.length) {
-    if (reservation.rejectedCount) {
-      showToast(tf('msgMediaInputLimit', { count: reservation.rejectedCount }), 'error');
-    }
+    _showImportRejections(reservation);
     return Promise.resolve();
   }
   const run = _importQueueTail
@@ -1203,7 +1215,7 @@ function addFiles(files) {
 }
 
 async function _addFiles(accepted, reservation) {
-  const { rejectedCount } = reservation;
+  const { rejectedCount, unsupportedCount } = reservation;
   const isCurrentImport = () => reservation.generation === _importGeneration;
 
   const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
@@ -1213,7 +1225,7 @@ async function _addFiles(accepted, reservation) {
   }
   // Rejection is the actionable result when a partial batch exceeds a hard
   // limit, so keep it visible instead of letting the advisory warning replace it.
-  if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
+  _showImportRejections({ rejectedCount, unsupportedCount });
 
   for (const file of accepted) {
     if (!isCurrentImport()) break;
