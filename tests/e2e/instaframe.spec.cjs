@@ -1872,6 +1872,79 @@ test('GPS import sends no coordinates until explicit consent', async ({ page }) 
   expect(locationRequests.some(url => url.includes('nominatim'))).toBe(true);
 });
 
+test('location requests time out instead of waiting indefinitely', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+
+  const result = await page.evaluate(async () => {
+    const nativeFetch = window.fetch;
+    const nativeSetTimeout = window.setTimeout;
+    let requestSignal = null;
+    window.fetch = (input, options = {}) => {
+      if (String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        requestSignal = options.signal;
+        return new Promise((resolve, reject) => {
+          requestSignal.addEventListener('abort', () => {
+            reject(new DOMException('Request cancelled', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return nativeFetch(input, options);
+    };
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 10_000 ? 25 : delay, ...args)
+    );
+
+    try {
+      const value = await window.reverseGeocode(35.0116, 135.7681);
+      return { value, aborted: requestSignal?.aborted === true };
+    } finally {
+      window.fetch = nativeFetch;
+      window.setTimeout = nativeSetTimeout;
+    }
+  });
+
+  expect(result).toEqual({ value: null, aborted: true });
+});
+
+test('revoking location consent aborts an in-flight reverse geocode request', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    const nativeFetch = window.fetch;
+    window.__nativeLocationFetch = nativeFetch;
+    window.fetch = (input, options = {}) => {
+      if (String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        window.__locationRequestSignal = options.signal;
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            reject(new DOMException('Request cancelled', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return nativeFetch(input, options);
+    };
+    window.__locationRequest = window.reverseGeocode(35.0116, 135.7681);
+  });
+  await expect.poll(() => page.evaluate(() => !!window.__locationRequestSignal)).toBe(true);
+
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await page.locator('#locationPrivacyRevokeBtn').click();
+
+  await expect.poll(() => page.evaluate(() => window.__locationRequestSignal?.aborted)).toBe(true);
+  expect(await page.evaluate(async () => {
+    const result = await window.__locationRequest;
+    window.fetch = window.__nativeLocationFetch;
+    delete window.__nativeLocationFetch;
+    return result;
+  })).toBeNull();
+});
+
 test('revoking location consent cancels an in-flight Mapbox image load', async ({ page }) => {
   let releaseMapRequest;
   await page.route('https://api.mapbox.com/**', async route => {
@@ -1950,6 +2023,39 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   expect(await mapStatus.evaluate(element => element.closest('[aria-modal="true"]')?.id)).toBe('mapPickerModal');
   await page.keyboard.press('Tab');
   await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
+});
+
+test('closing the map picker aborts its IP fallback and releases the map', async ({ page }) => {
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = (success, fail) => fail(new Error('Use IP fallback'));
+    const nativeFetch = window.fetch;
+    window.fetch = (input, options = {}) => {
+      if (String(input).startsWith('https://ipapi.co/')) {
+        window.__ipLocationSignal = options.signal;
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            reject(new DOMException('Request cancelled', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return nativeFetch(input, options);
+    };
+  });
+
+  await uploadJpegs(page);
+  await page.locator('#openMapPickerBtn').click();
+  await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  await expect.poll(() => page.evaluate(() => !!window.__ipLocationSignal)).toBe(true);
+  await page.locator('#mapPickerCloseBtn').click();
+
+  await expect(page.locator('#mapPickerModal')).not.toHaveClass(/open/);
+  await expect.poll(() => page.evaluate(() => window.__ipLocationSignal?.aborted)).toBe(true);
+  expect(await page.locator('#mapPickerContainer').evaluate(element => element._leaflet_id)).toBeUndefined();
 });
 
 test('unsupported browser codecs fail visibly instead of silently', async ({ page }) => {

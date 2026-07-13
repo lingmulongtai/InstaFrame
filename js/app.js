@@ -79,7 +79,9 @@ const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
 const VENDOR_SCRIPT_GUARD_MS = 12_000;
+const LOCATION_FETCH_GUARD_MS = 10_000;
 const _vendorScriptLoads = new Map();
+const _locationFetchControllers = new Set();
 let _importQueueTail = Promise.resolve();
 const APP_ASSET_VERSION = (() => {
   try {
@@ -374,6 +376,29 @@ function setupAccessibleFormNames() {
   });
 }
 
+function _cancelLocationNetworkRequests() {
+  for (const controller of _locationFetchControllers) controller.abort();
+  _locationFetchControllers.clear();
+}
+
+async function _fetchLocationJson(url, options = {}, controller = new AbortController()) {
+  if (!hasLocationNetworkConsent() || controller.signal.aborted) return null;
+  _locationFetchControllers.add(controller);
+  const timeoutId = setTimeout(() => controller.abort(), LOCATION_FETCH_GUARD_MS);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok || controller.signal.aborted || !hasLocationNetworkConsent()) return null;
+    const data = await response.json();
+    if (controller.signal.aborted || !hasLocationNetworkConsent()) return null;
+    return data;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+    _locationFetchControllers.delete(controller);
+  }
+}
+
 function hasLocationNetworkConsent() {
   return _sessionLocationNetworkConsent || loadPrefs().locationNetworkConsent === 'always';
 }
@@ -411,6 +436,8 @@ function _finishLocationConsent(allowed, persist = false) {
     const mapToggle = document.getElementById('showMapOverlay');
     if (mapToggle) mapToggle.checked = false;
     state.settings.showMapOverlay = false;
+    _cancelLocationNetworkRequests();
+    _releaseMapPickerResources();
     _cancelMapImageLoads();
     _mapImgCache.clear();
     saveSettings();
@@ -805,22 +832,17 @@ async function reverseGeocode(lat, lon) {
   const language = currentLang === 'ja' ? 'ja' : 'en';
   const key = `${language}:${lat.toFixed(3)},${lon.toFixed(3)}`;
   if (_geocodeCache[key]) return _geocodeCache[key];
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-      { headers: { 'Accept-Language': language } }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const a = data.address || {};
-    const city    = a.city || a.town || a.village || a.county || '';
-    const country = a.country || '';
-    const name    = [city, country].filter(Boolean).join(', ');
-    if (name) _geocodeCache[key] = name;
-    return name || null;
-  } catch {
-    return null;
-  }
+  const data = await _fetchLocationJson(
+    `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+    { headers: { 'Accept-Language': language } }
+  );
+  if (!data) return null;
+  const a = data.address || {};
+  const city    = a.city || a.town || a.village || a.county || '';
+  const country = a.country || '';
+  const name    = [city, country].filter(Boolean).join(', ');
+  if (name) _geocodeCache[key] = name;
+  return name || null;
 }
 
 function cleanStr(s) {
@@ -2157,6 +2179,8 @@ let _mapPickerMarker = null;
 let _mapPickerLat    = null;
 let _mapPickerLon    = null;
 let _leafletLoadPromise = null;
+let _mapPickerLocationRequestId = 0;
+let _ipLocationController = null;
 
 function _ensureLeafletStylesheet() {
   const hasLeafletCss = !!document.querySelector('link[href*="leaflet.css"]');
@@ -2213,8 +2237,14 @@ async function openMapPicker() {
   _setModalOpen(modal, true);
   modal.setAttribute('aria-busy', 'true');
   modal._previousFocus = previousFocus;
+  const locationRequestId = ++_mapPickerLocationRequestId;
+  _mapPickerLat = null;
+  _mapPickerLon = null;
+  const coordsEl = document.getElementById('mapPickerCoords');
+  if (coordsEl) coordsEl.textContent = t('mapClickHint');
   document.getElementById('mapPickerCloseBtn')?.focus();
   const leafletReady = await ensureLeafletLoaded();
+  if (locationRequestId !== _mapPickerLocationRequestId || !modal.classList.contains('open')) return;
   if (!leafletReady || typeof L === 'undefined') {
     closeMapPicker();
     showToast(t('msgMapLoadFailed'), 'error');
@@ -2225,6 +2255,7 @@ async function openMapPicker() {
   // Initialize Leaflet map in the next animation frame so the container
   // has a layout (width/height) before Leaflet tries to measure it.
   await new Promise(r => requestAnimationFrame(r));
+  if (locationRequestId !== _mapPickerLocationRequestId || !modal.classList.contains('open')) return;
 
   // Initialize Leaflet map if not yet created
   if (!_mapPickerMap) {
@@ -2253,35 +2284,46 @@ async function openMapPicker() {
     } else {
       _mapPickerMarker = L.marker([lat, lon]).addTo(_mapPickerMap);
     }
-    const coordsEl = document.getElementById('mapPickerCoords');
     if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
     return;
   }
 
-  // Try browser geolocation first, then IP-based fallback
+  // Try browser geolocation first, then IP-based fallback. The browser API has
+  // no cancellation primitive, so a generation id prevents late callbacks
+  // from restarting network work after the modal has closed.
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
       pos => {
+        if (locationRequestId !== _mapPickerLocationRequestId || !modal.classList.contains('open') || !_mapPickerMap) return;
         const { latitude, longitude } = pos.coords;
         _mapPickerMap.setView([latitude, longitude], 12);
       },
-      () => _fetchIpLocation(),
+      () => {
+        if (locationRequestId === _mapPickerLocationRequestId && modal.classList.contains('open')) {
+          void _fetchIpLocation(locationRequestId);
+        }
+      },
       { timeout: 5000 }
     );
   } else {
-    _fetchIpLocation();
+    void _fetchIpLocation(locationRequestId);
   }
 }
 
-async function _fetchIpLocation() {
-  if (!hasLocationNetworkConsent()) return;
+async function _fetchIpLocation(locationRequestId = _mapPickerLocationRequestId) {
+  if (!hasLocationNetworkConsent() || locationRequestId !== _mapPickerLocationRequestId) return;
+  _ipLocationController?.abort();
+  const controller = new AbortController();
+  _ipLocationController = controller;
   try {
-    const res  = await fetch('https://ipapi.co/json/');
-    const data = await res.json();
-    if (data.latitude && data.longitude && _mapPickerMap) {
+    const data = await _fetchLocationJson('https://ipapi.co/json/', {}, controller);
+    if (data?.latitude && data?.longitude && !controller.signal.aborted &&
+        locationRequestId === _mapPickerLocationRequestId && _mapPickerMap) {
       _mapPickerMap.setView([data.latitude, data.longitude], 10);
     }
-  } catch { /* silently ignore — stay at default view */ }
+  } finally {
+    if (_ipLocationController === controller) _ipLocationController = null;
+  }
 }
 
 function _selectMapCoordinates({ lat, lng }) {
@@ -2293,7 +2335,17 @@ function _selectMapCoordinates({ lat, lng }) {
   if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
 }
 
+function _releaseMapPickerResources() {
+  _mapPickerLocationRequestId += 1;
+  _ipLocationController?.abort();
+  _ipLocationController = null;
+  if (_mapPickerMap) _mapPickerMap.remove();
+  _mapPickerMap = null;
+  _mapPickerMarker = null;
+}
+
 function closeMapPicker() {
+  _releaseMapPickerResources();
   const modal = document.getElementById('mapPickerModal');
   if (modal) {
     _setModalOpen(modal, false);
@@ -4652,6 +4704,8 @@ function _releasePageResources() {
   _previewRenderController?.abort();
   _previewRenderController = null;
   _disposeLiveVideoSource();
+  _cancelLocationNetworkRequests();
+  _releaseMapPickerResources();
   _releasePendingDownloadUrls();
   document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
   state.items.forEach(item => {
