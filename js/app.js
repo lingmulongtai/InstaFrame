@@ -4634,11 +4634,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDestructiveConfirmation();
   setupMapModalActions();
   const exifHeader = document.querySelector('.preview-exif-drawer-header');
-  exifHeader?.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    toggleLiveExifPanel();
-  });
+  exifHeader?.addEventListener('click', toggleLiveExifPanel);
   setupShareAppModal();
   setupPreviewQuality();
   setupHistoryControls();

@@ -730,12 +730,12 @@
       <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
       <div class="preview-exif-wrap exif-open" id="previewExifWrap">
         <div class="preview-exif-drawer" id="previewExifDrawer">
-          <div class="preview-exif-drawer-header" role="button" tabindex="0" aria-expanded="true" aria-controls="previewExifContent">
-            <div class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</div>
+          <button type="button" class="preview-exif-drawer-header" aria-expanded="true" aria-controls="previewExifContent">
+            <span class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</span>
             <span class="preview-exif-collapse-btn" id="previewExifCollapseBtn" aria-hidden="true">
               <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>
             </span>
-          </div>
+          </button>
           <div class="preview-exif-content" id="previewExifContent" aria-hidden="false">
             <div class="preview-exif-grid">
               <label for="live-exif-make" data-i18n="cameraMake">Camera Make</label>
