@@ -182,6 +182,18 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
 });
 
+test('in-page language changes refresh generated form control names', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await expect(page.locator('#thicknessRange')).toHaveAccessibleName('Frame Thickness');
+  await expect(page.locator('#fontFamily')).toHaveAccessibleName('Font');
+
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  await expect(page.locator('#thicknessRange')).toHaveAccessibleName('フレームの太さ');
+  await expect(page.locator('#fontFamily')).toHaveAccessibleName('フォント');
+});
+
 test('empty import focus is visible and leaves the tab order after media is added', async ({ page }) => {
   const input = page.locator('#fileInput');
   await input.focus();

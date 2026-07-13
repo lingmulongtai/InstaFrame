@@ -435,13 +435,15 @@ function setupMapModalActions() {
 
 function setupAccessibleFormNames() {
   document.querySelectorAll('input, select, textarea').forEach(control => {
-    if (control.getAttribute('aria-label') || control.getAttribute('aria-labelledby')) return;
+    const generatedName = control.dataset.generatedAccessibleName === 'true';
+    if (control.getAttribute('aria-labelledby') || (control.getAttribute('aria-label') && !generatedName)) return;
     const wrappingLabel = control.closest('label');
     if (wrappingLabel) {
       const wrappingText = wrappingLabel.textContent?.trim();
       if (wrappingText) return;
       if (wrappingLabel.title) {
         control.setAttribute('aria-label', wrappingLabel.title);
+        control.dataset.generatedAccessibleName = 'true';
         return;
       }
     }
@@ -450,6 +452,7 @@ function setupAccessibleFormNames() {
     const visibleLabel = scope?.querySelector('.setting-label, .customize-row-label, label[data-i18n]');
     const text = visibleLabel?.textContent?.trim();
     control.setAttribute('aria-label', text || control.title || control.id || t('appTitleMain'));
+    control.dataset.generatedAccessibleName = 'true';
   });
 }
 
@@ -5252,6 +5255,7 @@ document.addEventListener('DOMContentLoaded', () => {
   buildFontSelect();         // populate font select with popularity-ordered options
   applyTranslations();
   setupAccessibleFormNames();
+  document.addEventListener('instaframe:languagechange', setupAccessibleFormNames);
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
