@@ -49,6 +49,10 @@ for (const [slug, family] of fonts) {
   const selected = packageFiles.filter(name => (
     new RegExp(`^${slug}-latin-(300|400|500|700)-(normal|italic)\\.woff2$`).test(name)
   )).sort();
+  const regularFace = `${slug}-latin-400-normal.woff2`;
+  if (!selected.includes(regularFace)) {
+    throw new Error(`Missing required self-hosted font face: @fontsource/${slug}/files/${regularFace}`);
+  }
   for (const name of selected) {
     const match = name.match(/-latin-(\d+)-(normal|italic)\.woff2$/);
     if (!match) continue;
