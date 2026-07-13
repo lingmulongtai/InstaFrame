@@ -40,6 +40,63 @@ async function loadAudioVideoFixture() {
   };
 }
 
+async function installFakeWebCodecs(page) {
+  await page.evaluate(() => {
+    const resources = {
+      activeUrls: new Set(),
+      canvases: [],
+      videos: [],
+      encoders: [],
+      closedFrames: 0,
+    };
+    window.__webCodecsResources = resources;
+
+    const createUrl = URL.createObjectURL.bind(URL);
+    const revokeUrl = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = value => {
+      const url = createUrl(value);
+      resources.activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      resources.activeUrls.delete(url);
+      revokeUrl(url);
+    };
+
+    const createElement = document.createElement.bind(document);
+    document.createElement = (tagName, options) => {
+      const element = createElement(tagName, options);
+      if (String(tagName).toLowerCase() === 'canvas') resources.canvases.push(element);
+      if (String(tagName).toLowerCase() === 'video') resources.videos.push(element);
+      return element;
+    };
+
+    window.VideoFrame = class FakeVideoFrame {
+      close() { resources.closedFrames += 1; }
+    };
+    window.VideoEncoder = class FakeVideoEncoder {
+      constructor(init) {
+        this.init = init;
+        this.state = 'unconfigured';
+        resources.encoders.push(this);
+      }
+      configure() { this.state = 'configured'; }
+      encode() { this.init.output({}, {}); }
+      flush() { return Promise.resolve(); }
+      close() { this.state = 'closed'; }
+    };
+    class FakeTarget {
+      constructor() { this.buffer = null; }
+    }
+    class FakeMuxer {
+      constructor({ target }) { this.target = target; }
+      addVideoChunk() {}
+      finalize() { this.target.buffer = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]).buffer; }
+    }
+    window.WebMMuxer = { Muxer: FakeMuxer, ArrayBufferTarget: FakeTarget };
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
@@ -737,6 +794,113 @@ test('MediaRecorder setup exceptions reject and revoke their source URL', async 
 
   expect(result.message).toContain('simulated captureStream failure');
   expect(result.activeUrls).toBe(0);
+});
+
+test('WebCodecs video success closes its encoder and releases temporary media', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-success.webm', { type: 'video/webm' });
+    const blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+    const resources = window.__webCodecsResources;
+    return {
+      blobType: blob.type,
+      blobSize: blob.size,
+      activeUrls: resources.activeUrls.size,
+      encoderStates: resources.encoders.map(encoder => encoder.state),
+      canvasSizes: resources.canvases.map(canvas => [canvas.width, canvas.height]),
+      videoSources: resources.videos.map(video => video.hasAttribute('src')),
+      closedFrames: resources.closedFrames,
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result.blobType).toBe('video/webm');
+  expect(result.blobSize).toBe(4);
+  expect(result.activeUrls).toBe(0);
+  expect(result.encoderStates).toEqual(['closed']);
+  expect(result.canvasSizes).toEqual([[0, 0]]);
+  expect(result.videoSources).toEqual([false]);
+  expect(result.closedFrames).toBeGreaterThan(0);
+});
+
+test('WebCodecs video cancellation does not fall through and releases its resources', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  await page.evaluate(({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-cancel.webm', { type: 'video/webm' });
+    window.__webCodecsAbortController = new AbortController();
+    window.__webCodecsAbortResult = { state: 'pending' };
+    const configure = window.VideoEncoder.prototype.configure;
+    window.VideoEncoder.prototype.configure = function (...args) {
+      const result = configure.apply(this, args);
+      queueMicrotask(() => window.__webCodecsAbortController.abort());
+      return result;
+    };
+    window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+      preserveAudio: false,
+      signal: window.__webCodecsAbortController.signal,
+    }).then(
+      () => { window.__webCodecsAbortResult = { state: 'resolved' }; },
+      error => { window.__webCodecsAbortResult = { state: 'rejected', name: error.name }; }
+    );
+  }, { base64: createWebm().toString('base64') });
+
+  await expect.poll(() => page.evaluate(() => window.__webCodecsAbortResult)).toEqual({ state: 'rejected', name: 'AbortError' });
+  const resources = await page.evaluate(() => ({
+    activeUrls: window.__webCodecsResources.activeUrls.size,
+    encoderStates: window.__webCodecsResources.encoders.map(encoder => encoder.state),
+    canvasSizes: window.__webCodecsResources.canvases.map(canvas => [canvas.width, canvas.height]),
+    videoSources: window.__webCodecsResources.videos.map(video => video.hasAttribute('src')),
+  }));
+  expect(resources).toEqual({
+    activeUrls: 0,
+    encoderStates: ['closed'],
+    canvasSizes: [[0, 0]],
+    videoSources: [false],
+  });
+});
+
+test('WebCodecs output limits cannot be bypassed by MediaRecorder fallback', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    window.__mediaRecorderFallbackUsed = false;
+    window.WebMMuxer.Muxer.prototype.finalize = function () {
+      this.target.buffer = { byteLength: 600 * 1024 * 1024 };
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() {
+        window.__mediaRecorderFallbackUsed = true;
+        throw new Error('MediaRecorder fallback should not run');
+      }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-limit.webm', { type: 'video/webm' });
+    let errorCode = null;
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+    } catch (error) {
+      errorCode = error.code;
+    }
+    const resources = window.__webCodecsResources;
+    return {
+      errorCode,
+      fallbackUsed: window.__mediaRecorderFallbackUsed,
+      activeUrls: resources.activeUrls.size,
+      encoderStates: resources.encoders.map(encoder => encoder.state),
+      canvasSizes: resources.canvases.map(canvas => [canvas.width, canvas.height]),
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result).toEqual({
+    errorCode: 'MEDIA_RESOURCE_LIMIT',
+    fallbackUsed: false,
+    activeUrls: 0,
+    encoderStates: ['closed'],
+    canvasSizes: [[0, 0]],
+  });
 });
 
 test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
