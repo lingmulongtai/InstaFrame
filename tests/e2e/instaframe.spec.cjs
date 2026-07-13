@@ -1527,6 +1527,45 @@ test('overflow imports are rejected before a stalled batch can retain them', asy
   await expect(page.locator('.image-card')).toHaveCount(50);
 });
 
+test('clearing the workspace invalidates files still waiting in the import queue', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    let releaseSecondMetadata;
+    const secondMetadata = new Promise(resolve => { releaseSecondMetadata = resolve; });
+    window.__clearImportStats = { parseCalls: 0 };
+    window.exifr = {
+      parse: () => {
+        window.__clearImportStats.parseCalls += 1;
+        return window.__clearImportStats.parseCalls === 2
+          ? secondMetadata.then(() => null)
+          : Promise.resolve(null);
+      },
+    };
+    window.__releaseClearedImport = releaseSecondMetadata;
+    window.__clearedImport = window.addFiles([
+      new File([bytes], 'before-clear.jpg', { type: 'image/jpeg' }),
+      new File([bytes], 'after-clear.jpg', { type: 'image/jpeg' }),
+    ]);
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__clearImportStats.parseCalls)).toBe(2);
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  const clearButton = page.locator('#clearAllBtn');
+  await expect(clearButton).toBeEnabled();
+  await clearButton.click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('.image-card')).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    window.__releaseClearedImport();
+    await window.__clearedImport;
+  });
+
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#imageCounter')).toHaveText('');
+});
+
 test('a hung EXIF read cannot block later files in the import queue', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {
