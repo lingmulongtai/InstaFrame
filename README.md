@@ -45,7 +45,7 @@
 | PNG | 標準対応 | Chromium・Firefox・WebKit・Microsoft Edgeで実PNG入力のデコード、プレビュー、PNG署名の出力を自動検証 |
 | WebP | 標準対応 | Chromium・Firefox・WebKit・Microsoft Edgeで実WebP入力のデコード、プレビュー、RIFF/WebP署名の出力を自動検証 |
 | HEIC / HEIF | 条件付き | Safariなどネイティブ対応ブラウザのみ。未対応・破損時の明示エラーは検証済みだが、有効なHEICの成功経路はCI対象外 |
-| WebM (VP8 / VP9) | 条件付き | VP8入力の写真との切り替え、Linux Chromiumでの動画出力と音声トラック保持を検証。VP9入力はブラウザのコーデック対応に依存し、CI対象外 |
+| WebM (VP8 / VP9) | 条件付き | VP8入力はChromium・Firefox・Microsoft Edgeでプレビュー成功、Playwright WebKit/Linuxでは明示的な非対応エラーを検証。Linux Chromiumでは動画出力と音声トラック保持も検証。VP9入力はブラウザのコーデック対応に依存し、CI対象外 |
 | MP4 / MOV / M4V | 条件付き | H.264/AAC等のブラウザ・OSコーデック対応状況に依存 |
 | AVI / MKV / 3GP | 条件付き | コンテナと内部コーデックの両方をブラウザが再生できる場合のみ |
 
@@ -135,7 +135,7 @@ npm.cmd test
 - 外部ネットワークを遮断した状態での写真プレビュー・書き出し
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと
 - モバイル表示とEXIF編集パネル
-- 写真 / WebM動画のプレビュー切り替え
+- Chromium・Firefox・Microsoft EdgeでのVP8 WebM動画プレビューと、WebKit/Linuxでの明示的な非対応エラー
 - Linux Chromium CIでの音声付きWebMフレーム合成 → 動画・音声トラックを保持した書き出し
 
 ## デプロイ
