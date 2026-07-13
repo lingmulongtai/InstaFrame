@@ -2371,6 +2371,161 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   }))).toEqual({ hasSource: false, hasObjectUrl: false, hasSourceId: false, paused: true });
 });
 
+test('failed live video previews release source, RAF, and canvas resources', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'error.webm', mimeType: 'video/webm', buffer: createWebm() },
+    { name: 'timeout.webm', mimeType: 'video/webm', buffer: createWebm() },
+    { name: 'throw.webm', mimeType: 'video/webm', buffer: createWebm() },
+  ]);
+  await expect(page.locator('#preview-4')).toBeVisible();
+  await expect.poll(() => page.locator('#preview-2 canvas, #preview-3 canvas, #preview-4 canvas').evaluateAll(
+    canvases => canvases.length === 3 && canvases.every(canvas => canvas.width > 0 && canvas.height > 0)
+  )).toBe(true);
+
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeCreateObjectURL = URL.createObjectURL.bind(URL);
+    const nativeRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+    const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+    const nativeCancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+    const nativeRemoveAttribute = video.removeAttribute.bind(video);
+    const activeUrls = new Set();
+    const activeRafs = new Set();
+    const stats = {
+      activeUrls,
+      activeRafs,
+      created: 0,
+      revoked: 0,
+      sourceRemoved: 0,
+    };
+    const control = { loadMode: 'stall' };
+    window.__failedLiveVideoStats = stats;
+    window.__failedLiveVideoControl = control;
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 500 : delay, ...args)
+    );
+    URL.createObjectURL = value => {
+      const url = nativeCreateObjectURL(value);
+      stats.created += 1;
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      stats.revoked += 1;
+      activeUrls.delete(url);
+      nativeRevokeObjectURL(url);
+    };
+    window.requestAnimationFrame = callback => {
+      let id = null;
+      id = nativeRequestAnimationFrame(timestamp => {
+        activeRafs.delete(id);
+        callback(timestamp);
+      });
+      activeRafs.add(id);
+      return id;
+    };
+    window.cancelAnimationFrame = id => {
+      activeRafs.delete(id);
+      nativeCancelAnimationFrame(id);
+    };
+
+    let stalledSource = '';
+    Object.defineProperty(video, 'src', {
+      configurable: true,
+      get: () => stalledSource,
+      set: value => { stalledSource = String(value); },
+    });
+    video.load = () => {
+      if (control.loadMode === 'throw') throw new DOMException('Simulated media load failure');
+    };
+    video.removeAttribute = name => {
+      if (name === 'src' && stalledSource) {
+        stalledSource = '';
+        stats.sourceRemoved += 1;
+      }
+      nativeRemoveAttribute(name);
+    };
+  });
+
+  const resourceState = () => page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    const canvas = document.getElementById('livePreviewCanvas');
+    const stats = window.__failedLiveVideoStats;
+    return {
+      activeUrls: stats.activeUrls.size,
+      activeRafs: stats.activeRafs.size,
+      created: stats.created,
+      revoked: stats.revoked,
+      sourceRemoved: stats.sourceRemoved,
+      hasObjectUrl: !!video._objUrl,
+      hasSourceId: !!video._srcId,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    };
+  });
+
+  await page.locator('#preview-2').click();
+  await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => !!video._objUrl)).toBe(true);
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  await page.locator('#livePreviewVideo').dispatchEvent('error');
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#livePreviewError')).toBeVisible();
+  await expect(page.locator('#livePreviewError')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#livePreviewError')).toContainText('error.webm');
+  await expect(page.locator('#toast')).toBeHidden();
+  const errorAxe = await new AxeBuilder({ page }).include('#dropZone').analyze();
+  expect(errorAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+  await expect.poll(resourceState).toEqual({
+    activeUrls: 0,
+    activeRafs: 0,
+    created: 1,
+    revoked: 1,
+    sourceRemoved: 1,
+    hasObjectUrl: false,
+    hasSourceId: false,
+    canvasWidth: 0,
+    canvasHeight: 0,
+  });
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+
+  await page.locator('#preview-3').click();
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#livePreviewError')).toBeVisible();
+  await expect(page.locator('#livePreviewError')).toContainText('timeout.webm');
+  await expect.poll(resourceState).toEqual({
+    activeUrls: 0,
+    activeRafs: 0,
+    created: 2,
+    revoked: 2,
+    sourceRemoved: 2,
+    hasObjectUrl: false,
+    hasSourceId: false,
+    canvasWidth: 0,
+    canvasHeight: 0,
+  });
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+
+  await page.evaluate(() => { window.__failedLiveVideoControl.loadMode = 'throw'; });
+  await page.locator('#preview-4').click();
+  await expect(page.locator('#status-badge-4 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#livePreviewError')).toContainText('throw.webm');
+  await expect.poll(resourceState).toEqual({
+    activeUrls: 0,
+    activeRafs: 0,
+    created: 3,
+    revoked: 3,
+    sourceRemoved: 3,
+    hasObjectUrl: false,
+    hasSourceId: false,
+    canvasWidth: 0,
+    canvasHeight: 0,
+  });
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+});
+
 test('video controls announce their current action and restore audible volume', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
