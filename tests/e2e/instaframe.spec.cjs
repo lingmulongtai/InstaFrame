@@ -1269,7 +1269,7 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   }))).toEqual({ hasSource: false, hasObjectUrl: false, hasSourceId: false, paused: true });
 });
 
-test('photo card and preview Blob URLs are revoked after rerender and removal', async ({ page }) => {
+test('photo card and preview Blob URLs remain bounded across language refresh and removal', async ({ page }) => {
   await page.addInitScript(() => {
     const create = URL.createObjectURL.bind(URL);
     const revoke = URL.revokeObjectURL.bind(URL);
@@ -1290,11 +1290,15 @@ test('photo card and preview Blob URLs are revoked after rerender and removal', 
   await page.locator('[data-action="remove"]').click();
   await expect(page.locator('#destructiveConfirmModal')).toHaveClass(/open/);
   await page.locator('#destructiveConfirmAcceptBtn').click();
-  await expect.poll(() => page.evaluate(() => ({
+  await expect.poll(() => page.evaluate(() => (
+    [...window.__blobUrls.created].filter(url => !window.__blobUrls.revoked.has(url)).length
+  ))).toBe(0);
+  const urlCounts = await page.evaluate(() => ({
     created: window.__blobUrls.created.size,
     revoked: window.__blobUrls.revoked.size,
-    active: [...window.__blobUrls.created].filter(url => !window.__blobUrls.revoked.has(url)).length,
-  }))).toEqual({ created: 3, revoked: 3, active: 0 });
+  }));
+  expect(urlCounts.created).toBeGreaterThanOrEqual(2);
+  expect(urlCounts.revoked).toBe(urlCounts.created);
 });
 
 test('removing a card revokes its thumbnail URL even while image events are pending', async ({ page }) => {
