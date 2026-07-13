@@ -342,6 +342,42 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
 });
 
+test('responsive transitions keep focus in the matching workspace panel', async ({ page }) => {
+  await uploadJpegs(page);
+
+  const photoPreview = page.locator('#preview-1');
+  await photoPreview.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabPhotosBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(photoPreview).toBeFocused();
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const fontSelect = page.locator('#fontFamily');
+  await fontSelect.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(fontSelect).toBeFocused();
+
+  await page.locator('#tabSettingsBtn').focus();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(page.locator('#customizeBtn')).toBeFocused();
+});
+
+test('mobile import moves focus to a visible preview control', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const input = page.locator('#fileInput');
+  await input.focus();
+  await input.setInputFiles({
+    name: 'mobile-focus.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+  expect(await page.locator('#photosPanel').evaluate(element => element.inert)).toBe(true);
+});
+
 test('privacy consent changes expose a focused polite status update', async ({ page }) => {
   await page.locator('#customizeBtn').click();
   const status = page.locator('#locationPrivacyStatus');

@@ -980,6 +980,14 @@ function _getEmptyImportFocusTarget() {
     : document.getElementById('fileInput');
 }
 
+function _getLoadedMediaFocusTarget() {
+  const mobilePreviewTab = window.innerWidth <= 768
+    && document.body.getAttribute('data-mobile-tab') === 'preview';
+  return mobilePreviewTab
+    ? document.getElementById('previewQualityBtn')
+    : document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview');
+}
+
 // ─── Frame Generation ─────────────────────────────────────────────────────────
 // onExternalProgress: optional (pct: 0..1) => void — for batch progress tracking
 function _isCurrentItemExport(item, runToken, signal) {
@@ -3044,7 +3052,7 @@ function updateUI() {
   if (fileInput) {
     fileInput.tabIndex = hasItems ? -1 : 0;
     if (hasItems && document.activeElement === fileInput) {
-      document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')?.focus();
+      _getLoadedMediaFocusTarget()?.focus();
     }
   }
   const exifWrap = document.getElementById('previewExifWrap');
@@ -4181,6 +4189,8 @@ function setupMobileTabs() {
   if (!tabBar) return;
 
   function isMobile() { return window.innerWidth <= 768; }
+  let mobileLayoutActive = isMobile();
+  let lastFocusedMobileTab = null;
 
   function switchTab(tab) {
     if (!isMobile()) return;
@@ -4193,8 +4203,25 @@ function setupMobileTabs() {
     updateEmptyTapOverlay();
   }
 
+  function tabForPanel(panel) {
+    if (!panel?.id) return null;
+    return tabBar.querySelector(`.tab-btn[aria-controls="${panel.id}"]`)?.dataset.tab || null;
+  }
+
+  function desktopFocusTarget(tab) {
+    if (tab === 'settings') return document.getElementById('customizeBtn');
+    if (tab === 'photos') {
+      return document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')
+        || document.getElementById('addMoreBtn');
+    }
+    return state.items.length
+      ? document.getElementById('previewQualityBtn')
+      : document.getElementById('fileInput');
+  }
+
   tabBar.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    btn.addEventListener('focus', () => { lastFocusedMobileTab = btn.dataset.tab; });
     btn.addEventListener('keydown', event => {
       const tabs = [...tabBar.querySelectorAll('.tab-btn')];
       const index = tabs.indexOf(btn);
@@ -4217,13 +4244,26 @@ function setupMobileTabs() {
 
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
-    if (!isMobile()) {
+    const activeElement = document.activeElement;
+    const mobileNow = isMobile();
+    const layoutChanged = mobileNow !== mobileLayoutActive;
+    if (!mobileNow) {
+      const focusedTab = activeElement?.closest?.('.tab-btn')?.dataset.tab
+        || (layoutChanged ? lastFocusedMobileTab : null);
       document.body.removeAttribute('data-mobile-tab');
       _syncMobileTabPanels(tabBar, '', false);
+      if (focusedTab) desktopFocusTarget(focusedTab)?.focus();
     }
     else if (!document.body.getAttribute('data-mobile-tab')) {
-      _setMobileTabState(tabBar, 'preview');
+      const activePanel = activeElement?.closest?.('.mobile-tab-panel');
+      const activeTab = tabForPanel(activePanel) || 'preview';
+      _setMobileTabState(tabBar, activeTab);
+      if (!activePanel && activeElement !== document.body) {
+        tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
+      }
     }
+    mobileLayoutActive = mobileNow;
+    updateUI();
     updateEmptyTapOverlay();
   });
 
