@@ -2427,18 +2427,30 @@ function setupVideoPreviewBar() {
   const volumeRange  = document.getElementById('videoVolumeRange');
   const speedSelect  = document.getElementById('videoSpeedSelect');
   if (!video || !playPauseBtn || !seekRange) return;
+  let lastAudibleVolume = video.volume > 0 ? video.volume : 1;
+
+  function syncControlLabel(button, key) {
+    if (!button) return;
+    const label = t(key);
+    button.dataset.i18n = key;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  }
 
   function syncPlayPauseIcon() {
     const paused = video.paused || video.ended;
     if (playIcon)  playIcon.style.display  = paused ? '' : 'none';
     if (pauseIcon) pauseIcon.style.display = paused ? 'none' : '';
+    syncControlLabel(playPauseBtn, paused ? 'videoPlay' : 'videoPause');
   }
 
   function syncMuteIcon() {
     const muted = video.muted || video.volume === 0;
+    if (!muted && video.volume > 0) lastAudibleVolume = video.volume;
     if (volIcon)  volIcon.style.display  = muted ? 'none' : '';
     if (muteIcon) muteIcon.style.display = muted ? '' : 'none';
     if (volumeRange) volumeRange.value = video.muted ? '0' : String(video.volume);
+    syncControlLabel(muteBtn, muted ? 'videoUnmute' : 'videoMute');
   }
 
   playPauseBtn.addEventListener('click', e => {
@@ -2455,7 +2467,14 @@ function setupVideoPreviewBar() {
   if (muteBtn) {
     muteBtn.addEventListener('click', e => {
       e.stopPropagation();
-      video.muted = !video.muted;
+      const muted = video.muted || video.volume === 0;
+      if (muted) {
+        if (video.volume === 0) video.volume = lastAudibleVolume || 1;
+        video.muted = false;
+      } else {
+        lastAudibleVolume = video.volume;
+        video.muted = true;
+      }
       syncMuteIcon();
     });
   }
@@ -2463,7 +2482,9 @@ function setupVideoPreviewBar() {
     volumeRange.addEventListener('mousedown', e => e.stopPropagation());
     volumeRange.addEventListener('touchstart', e => e.stopPropagation());
     volumeRange.addEventListener('input', () => {
-      video.volume = parseFloat(volumeRange.value);
+      const volume = parseFloat(volumeRange.value);
+      if (volume > 0) lastAudibleVolume = volume;
+      video.volume = volume;
       video.muted  = video.volume === 0;
       syncMuteIcon();
     });
@@ -2536,6 +2557,8 @@ function setupVideoPreviewBar() {
   });
   seekRange.addEventListener('change', () => { _seeking = false; });
   seekRange.addEventListener('mouseup',  () => { _seeking = false; });
+  syncPlayPauseIcon();
+  syncMuteIcon();
 }
 
 // ─── Preview Zoom & Pan ───────────────────────────────────────────────────────
