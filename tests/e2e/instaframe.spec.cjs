@@ -908,6 +908,25 @@ test('video export controls disappear when MediaRecorder supports no output MIME
   expect(disabledBitrates).toBe(allBitrates);
 });
 
+test('supported video export selection survives a page reload', async ({ page }) => {
+  const choices = await page.locator('input[name="exportVideoFormat"]').evaluateAll(inputs => (
+    inputs.map(input => input.value)
+  ));
+  expect(choices.length).toBeGreaterThan(1);
+  const savedChoice = choices.at(-1);
+
+  await page.evaluate(value => {
+    const saved = JSON.parse(localStorage.getItem('instaframe_settings') || '{}');
+    localStorage.setItem('instaframe_settings', JSON.stringify({
+      ...saved,
+      exportVideoFormat: value,
+    }));
+  }, savedChoice);
+  await page.reload();
+
+  await expect(page.locator('input[name="exportVideoFormat"]:checked')).toHaveValue(savedChoice);
+});
+
 test('batch encoding failure restores controls and reports the error', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {

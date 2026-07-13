@@ -3921,14 +3921,17 @@ function initVideoFormatOptions() {
     return;
   }
 
-  container.innerHTML = candidates.map((f, i) => `
+  const selectedFormat = candidates.some(format => format.value === state.settings.exportVideoFormat)
+    ? state.settings.exportVideoFormat
+    : candidates[0].value;
+
+  container.innerHTML = candidates.map(f => `
     <div class="ratio-pill">
-      <input type="radio" name="exportVideoFormat" id="vfmt-${f.value}" value="${f.value}" ${i === 0 ? 'checked' : ''}>
+      <input type="radio" name="exportVideoFormat" id="vfmt-${f.value}" value="${f.value}" ${f.value === selectedFormat ? 'checked' : ''}>
       <label for="vfmt-${f.value}">${f.label}</label>
     </div>`).join('');
 
-  // Set default in state
-  state.settings.exportVideoFormat = candidates[0].value;
+  state.settings.exportVideoFormat = selectedFormat;
 
   // Wire listeners (called after DOM is created)
   document.querySelectorAll('input[name="exportVideoFormat"]').forEach(r =>
@@ -5228,12 +5231,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setupAccessibleFormNames();
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
-
-  // After video pills exist, restore saved video format selection
-  if (state.settings.exportVideoFormat) {
-    const r = document.querySelector(`input[name="exportVideoFormat"][value="${state.settings.exportVideoFormat}"]`);
-    if (r) r.checked = true;
-  }
 
   // Restore custom color button visual state
   if (state.isCustomColor) updateCustomColorBtn(state.customColorValue);
