@@ -95,6 +95,15 @@
 
 共通トークンにはアプリ側でも同じオリジンだけを許可し、共通・利用者トークンの両方に端末ごと1日100回・1か月1000回のソフト上限を設けています。ただし、クライアント側の上限は改変できるため、Mapbox側のURL制限やアカウント監視の代替にはなりません。Mapboxは設定可能な支出アラートや月額上限を現在提供していません。free tierを初めて超えた際の通知はありますが、確実な遮断が必要ならStatistics・請求書を監視し、専用トークンを削除またはローテーションしてください。URL制限はMapboxの[公式トークン管理ガイド](https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions)、課金上限の制約は[公式請求ガイド](https://docs.mapbox.com/accounts/guides/invoices/#feature-requests)を確認してください。
 
+## 外部環境での残検証
+
+コードとCIだけでは代替できない検証は、完了扱いにせず次のIssueで追跡しています。
+
+- [Issue #40](https://github.com/lingmulongtai/InstaFrame/issues/40): Mapbox管理画面での専用公開トークン、Allowed URL、実Refererの許可/拒否、監視・ローテーション運用
+- [Issue #41](https://github.com/lingmulongtai/InstaFrame/issues/41): 実Safari / iOSと有効なHEIC / HEIF / MOV / MP4 / VP9 fixtureによる成功経路
+- [Issue #42](https://github.com/lingmulongtai/InstaFrame/issues/42): 実VoiceOver / NVDAと全テーマの手動コントラスト確認
+- [Issue #43](https://github.com/lingmulongtai/InstaFrame/issues/43): 低メモリ実機での長時間・大規模な写真/動画混在プロファイル
+
 ## ローカル実行
 
 初回に `npm.cmd ci` を実行してください。`index.html`を直接開くこともできますが、依存ライブラリの準備とブラウザのセキュリティ制限回避を兼ねた、同梱のローカルHTTPサーバーを推奨します。
@@ -185,4 +194,4 @@ InstaFrame/
 
 InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom.
 
-Run `npm install`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract. GitHub Pages deploys an allowlisted `dist/` artifact only.
+Run `npm ci`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract. GitHub Pages deploys an allowlisted `dist/` artifact only.
