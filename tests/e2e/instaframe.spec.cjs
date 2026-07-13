@@ -115,6 +115,43 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
 
+test('every theme keeps dynamic controls and destructive dialogs at WCAG contrast', async ({ page }) => {
+  await uploadJpegs(page);
+  const themes = [
+    { value: 'light', colorScheme: 'light' },
+    { value: 'soft-white', colorScheme: 'light' },
+    { value: 'blue-grey-dark', colorScheme: 'dark' },
+    { value: 'dark', colorScheme: 'dark' },
+    { value: 'system', colorScheme: 'light' },
+    { value: 'system', colorScheme: 'dark' },
+  ];
+
+  for (const { value, colorScheme } of themes) {
+    await page.emulateMedia({ colorScheme });
+    await page.locator('#customizeBtn').click();
+    await page.locator(`.pill-option:has(input[name="themeChoice"][value="${value}"])`).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', value);
+
+    const controlsAudit = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
+    expect(
+      controlsAudit.violations,
+      `${value}/${colorScheme} controls: ${JSON.stringify(controlsAudit.violations, null, 2)}`
+    ).toEqual([]);
+
+    await page.keyboard.press('Escape');
+    await page.locator('[data-action="remove"]').click();
+    const dialogAudit = await new AxeBuilder({ page })
+      .include('#destructiveConfirmModal')
+      .withRules(['color-contrast'])
+      .analyze();
+    expect(
+      dialogAudit.violations,
+      `${value}/${colorScheme} dialog: ${JSON.stringify(dialogAudit.violations, null, 2)}`
+    ).toEqual([]);
+    await page.keyboard.press('Escape');
+  }
+});
+
 test('initial translated UI exposes the matching document language', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
