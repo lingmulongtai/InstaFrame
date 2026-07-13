@@ -146,7 +146,9 @@ test('VP8 WebM input previews or fails explicitly with the browser codec', async
   });
   await expect(page.locator('#preview-1')).toBeVisible();
   if (testInfo.project.name === 'webkit') {
-    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+    // WebKit may wait for the 15 s thumbnail decode guard before declaring
+    // an unsupported VP8 codec, so allow that product timeout to complete.
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/, { timeout: 20_000 });
     await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
   } else {
     await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
