@@ -1003,6 +1003,26 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
 });
 
+test('closing the preview quality menu from outside restores visible focus', async ({ page }) => {
+  await uploadJpegs(page);
+  const qualityButton = page.locator('#previewQualityBtn');
+  await qualityButton.click();
+  await expect(qualityButton).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.pq-option[data-q="auto"]')).toBeFocused();
+
+  await page.locator('#livePreviewCanvas').click();
+
+  await expect(qualityButton).toHaveAttribute('aria-expanded', 'false');
+  await expect(qualityButton).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement.getClientRects().length)).toBeGreaterThan(0);
+
+  await qualityButton.click();
+  const zoomIn = page.locator('#zoomInBtn');
+  await zoomIn.click();
+  await expect(qualityButton).toHaveAttribute('aria-expanded', 'false');
+  await expect(zoomIn).toBeFocused();
+});
+
 test('responsive transitions keep focus in the matching workspace panel', async ({ page }) => {
   await uploadJpegs(page);
 
