@@ -67,6 +67,7 @@
 - 動画は選択ビットレートから見積もった出力が512 MiB以下
 - 写真・動画カードのサムネイル同時デコードは種類ごと最大2件、同一項目の生成処理は最大1件
 - MediaRecorderの実チャンクとWebCodecsの圧縮済みchunkが512 MiBを超える前に生成を中断。WebCodecsの未処理エンコード待ち行列は最大4フレーム
+- 動画書き出しはメタデータを15秒、デコードフレーム進行を60秒待っても進まない場合に終了し、一時リソースを解放
 
 30項目を超える場合は上限内でも先に警告します。上限を超えたファイルは追加または生成せず、既に追加した項目は保持します。書き出しはキャンセルでき、削除・再編集・ページ離脱時にはCanvas、Blob URL、MediaStream、AudioContextを解放します。戻る/進むキャッシュから復帰した場合は、解放済みの生成結果を未処理へ戻してライブプレビューを再構築します。
 
@@ -127,7 +128,7 @@ npm.cmd test
 
 クロスブラウザ契約をローカルで再現する場合はFirefoxとWebKitも導入し、`PLAYWRIGHT_BROWSER`と`PLAYWRIGHT_SUITE=cross-browser`を設定します。Microsoft Edge契約は、Windowsにインストールされた実際の`msedge`チャンネルを使用します。
 
-`npm test`は次を実行します。
+`npm test`は、既定ではChromiumのフルE2Eを含む次の検証を実行します。
 
 - JavaScript構文検査
 - ESLint
@@ -141,7 +142,8 @@ npm.cmd test
 - 複数JPEGのZIP出力
 - 大量バッチのメモリ警告、入力・画素・Canvas・生成済み出力の安全上限、書き出しキャンセル
 - EXIF・ZIP・フォントが必要になるまで初回取得されないこと
-- 処理中エンコーダーと写真エンコードへのAbortSignal伝播、WebCodecsの背圧・生成途中の出力上限、動画プレビュー・カード・ダウンロードBlob URLの解放
+- 処理中エンコーダーと写真エンコードへのAbortSignal伝播、WebCodecsの背圧・生成途中の出力上限、動画メタデータ・フレーム進行のタイムアウト
+- デコード済みフレーム単位の動画プレビュー、カード・ダウンロードBlob URL、Canvas、MediaStream、AudioContextの解放
 - 戻る/進むキャッシュを繰り返した場合のCanvas・Blob URL解放とプレビュー復帰
 - 日本語画質UI、6144px固定レイアウト、最大1200%のズーム追従バックバッファ
 - リサイズ境界のキーボード操作と、デスクトップ / モバイル遷移時のフォーカス維持
@@ -149,9 +151,14 @@ npm.cmd test
 - 外部ネットワークを遮断した状態での写真プレビュー・書き出し
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと
 - モバイル表示とEXIF編集パネル
+
+GitHub Actionsでは、上記に加えて次のCI専用契約を実行します。
+
+- Chromium・Firefox・WebKit・Microsoft Edgeで、16種類すべての自己ホストフォント、写真/UI/axe/プライバシー契約を検証
 - Chromium・Firefox・Microsoft EdgeでのVP8 WebM動画プレビューと、WebKitでのデコード成功または明示的な非対応エラー
 - H.264 Baseline映像とAAC-LC音声を含むMP4・QuickTime MOV・M4V入力の4ブラウザ契約（Chromium・Firefox・Microsoft Edgeは映像フレームのデコード必須、Playwright WebKitは明示エラーを許容。入力AAC音声のデコード・保持は対象外）
-- Linux Chromium CIでの音声付きWebMフレーム合成 → 動画・音声トラックを保持した書き出し
+- Linux Chromiumでの音声付きWebMフレーム合成 → 動画・音声トラックを保持した書き出し
+- 全品質ゲートと4ブラウザ契約が成功した`main`コミットだけをGitHub Pagesへデプロイ
 
 ## デプロイ
 
