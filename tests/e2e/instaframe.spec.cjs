@@ -4246,6 +4246,22 @@ for (const { extension, mimeType } of [
   });
 }
 
+test('a broken later photo becomes an explicit item and preview error', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'good.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not-a-decodable-png') },
+  ]);
+
+  const badge = page.locator('#status-badge-2');
+  await expect(badge.locator('.status-dot')).toHaveClass(/error/);
+  await expect(badge).toHaveAttribute('aria-label', /broken\.png/i);
+  await expect(page.locator('#toast')).toContainText('broken.png');
+  await page.locator('#preview-2').click();
+  await expect(page.locator('#livePreviewError')).toBeVisible();
+  await expect(page.locator('#livePreviewError')).toContainText('broken.png');
+  await expect(badge.locator('.status-dot')).not.toHaveClass(/pending/);
+});
+
 test('mobile layout exposes import, settings, and a readable EXIF editor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
