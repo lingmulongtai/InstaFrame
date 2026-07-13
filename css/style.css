@@ -145,6 +145,11 @@ html, body {
 .sidebar-resize-handle:active {
   background: rgba(37,99,235,0.18);
 }
+.sidebar-resize-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
 [data-layout="right"] .sidebar-resize-handle {
   right: auto;
   left: -4px;
@@ -911,6 +916,11 @@ input[type="range"]:focus-visible {
 }
 .main-resize-handle:hover,
 .main-resize-handle.resizing { background: var(--accent); }
+.main-resize-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent);
+}
 
 /* Card size control bar */
 .card-size-bar {
@@ -2324,7 +2334,8 @@ input[type="range"]:focus-visible {
   }
 
   /* Resize handle hidden on mobile */
-  .sidebar-resize-handle { display: none; }
+  .sidebar-resize-handle,
+  .main-resize-handle { display: none !important; }
 
   /* Preview area: fills the main area on preview tab */
   .preview-area {

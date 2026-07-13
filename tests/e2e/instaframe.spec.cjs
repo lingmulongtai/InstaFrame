@@ -129,6 +129,43 @@ test('empty import focus is visible and leaves the tab order after media is adde
   await expect(page.locator('#preview-1')).toBeFocused();
 });
 
+test('workspace resize separators support keyboard control and expose their values', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page);
+
+  const sidebarHandle = page.locator('#sidebarResizeHandle');
+  await expect(sidebarHandle).toHaveRole('separator');
+  await expect(sidebarHandle).toHaveAccessibleName('Resize settings panel');
+  const sidebarBefore = Number(await sidebarHandle.getAttribute('aria-valuenow'));
+  await sidebarHandle.focus();
+  await sidebarHandle.press('ArrowRight');
+  await expect(sidebarHandle).toHaveAttribute('aria-valuenow', String(sidebarBefore + 10));
+
+  const mainHandle = page.locator('#mainResizeHandle');
+  await expect(mainHandle).toBeVisible();
+  await expect(mainHandle).toHaveRole('separator');
+  await expect(mainHandle).toHaveAccessibleName('Resize preview panel');
+  const previewBefore = Number(await mainHandle.getAttribute('aria-valuenow'));
+  await mainHandle.focus();
+  await mainHandle.press('ArrowDown');
+  await expect(mainHandle).toHaveAttribute('aria-valuenow', String(previewBefore + 10));
+
+  const prefs = await page.evaluate(() => JSON.parse(localStorage.getItem('instaframe_prefs')));
+  expect(prefs.sidebarWidth).toBe(sidebarBefore + 10);
+  expect(prefs.previewHeight).toBe(`${previewBefore + 10}px`);
+
+  const audit = await new AxeBuilder({ page })
+    .include('#sidebarResizeHandle')
+    .include('#mainResizeHandle')
+    .analyze();
+  expect(audit.violations).toEqual([]);
+
+  await page.locator('#langToggleBtn').click();
+  await expect(sidebarHandle).toHaveAccessibleName('設定パネルの幅を変更');
+  await expect(mainHandle).toHaveAccessibleName('プレビューパネルの高さを変更');
+});
+
 test('translated dynamic controls and location icon radio state stay synchronized', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
