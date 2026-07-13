@@ -17,3 +17,5 @@ ffmpeg -i codec-fixture.mp4 -map 0 -c copy -f mov -movflags +faststart codec-fix
 ```
 
 SHA-256: `54ae77851ba75bb017bbca24fbb946c79f7b091868b5687583481f304e78cd85`
+
+The M4V contract reuses `codec-fixture.mp4` with the `.m4v` extension and `video/x-m4v` MIME type. M4V is an MP4-family container, so a duplicate binary fixture is unnecessary.

@@ -48,7 +48,7 @@
 | WebM (VP8 / VP9) | 条件付き | VP8入力はChromium・Firefox・Microsoft Edgeでプレビュー成功を検証。Playwright WebKitは実行環境のコーデック差を許容し、実寸のあるデコード済みフレームまたは明示的な非対応エラーのどちらかを検証します。Linux Chromiumでは動画出力と音声トラック保持も検証。VP9入力はブラウザのコーデック対応に依存し、CI対象外 |
 | MP4 (H.264 / AAC) | 条件付き | 有効な音声付きMP4 fixtureを4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード済みプレビューを必須とし、Playwright WebKitは明示的なコーデックエラーを許容 |
 | MOV (H.264 / AAC) | 条件付き | 同じ映像・音声をQuickTimeコンテナへ再格納した有効fixtureを4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容 |
-| M4V | 条件付き | ブラウザ・OSのコンテナとコーデック対応に依存。有効な成功fixtureはCI対象外 |
+| M4V (H.264 / AAC) | 条件付き | 検証済みMP4 fixtureを`.m4v`・`video/x-m4v`として4ブラウザCIで検証。Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容 |
 | AVI / MKV / 3GP | 条件付き | コンテナと内部コーデックの両方をブラウザが再生できる場合のみ |
 
 表はファイル選択画面で案内する主要形式です。ドラッグ＆ドロップでは、このほかの`image/*`・`video/*`もブラウザがネイティブデコードできる場合に利用できます。未対応ファイルを選択した場合は、処理を黙って失敗させず、デコードできないことを画面に表示します。
@@ -150,7 +150,7 @@ npm.cmd test
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと
 - モバイル表示とEXIF編集パネル
 - Chromium・Firefox・Microsoft EdgeでのVP8 WebM動画プレビューと、WebKitでのデコード成功または明示的な非対応エラー
-- 有効なH.264/AAC MP4・QuickTime MOV入力の4ブラウザ契約（Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容）
+- 有効なH.264/AAC MP4・QuickTime MOV・M4V入力の4ブラウザ契約（Chromium・Firefox・Microsoft Edgeはデコード必須、Playwright WebKitは明示エラーを許容）
 - Linux Chromium CIでの音声付きWebMフレーム合成 → 動画・音声トラックを保持した書き出し
 
 ## デプロイ
