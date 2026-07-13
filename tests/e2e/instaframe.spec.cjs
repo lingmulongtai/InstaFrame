@@ -312,6 +312,48 @@ test('photo cards replace full-resolution image decodes with bounded canvases', 
   await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
 });
 
+test('a successful export recovers a photo from a transient live preview decode failure', async ({ page }) => {
+  await uploadJpegs(page);
+  const canvas = page.locator('#livePreviewCanvas');
+  await expect(canvas).toBeVisible();
+
+  await page.evaluate(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__transientPreviewFailureObserved = false;
+    window.__restorePreviewImageDecoder = () => {
+      Object.defineProperty(HTMLImageElement.prototype, 'src', descriptor);
+    };
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (!window.__transientPreviewFailureObserved
+          && !this.classList.contains('thumb-orig')
+          && String(value).startsWith('blob:')) {
+          window.__transientPreviewFailureObserved = true;
+          queueMicrotask(() => this.onerror?.(new Event('error')));
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+    window._invalidateItemCache(1);
+    const previewCanvas = document.getElementById('livePreviewCanvas');
+    previewCanvas.width = 0;
+    previewCanvas.height = 0;
+    previewCanvas.style.display = 'none';
+    window.scheduleLivePreview();
+  });
+  await expect.poll(() => page.evaluate(() => window.__transientPreviewFailureObserved)).toBe(true);
+  await page.evaluate(() => window.__restorePreviewImageDecoder());
+
+  await page.locator('#generateAllBtn').click();
+
+  await expect(page.locator('.status-dot.done')).toHaveCount(1);
+  await expect(canvas).toBeVisible();
+  await expect.poll(() => canvas.evaluate(element => element.width)).toBeGreaterThan(0);
+});
+
 test('photo card decoders stay bounded during a large import', async ({ page }) => {
   await page.evaluate(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
