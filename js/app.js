@@ -217,6 +217,16 @@ function _setModalOpen(modal, open) {
   _syncModalBackgroundInert();
 }
 
+function _restoreModalTriggerFocus(target) {
+  if (!target?.isConnected || typeof target.focus !== 'function') return;
+  const restore = () => {
+    if (!target.isConnected || document.querySelector('.map-modal.open')) return;
+    target.focus();
+  };
+  restore();
+  if (document.activeElement !== target) requestAnimationFrame(restore);
+}
+
 function _openLocationPrivacyModal() {
   _locationPrivacyPreviousFocus = document.activeElement;
   _setModalOpen(document.getElementById('locationPrivacyModal'), true);
@@ -225,8 +235,9 @@ function _openLocationPrivacyModal() {
 
 function _closeLocationPrivacyModal() {
   _setModalOpen(document.getElementById('locationPrivacyModal'), false);
-  if (_locationPrivacyPreviousFocus?.focus) _locationPrivacyPreviousFocus.focus();
+  const previousFocus = _locationPrivacyPreviousFocus;
   _locationPrivacyPreviousFocus = null;
+  _restoreModalTriggerFocus(previousFocus);
 }
 
 function setupModalAccessibility() {
@@ -261,11 +272,10 @@ function _finishDestructiveConfirmation(confirmed) {
   const modal = document.getElementById('destructiveConfirmModal');
   _setModalOpen(modal, false);
   const resolve = _destructiveConfirmResolver;
+  const previousFocus = _destructiveConfirmPreviousFocus;
   _destructiveConfirmResolver = null;
-  if (!confirmed && _destructiveConfirmPreviousFocus?.isConnected) {
-    _destructiveConfirmPreviousFocus.focus();
-  }
   _destructiveConfirmPreviousFocus = null;
+  if (!confirmed) _restoreModalTriggerFocus(previousFocus);
   if (resolve) resolve(confirmed);
 }
 
@@ -2215,8 +2225,9 @@ function closeMapPicker() {
   if (modal) {
     _setModalOpen(modal, false);
     modal.setAttribute('aria-busy', 'false');
-    modal._previousFocus?.focus?.();
+    const previousFocus = modal._previousFocus;
     modal._previousFocus = null;
+    _restoreModalTriggerFocus(previousFocus);
   }
 }
 
@@ -2287,8 +2298,9 @@ function closeShareAppModal() {
   const modal = document.getElementById('shareAppModal');
   if (modal) {
     _setModalOpen(modal, false);
-    modal._previousFocus?.focus?.();
+    const previousFocus = modal._previousFocus;
     modal._previousFocus = null;
+    _restoreModalTriggerFocus(previousFocus);
   }
 }
 

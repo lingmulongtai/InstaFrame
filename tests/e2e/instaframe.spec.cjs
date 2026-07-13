@@ -394,6 +394,14 @@ test('modal background stays inert and focus remains in the dialog across respon
   await remove.press('Enter');
   const modal = page.locator('#destructiveConfirmModal');
   await expect(page.locator('#destructiveConfirmCancelBtn')).toBeFocused();
+  await remove.evaluate(button => {
+    const nativeFocus = button.focus.bind(button);
+    window.__modalRestoreFocusCalls = 0;
+    button.focus = (...args) => {
+      window.__modalRestoreFocusCalls += 1;
+      if (window.__modalRestoreFocusCalls > 1) nativeFocus(...args);
+    };
+  });
   expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(true);
   expect(await page.locator('#mobileTabBar').evaluate(element => element.inert)).toBe(true);
 
@@ -404,6 +412,7 @@ test('modal background stays inert and focus remains in the dialog across respon
 
   await page.keyboard.press('Escape');
   await expect(remove).toBeFocused();
+  expect(await page.evaluate(() => window.__modalRestoreFocusCalls)).toBe(2);
   expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(false);
   expect(await page.locator('#mobileTabBar').evaluate(element => element.inert)).toBe(false);
 });
