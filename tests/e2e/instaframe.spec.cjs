@@ -905,6 +905,68 @@ test('MediaRecorder setup exceptions reject and revoke their source URL', async 
   expect(result.activeUrls).toBe(0);
 });
 
+test('MediaRecorder drawing failures reject and stop active output resources', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'draw-failure.webm', { type: 'video/webm' });
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    URL.createObjectURL = value => {
+      const url = create(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      revoke(url);
+    };
+
+    const outputTrack = { stopped: false, stop() { this.stopped = true; } };
+    const outputStream = {
+      addTrack() {},
+      getTracks() { return [outputTrack]; },
+    };
+    HTMLCanvasElement.prototype.captureStream = () => outputStream;
+    const recorders = [];
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() {
+        this.state = 'inactive';
+        recorders.push(this);
+      }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        queueMicrotask(() => this.onstop?.());
+      }
+    };
+
+    let message = '';
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: true,
+        onProgress: () => { throw new Error('simulated draw loop failure'); },
+      });
+    } catch (error) {
+      message = error.message;
+    }
+    return {
+      message,
+      activeUrls: activeUrls.size,
+      recorderStates: recorders.map(recorder => recorder.state),
+      outputTrackStopped: outputTrack.stopped,
+    };
+  }, { base64: createWebm().toString('base64') });
+
+  expect(result).toEqual({
+    message: 'simulated draw loop failure',
+    activeUrls: 0,
+    recorderStates: ['inactive'],
+    outputTrackStopped: true,
+  });
+});
+
 test('WebCodecs video success closes its encoder and releases temporary media', async ({ page }) => {
   await installFakeWebCodecs(page);
   const fixture = await loadAudioVideoFixture();
