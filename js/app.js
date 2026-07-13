@@ -2713,6 +2713,10 @@ async function renderLivePreview() {
   if (state.items.length === 0) {
     _disposeLiveVideoSource();
     canvas.style.display = 'none';
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.style.width = '';
+    canvas.style.height = '';
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
     return;

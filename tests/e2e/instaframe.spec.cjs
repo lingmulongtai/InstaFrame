@@ -700,6 +700,11 @@ test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
     budget: Number(element.dataset.previewPixelBudget),
   }));
   expect(backing.pixels).toBeLessThanOrEqual(backing.budget + 10_000);
+
+  await page.locator('[data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect.poll(() => canvas.evaluate(element => ({ width: element.width, height: element.height })))
+    .toEqual({ width: 0, height: 0 });
 });
 
 test('blur background supports an explicit custom text color', async ({ page }) => {
