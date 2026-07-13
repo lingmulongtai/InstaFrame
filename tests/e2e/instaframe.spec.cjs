@@ -91,7 +91,7 @@ async function installFakeWebCodecs(page) {
         this.state = 'unconfigured';
         resources.encoders.push(this);
       }
-      configure() { this.state = 'configured'; }
+      configure(config) { this.config = config; this.state = 'configured'; }
       encode() { this.init.output({}, {}); }
       flush() { return Promise.resolve(); }
       close() { this.state = 'closed'; }
@@ -1828,6 +1828,35 @@ test('WebCodecs video success closes its encoder and releases temporary media', 
   expect(result.closedFrames).toBeGreaterThan(0);
 });
 
+test('WebCodecs video output uses the post-processed aspect ratio and releases its base canvas', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-portrait.webm', { type: 'video/webm' });
+    await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 0,
+      frameColor: '#f0f0f0',
+      frameBackground: 'blur',
+      showShotOn: false,
+      showExifInfo: false,
+    }, { preserveAudio: false });
+    const resources = window.__webCodecsResources;
+    return {
+      config: resources.encoders[0].config,
+      activeUrls: resources.activeUrls.size,
+      canvasSizes: resources.canvases.map(canvas => [canvas.width, canvas.height]),
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result.config.width / result.config.height).toBeCloseTo(4 / 5, 2);
+  expect(result.activeUrls).toBe(0);
+  expect(result.canvasSizes.length).toBeGreaterThanOrEqual(2);
+  expect(result.canvasSizes.slice(0, 2)).toEqual([[0, 0], [0, 0]]);
+});
+
 test('WebCodecs video cancellation does not fall through and releases its resources', async ({ page }) => {
   await installFakeWebCodecs(page);
   await page.evaluate(({ base64 }) => {
@@ -2045,6 +2074,118 @@ test('blur background supports an explicit custom text color', async ({ page }) 
     return count;
   });
   expect(magentaPixels).toBeGreaterThan(10);
+});
+
+test('video layouts apply portrait presets and outer padding', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const base = {
+      thicknessScale: 1,
+      frameColor: '#f0f0f0',
+      aspectRatio: 'original',
+      aspectOrientation: 'auto',
+      outerPadding: 0,
+    };
+    const layouts = {
+      original: window.FrameEngine.computeVideoFrameLayout(1600, 900, base),
+      portrait: window.FrameEngine.computeVideoFrameLayout(1600, 900, {
+        ...base,
+        aspectRatio: '4:5',
+        aspectOrientation: 'portrait',
+      }),
+      padded: window.FrameEngine.computeVideoFrameLayout(1600, 900, {
+        ...base,
+        outerPadding: 10,
+      }),
+    };
+    const source = document.createElement('canvas');
+    source.width = 160;
+    source.height = 90;
+    const sourceContext = source.getContext('2d');
+    sourceContext.fillStyle = '#d02020';
+    sourceContext.fillRect(0, 0, source.width, source.height);
+    const drawSettings = {
+      ...base,
+      frameColor: '#2040d0',
+      frameBackground: 'blur',
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 10,
+      showShotOn: false,
+      showExifInfo: false,
+      showLocation: false,
+    };
+    const drawLayout = window.FrameEngine.computeVideoFrameLayout(160, 90, drawSettings);
+    const output = document.createElement('canvas');
+    output.width = drawLayout.canvasW;
+    output.height = drawLayout.canvasH;
+    const outputContext = output.getContext('2d');
+    const scratch = window.FrameEngine.drawVideoFrameSync(
+      outputContext, source, {}, drawSettings, drawLayout
+    );
+    const corner = [...outputContext.getImageData(0, 0, 1, 1).data];
+    const draw = {
+      frameX: drawLayout.frameX,
+      frameY: drawLayout.frameY,
+      scratchWidth: scratch?.width || 0,
+      scratchHeight: scratch?.height || 0,
+      baseCanvasW: drawLayout.baseCanvasW,
+      baseCanvasH: drawLayout.baseCanvasH,
+      corner,
+    };
+    source.width = 0;
+    source.height = 0;
+    output.width = 0;
+    output.height = 0;
+    if (scratch) { scratch.width = 0; scratch.height = 0; }
+    return { layouts, draw };
+  });
+
+  expect(result.layouts.portrait.canvasW / result.layouts.portrait.canvasH).toBeCloseTo(4 / 5, 2);
+  const expectedPad = Math.round(Math.max(result.layouts.original.canvasW, result.layouts.original.canvasH) * 0.1);
+  expect(result.layouts.padded.canvasW).toBe(result.layouts.original.canvasW + expectedPad * 2);
+  expect(result.layouts.padded.canvasH).toBe(result.layouts.original.canvasH + expectedPad * 2);
+  expect(result.draw.frameX).toBeGreaterThan(0);
+  expect(result.draw.frameY).toBeGreaterThan(0);
+  expect(result.draw.scratchWidth).toBe(result.draw.baseCanvasW);
+  expect(result.draw.scratchHeight).toBe(result.draw.baseCanvasH);
+  expect(result.draw.corner[3]).toBeGreaterThan(0);
+});
+
+test('live video preview keeps the requested ratio and padding after seeking', async ({ page }) => {
+  const fixture = await loadAudioVideoFixture();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'live-video-layout.webm',
+    mimeType: fixture.mimeType,
+    buffer: fixture.buffer,
+  });
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+
+  await page.locator('label[for="ratio-4-5"]').click();
+  await page.locator('#outerPaddingRange').evaluate(element => {
+    element.value = '10';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const expectedRatio = await page.locator('#livePreviewVideo').evaluate(video => {
+    const layout = window.FrameEngine.computeVideoFrameLayout(video.videoWidth, video.videoHeight, {
+      thicknessScale: 1,
+      imageOffsetY: 0,
+      showLocation: false,
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 10,
+      frameColor: '#f0f0f0',
+    });
+    return layout.canvasW / layout.canvasH;
+  });
+  const canvas = page.locator('#livePreviewCanvas');
+  await expect.poll(() => canvas.evaluate(element => element.width / element.height)).toBeCloseTo(expectedRatio, 2);
+
+  await page.locator('#videoSeekRange').evaluate((element) => {
+    element.value = String(Number(element.max) / 2);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(() => canvas.evaluate(element => element.width / element.height)).toBeCloseTo(expectedRatio, 2);
 });
 
 test('social presets are labelled and enforce portrait composition', async ({ page }) => {
@@ -2884,6 +3025,24 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
     buffer: createWebm(),
   });
   await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+  await page.locator('label[for="ratio-9-16"]').click();
+  await page.locator('#outerPaddingRange').evaluate(element => {
+    element.value = '10';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const expectedLayout = await page.locator('#livePreviewVideo').evaluate(video => {
+    const layout = window.FrameEngine.computeVideoFrameLayout(video.videoWidth, video.videoHeight, {
+      thicknessScale: 1,
+      imageOffsetY: 0,
+      showLocation: false,
+      aspectRatio: '9:16',
+      aspectOrientation: 'portrait',
+      outerPadding: 10,
+      frameColor: '#f0f0f0',
+    });
+    return { width: layout.canvasW, height: layout.canvasH };
+  });
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#dl-btn-1').click();
@@ -2911,8 +3070,7 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
     mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
   });
   expect(mediaInfo.duration).toBeGreaterThan(0);
-  expect(mediaInfo.width).toBeGreaterThan(0);
-  expect(mediaInfo.height).toBeGreaterThan(0);
+  expect({ width: mediaInfo.width, height: mediaInfo.height }).toEqual(expectedLayout);
 });
 
 test('video export preserves an input audio track', async ({ page }) => {

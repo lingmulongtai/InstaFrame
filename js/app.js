@@ -257,6 +257,7 @@ let   _lastProgressAnnouncement = -1;
 // ─── Video canvas preview loop ────────────────────────────────────────────────
 let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
 let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
+let _videoPreviewBaseCanvas = null;
 
 // ─── Location privacy consent ─────────────────────────────────────────────────
 let _sessionLocationNetworkConsent = false;
@@ -2761,14 +2762,19 @@ function setupVideoPreviewBar() {
       const canvas  = document.getElementById('livePreviewCanvas');
       const pane    = document.getElementById('dropZone');
       if (canvas && pane && video.videoWidth) {
-        const layout  = FrameEngine.computeVideoFrameLayout(video.videoWidth, video.videoHeight, state.settings);
+        const layout  = FrameEngine.computeVideoFrameLayout(
+          video.videoWidth, video.videoHeight, state.settings, item.exif || {}
+        );
         const dpr     = window.devicePixelRatio || 1;
         const scaleX  = canvas.width  / layout.canvasW;
         const scaleY  = canvas.height / layout.canvasH;
         const ctx     = canvas.getContext('2d');
         ctx.save();
         ctx.scale(scaleX, scaleY);
-        FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
+        _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
+          ctx, video, item.exif || {}, state.settings, layout,
+          _videoPreviewBaseCanvas, Math.min(scaleX, scaleY)
+        );
         ctx.restore();
       }
     }
@@ -3046,6 +3052,11 @@ function _stopVideoCanvasPreview() {
     cancelAnimationFrame(_videoPreviewRAF);
     _videoPreviewRAF = null;
   }
+  if (_videoPreviewBaseCanvas) {
+    _videoPreviewBaseCanvas.width = 0;
+    _videoPreviewBaseCanvas.height = 0;
+    _videoPreviewBaseCanvas = null;
+  }
   _videoPreviewItemId = null;
 }
 
@@ -3148,8 +3159,6 @@ function _startVideoCanvasPreview(item) {
   const pane   = document.getElementById('dropZone');
   if (!video || !canvas || !pane) return;
 
-  let _lastLayout = null; // cache layout between frames to avoid redundant recalcs
-
   function drawFrame() {
     if (!video.videoWidth || !video.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       // A decoded video frame is not ready yet — draw loading placeholder
@@ -3179,7 +3188,7 @@ function _startVideoCanvasPreview(item) {
     }
 
     const layout = FrameEngine.computeVideoFrameLayout(
-      video.videoWidth, video.videoHeight, state.settings
+      video.videoWidth, video.videoHeight, state.settings, item.exif || {}
     );
 
     const areaW = Math.max(pane.clientWidth  - 40, 80);
@@ -3202,7 +3211,6 @@ function _startVideoCanvasPreview(item) {
       canvas.height       = targetH;
       canvas.style.width  = dispW + 'px';
       canvas.style.height = dispH + 'px';
-      _lastLayout = null; // layout changed
     }
 
     const firstShow = canvas.style.display === 'none' || canvas.style.display === '';
@@ -3213,7 +3221,10 @@ function _startVideoCanvasPreview(item) {
     const ctx = canvas.getContext('2d');
     ctx.save();
     ctx.scale(targetW / layout.canvasW, targetH / layout.canvasH);
-    FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
+    _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
+      ctx, video, item.exif || {}, state.settings, layout,
+      _videoPreviewBaseCanvas, Math.min(targetW / layout.canvasW, targetH / layout.canvasH)
+    );
     ctx.restore();
     _clearLiveVideoReadinessGuard(video);
 
