@@ -47,22 +47,16 @@ jobs:
       matrix:
         include:
           - target: chromium
-            os: ubuntu-latest
-            install: chromium
             suite: full
           - target: firefox
-            os: ubuntu-latest
-            install: firefox
             suite: cross-browser
           - target: webkit
-            os: ubuntu-latest
-            install: webkit
             suite: cross-browser
-          - target: edge
-            os: windows-latest
-            install: ''
-            suite: cross-browser
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    container:
+      # Keep this tag aligned with @playwright/test in package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --user 1001
 
     steps:
       - name: Checkout
@@ -76,10 +70,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Playwright browser
-        if: matrix.install != ''
-        run: npx playwright install --with-deps ${{ matrix.install }}
 
       - name: Run browser contract
         run: npm run test:e2e
@@ -97,9 +87,43 @@ jobs:
             test-results/
           retention-days: 7
 
+  browser-edge:
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run browser contract
+        run: npm run test:e2e
+        env:
+          PLAYWRIGHT_BROWSER: edge
+          PLAYWRIGHT_SUITE: cross-browser
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-edge
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [quality, browser]
+    needs: [quality, browser, browser-edge]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
