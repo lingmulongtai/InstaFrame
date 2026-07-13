@@ -362,7 +362,7 @@ const I18N = {
     locPosBelow: 'EXIFの下',
     locPosCamRight: 'カメラ名の右',
     locPosCamLeft: 'カメラ名の左',
-    statusPending: '待機中',
+    statusPending: '未適用',
     statusProcessing: '処理中…',
     statusDone: '完了',
     statusError: 'エラー',

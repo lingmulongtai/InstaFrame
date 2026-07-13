@@ -169,6 +169,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
   await uploadJpegs(page);
+  await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
   await page.evaluate(() => window.showProgress('処理中…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('キャンセル');
 
