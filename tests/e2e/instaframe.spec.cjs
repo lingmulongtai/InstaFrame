@@ -772,6 +772,47 @@ test('batch import only prewarms the selected photo decode', async ({ page }) =>
   });
 });
 
+test('concurrent imports share the aggregate item limit', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    let releaseFirstMetadata;
+    const firstMetadata = new Promise(resolve => { releaseFirstMetadata = resolve; });
+    window.__importLimitStats = { parseCalls: 0 };
+    window.exifr = {
+      parse: () => {
+        window.__importLimitStats.parseCalls += 1;
+        return window.__importLimitStats.parseCalls === 1
+          ? firstMetadata.then(() => null)
+          : Promise.resolve(null);
+      },
+    };
+    window.__makeImportBatch = prefix => Array.from({ length: 26 }, (_, index) => (
+      new File([bytes], `${prefix}-${index + 1}.jpg`, { type: 'image/jpeg' })
+    ));
+    window.__releaseFirstMetadata = releaseFirstMetadata;
+    window.__firstImport = window.addFiles(window.__makeImportBatch('first'));
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__importLimitStats.parseCalls)).toBe(1);
+  await page.evaluate(() => {
+    window.__secondImport = window.addFiles(window.__makeImportBatch('second'));
+  });
+  await page.evaluate(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(await page.evaluate(() => window.__importLimitStats.parseCalls)).toBe(1);
+  await page.evaluate(async () => {
+    window.__releaseFirstMetadata();
+    await Promise.all([window.__firstImport, window.__secondImport]);
+  });
+
+  await expect(page.locator('.image-card')).toHaveCount(50);
+  await expect(page.locator('#toast')).toContainText(/2/);
+});
+
 test('video thumbnail decoding is limited to two active jobs', async ({ page }) => {
   await page.evaluate(async () => {
     const releases = [];

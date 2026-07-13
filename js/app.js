@@ -78,6 +78,7 @@ const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const _vendorScriptLoads = new Map();
+let _importQueueTail = Promise.resolve();
 const APP_ASSET_VERSION = (() => {
   try {
     return new URL(document.currentScript?.src || '', document.baseURI).searchParams.get('v') || '';
@@ -802,7 +803,17 @@ function formatFNumber(v) {
 }
 
 // ─── Item Management ──────────────────────────────────────────────────────────
-async function addFiles(files) {
+function addFiles(files) {
+  // Snapshot FileList immediately: input values may be cleared before a queued
+  // batch starts. Serial execution also makes the aggregate count/byte limits
+  // authoritative when drag/drop and file-picker imports overlap.
+  const batch = Array.from(files || []);
+  const run = _importQueueTail.then(() => _addFiles(batch));
+  _importQueueTail = run.catch(() => {});
+  return run;
+}
+
+async function _addFiles(files) {
   const candidates = Array.from(files).filter(f =>
     f.type.startsWith('image/') || f.type.startsWith('video/') ||
     /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(f.name)
@@ -823,14 +834,19 @@ async function addFiles(files) {
     accepted.push(file);
     totalBytes += size;
   }
-  if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
-  if (!accepted.length) return;
+  if (!accepted.length) {
+    if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
+    return;
+  }
 
   const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
   const existingBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
   if (accepted.length + state.items.length > 30 || incomingBytes + existingBytes > 512 * 1024 * 1024) {
     showToast(t('msgLargeBatch'), 'warn');
   }
+  // Rejection is the actionable result when a partial batch exceeds a hard
+  // limit, so keep it visible instead of letting the advisory warning replace it.
+  if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
 
   for (const file of accepted) {
     const video = isVideoFile(file);
