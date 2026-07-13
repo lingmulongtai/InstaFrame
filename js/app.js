@@ -496,7 +496,8 @@ function getMapboxToken() {
 }
 
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
-async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
+async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
+  if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
   const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
   if (_mapImgCache.has(key)) return _mapImgCache.get(key);
   const token = getMapboxToken();
@@ -508,16 +509,37 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13) {
     return null;
   }
   const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
+    let settled = false;
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abort);
+      img.onload = null;
+      img.onerror = null;
+    };
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      img.removeAttribute('src');
+      cleanup();
+      reject(new DOMException('Export cancelled', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
     img.crossOrigin = 'anonymous';
     img.onload  = () => {
       _trackMapboxLoad();
       if (_mapImgCache.size >= 12) _mapImgCache.delete(_mapImgCache.keys().next().value);
       _mapImgCache.set(key, img);
-      resolve(img);
+      finish(img);
     };
-    img.onerror = () => resolve(null);
+    img.onerror = () => finish(null);
     img.src = url;
   });
 }
@@ -966,15 +988,15 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       }
       item.videoBlob = videoBlob;
     } else {
-      const img = await FrameEngine.loadImage(item.file);
+      const img = await FrameEngine.loadImage(item.file, { signal });
       if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       // Pre-fetch map overlay image if enabled and coordinates are available
       let mapOverlayImg = null;
       if (state.settings.showMapOverlay && state.settings.showLocation &&
           item.exif && item.exif.latitude != null && item.exif.longitude != null) {
-        mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
+        mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
       }
-      const rendered = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg });
+      const rendered = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg, signal });
       if (_retainedOutputBytes(item) + rendered.width * rendered.height * 4 > MAX_RETAINED_OUTPUT_BYTES) {
         rendered.width = 0;
         rendered.height = 0;

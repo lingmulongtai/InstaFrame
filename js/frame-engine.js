@@ -14,6 +14,10 @@ const FrameEngine = (() => {
     return error;
   }
 
+  function assertNotAborted(signal, message = 'Export cancelled') {
+    if (signal?.aborted) throw new DOMException(message, 'AbortError');
+  }
+
   function assertSafeCanvasSize(width, height) {
     if (
       !Number.isFinite(width) || !Number.isFinite(height) ||
@@ -125,7 +129,8 @@ const FrameEngine = (() => {
    * Keep the intermediate pixels lossless: a JPEG round-trip here visibly
    * softens texture and text when the live preview is enlarged.
    */
-  async function scaleImage(img, maxPx) {
+  async function scaleImage(img, maxPx, signal = null) {
+    assertNotAborted(signal);
     const sourceW = img.naturalWidth || img.videoWidth || img.width;
     const sourceH = img.naturalHeight || img.videoHeight || img.height;
     const longest = Math.max(sourceW, sourceH);
@@ -141,6 +146,11 @@ const FrameEngine = (() => {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0, 0, w, h);
+    if (signal?.aborted) {
+      tmp.width = 0;
+      tmp.height = 0;
+      assertNotAborted(signal);
+    }
     return tmp;
   }
 
@@ -149,15 +159,37 @@ const FrameEngine = (() => {
    * Pass maxPreviewPx to scale the image down for fast live preview.
    * Pass mapOverlayImg (HTMLImageElement) to draw a Passage-style map overlay.
    */
-  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null } = {}) {
+  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null, signal = null } = {}) {
+    assertNotAborted(signal);
     await loadFrameFonts(settings);
+    assertNotAborted(signal);
 
-    const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx) : img;
+    const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx, signal) : img;
+    let base = null;
+    let output = null;
     try {
-      const base = renderFrame(renderImg, exif, settings, mapOverlayImg);
+      base = renderFrame(renderImg, exif, settings, mapOverlayImg);
+      if (signal?.aborted) {
+        base.width = 0;
+        base.height = 0;
+        assertNotAborted(signal);
+      }
       const result = applyPostProcess(base, settings);
       if (result !== base) { base.width = 0; base.height = 0; }
+      output = result;
+      if (signal?.aborted) {
+        result.width = 0;
+        result.height = 0;
+        assertNotAborted(signal);
+      }
       return result;
+    } catch (error) {
+      const disposable = output || base;
+      if (disposable) {
+        disposable.width = 0;
+        disposable.height = 0;
+      }
+      throw error;
     } finally {
       if (renderImg !== img && renderImg instanceof HTMLCanvasElement) {
         renderImg.width = 0;
@@ -628,12 +660,37 @@ const FrameEngine = (() => {
     );
   }
 
-  function loadImage(file) {
+  function loadImage(file, { signal } = {}) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const img = new Image();
-      img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+      let settled = false;
+      const cleanup = () => {
+        signal?.removeEventListener('abort', abort);
+        img.onload = null;
+        img.onerror = null;
+        URL.revokeObjectURL(url);
+      };
+      const succeed = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(img);
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => {
+        img.removeAttribute('src');
+        fail(new DOMException('Image load cancelled', 'AbortError'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
+      img.onload  = succeed;
+      img.onerror = () => fail(new Error('Image load failed'));
       img.src = url;
     });
   }
