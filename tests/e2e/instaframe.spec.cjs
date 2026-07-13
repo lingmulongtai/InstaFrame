@@ -2167,6 +2167,43 @@ test('revoking location consent cancels an in-flight Mapbox image load', async (
   }
 });
 
+test('a stalled Mapbox image times out and releases its source', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.test',
+    }));
+  });
+  await page.reload();
+
+  const result = await page.evaluate(async () => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const stats = { sourceAssigned: false, sourceRemoved: 0 };
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 50 : delay, ...args)
+    );
+    window.Image = class StalledMapImage {
+      set src(value) {
+        this._src = String(value);
+        stats.sourceAssigned = this._src.startsWith('https://api.mapbox.com/');
+      }
+      get src() { return this._src || ''; }
+      removeAttribute(name) {
+        if (name === 'src' && this._src) {
+          this._src = '';
+          stats.sourceRemoved += 1;
+        }
+      }
+    };
+
+    const value = await window._fetchMapOverlayImage(35.0116, 135.7681);
+    window._cancelMapImageLoads();
+    return { value, ...stats };
+  });
+
+  expect(result).toEqual({ value: null, sourceAssigned: true, sourceRemoved: 1 });
+});
+
 test('map picker loads its UI library locally after consent', async ({ page }) => {
   const requests = [];
   page.on('request', request => {
