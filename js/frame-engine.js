@@ -786,140 +786,200 @@ const FrameEngine = (() => {
    * WebCodecs fast-path: VideoEncoder + WebMMuxer + requestVideoFrameCallback at 16× speed.
    * Falls back to _renderVideoMediaRecorder on any error.
    */
-  async function _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond = 10_000_000 } = {}) {
-    // Font pre-load
+  async function _renderVideoWebCodecs(file, exif, settings, {
+    onProgress,
+    videoBitsPerSecond = 10_000_000,
+    signal,
+  } = {}) {
+    assertNotAborted(signal);
     await loadFrameFonts(settings);
+    assertNotAborted(signal);
 
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
       video.muted   = true;
       video.preload = 'auto';
+      let encoder = null;
+      let canvas = null;
+      let frameCallbackId = null;
+      let settled = false;
+      let finalizing = false;
+
+      const cleanup = () => {
+        signal?.removeEventListener('abort', abort);
+        if (frameCallbackId != null && typeof video.cancelVideoFrameCallback === 'function') {
+          video.cancelVideoFrameCallback(frameCallbackId);
+        }
+        frameCallbackId = null;
+        video.onloadedmetadata = null;
+        video.onended = null;
+        video.onerror = null;
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
+        if (encoder && encoder.state !== 'closed') {
+          try { encoder.close(); } catch (_) {}
+        }
+        if (canvas) { canvas.width = 0; canvas.height = 0; }
+      };
+      const succeed = blob => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(blob);
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
-        const W = video.videoWidth, H = video.videoHeight;
-        if (!W || !H) { URL.revokeObjectURL(url); reject(new Error('Invalid video dimensions')); return; }
-
-        const isPortrait    = H > W;
-        const ts            = settings.thicknessScale || 1;
-        const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
-        const sideBorder    = baseBorder * 0.5;
-        const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
-        const locationExtra = showLoc ? H * 0.038 * ts : 0;
-        const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
-        const pf  = isPortrait ? 0.75 : 1.0;
-        const sB  = sideBorder   * pf;
-        const tB  = sideBorder   * pf;
-        const bB  = bottomBorder * pf;
-        const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
-        const canvasW = Math.round(W + sB * 2);
-        const canvasH = imageLayout.canvasH;
-
-        const layout = {
-          canvasW, canvasH,
-          imageBottom: imageLayout.imageBottom,
-          bottomAreaHeight: bB,
-          isPortrait,
-          frameColor: settings.frameColor || '#F0F0F0',
-        };
-        const frameColor = settings.frameColor || '#F0F0F0';
-        const duration   = video.duration || 0;
-        const fps        = 30;
-        const frameDurUs = Math.round(1_000_000 / fps);
-
-        // Check WebMMuxer availability (loaded from CDN)
-        const MuxerCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.Muxer)
-          ? WebMMuxer.Muxer : (typeof Muxer !== 'undefined' ? Muxer : null);
-        const TargetCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.ArrayBufferTarget)
-          ? WebMMuxer.ArrayBufferTarget : (typeof ArrayBufferTarget !== 'undefined' ? ArrayBufferTarget : null);
-
-        if (!MuxerCls || !TargetCls) {
-          URL.revokeObjectURL(url);
-          reject(new Error('WebMMuxer not available'));
-          return;
-        }
-
-        const muxTarget = new TargetCls();
-        const muxer = new MuxerCls({
-          target: muxTarget,
-          video: { codec: 'V_VP9', width: canvasW, height: canvasH, frameRate: fps },
-          firstTimestampBehavior: 'permissive',
-        });
-
-        const encoder = new VideoEncoder({
-          output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch (_) {} },
-          error: err => { URL.revokeObjectURL(url); reject(err); },
-        });
         try {
-          encoder.configure({ codec: 'vp09.00.10.08', width: canvasW, height: canvasH, bitrate: videoBitsPerSecond, latencyMode: 'quality' });
-        } catch (cfgErr) {
-          URL.revokeObjectURL(url);
-          reject(cfgErr);
-          return;
-        }
+          assertNotAborted(signal);
+          const W = video.videoWidth, H = video.videoHeight;
+          if (!W || !H) throw new Error('Invalid video dimensions');
 
-        // Use regular Canvas (OffscreenCanvas not supported in all contexts with drawImage(video))
-        const canvas = document.createElement('canvas');
-        canvas.width  = canvasW;
-        canvas.height = canvasH;
-        const ctx = canvas.getContext('2d');
-
-        let frameIndex = 0;
-        let finalized  = false;
-
-        async function finalize() {
-          if (finalized) return;
-          finalized = true;
-          try {
-            await encoder.flush();
-            muxer.finalize();
-            const { buffer } = muxTarget;
-            URL.revokeObjectURL(url);
-            if (onProgress) onProgress(1);
-            resolve(new Blob([buffer], { type: 'video/webm' }));
-          } catch (e) {
-            URL.revokeObjectURL(url);
-            reject(e);
+          const isPortrait    = H > W;
+          const ts            = settings.thicknessScale || 1;
+          const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
+          const sideBorder    = baseBorder * 0.5;
+          const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
+          const locationExtra = showLoc ? H * 0.038 * ts : 0;
+          const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
+          const pf  = isPortrait ? 0.75 : 1.0;
+          const sB  = sideBorder   * pf;
+          const tB  = sideBorder   * pf;
+          const bB  = bottomBorder * pf;
+          const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
+          const canvasW = Math.round(W + sB * 2);
+          const canvasH = imageLayout.canvasH;
+          const duration = video.duration || 0;
+          assertSafeCanvasSize(canvasW, canvasH);
+          if (duration > 0 && duration * videoBitsPerSecond / 8 > MAX_ESTIMATED_VIDEO_BYTES) {
+            throw resourceLimitError();
           }
+
+          const layout = {
+            canvasW, canvasH,
+            imageBottom: imageLayout.imageBottom,
+            bottomAreaHeight: bB,
+            isPortrait,
+            frameColor: settings.frameColor || '#F0F0F0',
+          };
+          const frameColor = settings.frameColor || '#F0F0F0';
+          const fps        = 30;
+          const frameDurUs = Math.round(1_000_000 / fps);
+
+          // This optional fast path is enabled only when a compatible muxer
+          // global has been supplied by the host application.
+          const MuxerCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.Muxer)
+            ? WebMMuxer.Muxer : (typeof Muxer !== 'undefined' ? Muxer : null);
+          const TargetCls = (typeof WebMMuxer !== 'undefined' && WebMMuxer.ArrayBufferTarget)
+            ? WebMMuxer.ArrayBufferTarget : (typeof ArrayBufferTarget !== 'undefined' ? ArrayBufferTarget : null);
+          if (!MuxerCls || !TargetCls) throw new Error('WebMMuxer not available');
+
+          const muxTarget = new TargetCls();
+          const muxer = new MuxerCls({
+            target: muxTarget,
+            video: { codec: 'V_VP9', width: canvasW, height: canvasH, frameRate: fps },
+            firstTimestampBehavior: 'permissive',
+          });
+
+          encoder = new VideoEncoder({
+            output: (chunk, meta) => {
+              if (settled) return;
+              try { muxer.addVideoChunk(chunk, meta); } catch (error) { fail(error); }
+            },
+            error: fail,
+          });
+          encoder.configure({
+            codec: 'vp09.00.10.08',
+            width: canvasW,
+            height: canvasH,
+            bitrate: videoBitsPerSecond,
+            latencyMode: 'quality',
+          });
+
+          canvas = document.createElement('canvas');
+          canvas.width  = canvasW;
+          canvas.height = canvasH;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas rendering is unavailable');
+          let frameIndex = 0;
+
+          const finalize = async () => {
+            if (settled || finalizing) return;
+            finalizing = true;
+            try {
+              assertNotAborted(signal);
+              if (frameIndex === 0) throw new Error('WebCodecs produced no video frames');
+              await encoder.flush();
+              assertNotAborted(signal);
+              muxer.finalize();
+              const { buffer } = muxTarget;
+              if (!buffer) throw new Error('WebM muxing produced no output');
+              const byteLength = buffer.byteLength ?? buffer.length ?? 0;
+              if (byteLength > MAX_ESTIMATED_VIDEO_BYTES) throw resourceLimitError();
+              if (onProgress) onProgress(1);
+              succeed(new Blob([buffer], { type: 'video/webm' }));
+            } catch (error) {
+              fail(error);
+            }
+          };
+
+          const onFrame = (_now, metadata) => {
+            frameCallbackId = null;
+            if (settled || finalizing) return;
+            try {
+              assertNotAborted(signal);
+              const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
+              if (settings.frameBackground === 'blur') {
+                drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+              } else {
+                ctx.fillStyle = frameColor;
+                ctx.fillRect(0, 0, canvasW, canvasH);
+              }
+              drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
+              drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
+              drawExifText(ctx, exif, settings, layout);
+
+              let frame = null;
+              try {
+                frame = new VideoFrame(canvas, { timestamp, duration: frameDurUs });
+                encoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
+              } finally {
+                frame?.close();
+              }
+              frameIndex += 1;
+              if (onProgress && duration > 0) onProgress(Math.min((metadata.mediaTime || 0) / duration, 0.99));
+
+              if (!video.ended && !video.paused) {
+                frameCallbackId = video.requestVideoFrameCallback(onFrame);
+              } else {
+                finalize();
+              }
+            } catch (error) {
+              fail(error);
+            }
+          };
+
+          video.onended = finalize;
+          video.playbackRate = 16;
+          frameCallbackId = video.requestVideoFrameCallback(onFrame);
+          video.play().catch(fail);
+        } catch (error) {
+          fail(error);
         }
-
-        function onFrame(now, metadata) {
-          if (finalized) return;
-          const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
-
-          if (settings.frameBackground === 'blur') {
-            drawBlurBackground(ctx, video, canvasW, canvasH, settings);
-          } else {
-            ctx.fillStyle = frameColor;
-            ctx.fillRect(0, 0, canvasW, canvasH);
-          }
-          drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
-          drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-          drawExifText(ctx, exif, settings, layout);
-
-          try {
-            const vf = new VideoFrame(canvas, { timestamp, duration: frameDurUs });
-            encoder.encode(vf, { keyFrame: frameIndex % 60 === 0 });
-            vf.close();
-          } catch (_) { /* skip problematic frames */ }
-          frameIndex++;
-
-          if (onProgress && duration > 0) onProgress(Math.min((metadata.mediaTime || 0) / duration, 0.99));
-
-          if (!video.ended && !video.paused) {
-            video.requestVideoFrameCallback(onFrame);
-          } else {
-            finalize();
-          }
-        }
-
-        video.addEventListener('ended', finalize, { once: true });
-        video.playbackRate = 16;
-        video.requestVideoFrameCallback(onFrame);
-        video.play().catch(err => { URL.revokeObjectURL(url); reject(err); });
       };
 
-      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Video load failed')); };
+      video.onerror = () => fail(new Error('Video load failed'));
       video.src  = url;
       video.load();
     });
@@ -983,8 +1043,11 @@ const FrameEngine = (() => {
       && (typeof WebMMuxer !== 'undefined' || typeof Muxer !== 'undefined');
     if (!preserveAudio && canUseWebCodecs) {
       try {
-        return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond });
-      } catch (_) {
+        return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond, signal });
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        if (error?.code === 'MEDIA_RESOURCE_LIMIT') throw error;
+        assertNotAborted(signal);
         // Fall through to MediaRecorder path on any error
       }
     }
