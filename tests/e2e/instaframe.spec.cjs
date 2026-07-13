@@ -2480,6 +2480,53 @@ test('WebCodecs video success closes its encoder and releases temporary media', 
   expect(result.closedFrames).toBeGreaterThan(0);
 });
 
+test('WebCodecs drains a saturated encoder queue before admitting another frame', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    const resources = window.__webCodecsResources;
+    window.VideoEncoder = class BackpressuredVideoEncoder {
+      constructor(init) {
+        this.init = init;
+        this.state = 'unconfigured';
+        this.encodeQueueSize = 4;
+        this.flushCount = 0;
+        this.encodedBeforeInitialDrain = false;
+        resources.encoders.push(this);
+      }
+      configure(config) { this.config = config; this.state = 'configured'; }
+      encode() {
+        if (this.flushCount === 0) this.encodedBeforeInitialDrain = true;
+        this.encodeQueueSize += 1;
+        this.init.output({ byteLength: 1 }, {});
+      }
+      flush() {
+        this.flushCount += 1;
+        this.encodeQueueSize = 0;
+        return Promise.resolve();
+      }
+      close() { this.state = 'closed'; }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-backpressure.webm', { type: 'video/webm' });
+    const blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+    const encoder = resources.encoders[0];
+    return {
+      blobSize: blob.size,
+      encodedBeforeInitialDrain: encoder.encodedBeforeInitialDrain,
+      flushCount: encoder.flushCount,
+      encoderState: encoder.state,
+      activeUrls: resources.activeUrls.size,
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result.blobSize).toBe(4);
+  expect(result.encodedBeforeInitialDrain).toBe(false);
+  expect(result.flushCount).toBeGreaterThanOrEqual(2);
+  expect(result.encoderState).toBe('closed');
+  expect(result.activeUrls).toBe(0);
+});
+
 test('WebCodecs video output uses the post-processed aspect ratio and releases its base canvas', async ({ page }) => {
   await installFakeWebCodecs(page);
   const fixture = await loadAudioVideoFixture();
@@ -2581,6 +2628,60 @@ test('WebCodecs output limits cannot be bypassed by MediaRecorder fallback', asy
 
   expect(result).toEqual({
     errorCode: 'MEDIA_RESOURCE_LIMIT',
+    fallbackUsed: false,
+    activeUrls: 0,
+    encoderStates: ['closed'],
+    canvasSizes: [[0, 0]],
+  });
+});
+
+test('WebCodecs rejects oversized encoded chunks before muxer allocation', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    let chunksAdded = 0;
+    let finalized = false;
+    let fallbackUsed = false;
+    window.WebMMuxer.Muxer.prototype.addVideoChunk = () => { chunksAdded += 1; };
+    window.WebMMuxer.Muxer.prototype.finalize = () => { finalized = true; };
+    window.VideoEncoder.prototype.encode = function () {
+      this.init.output({ byteLength: 11 }, {});
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() {
+        fallbackUsed = true;
+        throw new Error('MediaRecorder fallback should not run');
+      }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-incremental-limit.webm', { type: 'video/webm' });
+    let errorCode = null;
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false,
+        videoBitsPerSecond: 1,
+        maxOutputBytes: 10,
+      });
+    } catch (error) {
+      errorCode = error.code;
+    }
+    const resources = window.__webCodecsResources;
+    return {
+      errorCode,
+      chunksAdded,
+      finalized,
+      fallbackUsed,
+      activeUrls: resources.activeUrls.size,
+      encoderStates: resources.encoders.map(encoder => encoder.state),
+      canvasSizes: resources.canvases.map(canvas => [canvas.width, canvas.height]),
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result).toEqual({
+    errorCode: 'MEDIA_RESOURCE_LIMIT',
+    chunksAdded: 0,
+    finalized: false,
     fallbackUsed: false,
     activeUrls: 0,
     encoderStates: ['closed'],
