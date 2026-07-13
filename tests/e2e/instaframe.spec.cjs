@@ -366,6 +366,7 @@ test('responsive transitions keep focus in the matching workspace panel', async 
   await page.setViewportSize({ width: 1280, height: 720 });
   const fontSelect = page.locator('#fontFamily');
   await fontSelect.focus();
+  await page.evaluate(() => document.body.setAttribute('data-mobile-tab', 'photos'));
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-selected', 'true');
   await expect(fontSelect).toBeFocused();
