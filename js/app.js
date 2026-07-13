@@ -864,6 +864,7 @@ async function addFiles(files) {
         }
         const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
         const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
+        if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
         const maxW = 200, maxH = 200;
         const scale = Math.min(maxW / sourceW, maxH / sourceH);
         let tc = previewDiv.querySelector('canvas.thumb-framed');
