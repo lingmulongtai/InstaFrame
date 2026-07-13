@@ -283,6 +283,34 @@ test('photo cards replace full-resolution image decodes with bounded canvases', 
   await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
 });
 
+test('failed photo thumbnail compaction releases its decoded image and canvas', async ({ page }) => {
+  await page.evaluate(() => {
+    const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+      if (this.canvas.classList.contains('thumb-source')) {
+        window.__failedCardThumbnailCanvas = this.canvas;
+        throw new Error('simulated card thumbnail compaction failure');
+      }
+      return nativeDrawImage.apply(this, args);
+    };
+  });
+  const jpeg = await createBrowserRaster(page, 'image/jpeg', 1600, 1200);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'failed-card-thumbnail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: jpeg,
+  });
+
+  const original = page.locator('#preview-1 img.thumb-orig');
+  await expect(original).not.toHaveAttribute('src');
+  await expect(original).toBeHidden();
+  await expect(page.locator('#preview-1')).toHaveClass(/thumbnail-unavailable/);
+  expect(await page.evaluate(() => [
+    window.__failedCardThumbnailCanvas.width,
+    window.__failedCardThumbnailCanvas.height,
+  ])).toEqual([0, 0]);
+});
+
 test('every BFCache pagehide releases Blob URLs and restores a usable pending preview', async ({ page }) => {
   await page.evaluate(() => {
     const active = new Set();

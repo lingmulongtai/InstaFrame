@@ -3577,16 +3577,27 @@ function _releaseCardThumbnailUrl(card) {
   thumbnail._objectUrl = null;
 }
 
+function _discardCardPhotoThumbnail(card, thumbnail, canvas = null) {
+  if (canvas) { canvas.width = 0; canvas.height = 0; }
+  _releaseCardThumbnailUrl(card);
+  if (thumbnail) {
+    thumbnail.style.display = 'none';
+    thumbnail.removeAttribute('src');
+  }
+  card?.querySelector?.('.card-preview')?.classList.add('thumbnail-unavailable');
+}
+
 function _compactCardPhotoThumbnail(card, thumbnail) {
   if (!card || !thumbnail?.naturalWidth || !thumbnail?.naturalHeight) {
-    _releaseCardThumbnailUrl(card);
+    _discardCardPhotoThumbnail(card, thumbnail);
     return;
   }
+  let canvas = null;
   try {
     const maxWidth = 400;
     const maxHeight = 400;
     const scale = Math.min(1, maxWidth / thumbnail.naturalWidth, maxHeight / thumbnail.naturalHeight);
-    const canvas = document.createElement('canvas');
+    canvas = document.createElement('canvas');
     canvas.className = 'thumb-source';
     canvas.width = Math.max(1, Math.round(thumbnail.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(thumbnail.naturalHeight * scale));
@@ -3598,7 +3609,7 @@ function _compactCardPhotoThumbnail(card, thumbnail) {
     _releaseCardThumbnailUrl(card);
     thumbnail.removeAttribute('src');
   } catch (_) {
-    _releaseCardThumbnailUrl(card);
+    _discardCardPhotoThumbnail(card, thumbnail, canvas);
   }
 }
 
@@ -3640,7 +3651,7 @@ function renderItem(item) {
     if (thumb) thumb._objectUrl = thumbSrc;
     const compactThumbnail = () => _compactCardPhotoThumbnail(card, thumb);
     thumb?.addEventListener('load', compactThumbnail, { once: true });
-    thumb?.addEventListener('error', () => _releaseCardThumbnailUrl(card), { once: true });
+    thumb?.addEventListener('error', () => _discardCardPhotoThumbnail(card, thumb), { once: true });
     if (thumb?.complete) compactThumbnail();
   }
 
