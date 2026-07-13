@@ -1982,6 +1982,8 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
 });
 
 test('video controls announce their current action and restore audible volume', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
+  await page.reload();
   await page.locator('#fileInput').setInputFiles({
     name: 'controls.webm',
     mimeType: 'video/webm',
