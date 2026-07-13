@@ -215,6 +215,20 @@ test('workspace resize separators support keyboard control and expose their valu
   await expect(mainHandle).toHaveAccessibleName('プレビューパネルの高さを変更');
 });
 
+test('photo cards replace full-resolution image decodes with bounded canvases', async ({ page }) => {
+  const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 1600, 1200);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'bounded-card-thumbnail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: largeJpeg,
+  });
+
+  const sourceCanvas = page.locator('#preview-1 canvas.thumb-source');
+  await expect(sourceCanvas).toBeVisible();
+  expect(await sourceCanvas.evaluate(canvas => [canvas.width, canvas.height])).toEqual([400, 300]);
+  await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
+});
+
 test('every BFCache pagehide releases Blob URLs and restores a usable pending preview', async ({ page }) => {
   await page.evaluate(() => {
     const active = new Set();
@@ -243,7 +257,8 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
-  await expect(page.locator('#preview-1 img.thumb-orig')).toBeVisible();
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
+  await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect(page.locator('#livePreviewCanvas')).toBeVisible();

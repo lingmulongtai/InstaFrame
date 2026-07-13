@@ -3062,6 +3062,31 @@ function _releaseCardThumbnailUrl(card) {
   thumbnail._objectUrl = null;
 }
 
+function _compactCardPhotoThumbnail(card, thumbnail) {
+  if (!card || !thumbnail?.naturalWidth || !thumbnail?.naturalHeight) {
+    _releaseCardThumbnailUrl(card);
+    return;
+  }
+  try {
+    const maxWidth = 400;
+    const maxHeight = 400;
+    const scale = Math.min(1, maxWidth / thumbnail.naturalWidth, maxHeight / thumbnail.naturalHeight);
+    const canvas = document.createElement('canvas');
+    canvas.className = 'thumb-source';
+    canvas.width = Math.max(1, Math.round(thumbnail.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(thumbnail.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas rendering is unavailable');
+    context.drawImage(thumbnail, 0, 0, canvas.width, canvas.height);
+    card.querySelector('.card-preview')?.insertBefore(canvas, thumbnail);
+    thumbnail.style.display = 'none';
+    _releaseCardThumbnailUrl(card);
+    thumbnail.removeAttribute('src');
+  } catch (_) {
+    _releaseCardThumbnailUrl(card);
+  }
+}
+
 function renderItem(item) {
   const grid = document.getElementById('imageGrid');
   const emptyMsg = document.getElementById('emptyMsg');
@@ -3098,10 +3123,10 @@ function renderItem(item) {
   if (thumbSrc) {
     const thumb = card.querySelector('img.thumb-orig');
     if (thumb) thumb._objectUrl = thumbSrc;
-    const releaseThumbUrl = () => _releaseCardThumbnailUrl(card);
-    thumb?.addEventListener('load', releaseThumbUrl, { once: true });
-    thumb?.addEventListener('error', releaseThumbUrl, { once: true });
-    if (thumb?.complete) releaseThumbUrl();
+    const compactThumbnail = () => _compactCardPhotoThumbnail(card, thumb);
+    thumb?.addEventListener('load', compactThumbnail, { once: true });
+    thumb?.addEventListener('error', () => _releaseCardThumbnailUrl(card), { once: true });
+    if (thumb?.complete) compactThumbnail();
   }
 
   // Click preview image/video → select for live preview
@@ -3149,6 +3174,8 @@ function updateItemPreview(item) {
   if (!previewDiv) return;
 
   if (item.status === 'done' && (item.canvas || item.videoBlob)) {
+    const sourceCanvas = previewDiv.querySelector('canvas.thumb-source');
+    if (sourceCanvas) sourceCanvas.style.display = 'none';
     if (item.isVideo) {
       // Video done: thumbnail stays, add a "ready" overlay on badge; enable download
       const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
@@ -3174,12 +3201,14 @@ function updateItemPreview(item) {
     if (dlBtn) dlBtn.disabled = false;
   } else {
     const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
+    const sourceCanvas = previewDiv.querySelector('canvas.thumb-source');
     const origThumb = previewDiv.querySelector('img.thumb-orig');
     if (item.isVideo && framedCanvas) {
       if (origThumb) origThumb.style.display = 'none';
     } else {
       if (framedCanvas) framedCanvas.remove();
-      if (origThumb) origThumb.style.display = '';
+      if (sourceCanvas) sourceCanvas.style.display = '';
+      if (origThumb) origThumb.style.display = sourceCanvas ? 'none' : '';
     }
     // Download button stays enabled — clicking it will auto-generate then download
     if (dlBtn) dlBtn.disabled = (item.status === 'processing');
