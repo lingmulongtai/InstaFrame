@@ -263,6 +263,8 @@ let _videoPreviewBaseCanvas = null;
 let _sessionLocationNetworkConsent = false;
 let _locationConsentResolver = null;
 let _locationPrivacyPreviousFocus = null;
+let _liveDeviceLocationRequestId = 0;
+let _liveDeviceLocationItemId = null;
 let _destructiveConfirmResolver = null;
 let _destructiveConfirmPreviousFocus = null;
 
@@ -2157,6 +2159,15 @@ function getSelectedPreviewItem() {
     || null;
 }
 
+function _syncLiveLocationInput() {
+  const input = document.getElementById('live-exif-location');
+  if (!input) return;
+  const item = getSelectedPreviewItem();
+  const resolving = !!item && item.id === _liveDeviceLocationItemId;
+  input.disabled = resolving;
+  input.value = resolving ? '…' : (item?.exif?.location || '');
+}
+
 function updateLiveExifPanel() {
   const item = getSelectedPreviewItem();
   const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -2169,6 +2180,7 @@ function updateLiveExifPanel() {
     setVal('live-exif-et', '');
     setVal('live-exif-iso', '');
     setVal('live-exif-location', '');
+    _syncLiveLocationInput();
     return;
   }
   const ex = item.exif || {};
@@ -2180,6 +2192,7 @@ function updateLiveExifPanel() {
   setVal('live-exif-et',       ex.exposureTime);
   setVal('live-exif-iso',      ex.iso);
   setVal('live-exif-location', ex.location);
+  _syncLiveLocationInput();
 }
 
 function toggleLiveExifPanel() {
@@ -2264,7 +2277,7 @@ function _applyResolvedLocation(item, latitude, longitude, label) {
   item.exif.longitude = longitude;
   item.exif.location = label || InstaFrameCore.formatCoordinateLabel(latitude, longitude);
   const input = document.getElementById('live-exif-location');
-  if (input) input.value = item.exif.location;
+  if (input && getSelectedPreviewItem()?.id === item.id) input.value = item.exif.location;
   const cardInput = document.getElementById(`exif-location-${item.id}`);
   if (cardInput) cardInput.value = item.exif.location;
   item.status = 'pending';
@@ -2296,20 +2309,34 @@ async function resolveLiveExifLocation() {
 
 async function getLiveDeviceLocation() {
   if (!navigator.geolocation) { showToast(t('msgGeolocationUnsupported'), 'warn'); return; }
+  const item = getSelectedPreviewItem();
+  if (!item) return;
+  const requestId = ++_liveDeviceLocationRequestId;
+  _liveDeviceLocationItemId = null;
+  _syncLiveLocationInput();
   if (!await requestLocationNetworkConsent()) return;
-  const input = document.getElementById('live-exif-location');
-  if (!input) return;
-  const original = input.value;
-  input.value = '…';
-  input.disabled = true;
+  if (requestId !== _liveDeviceLocationRequestId || !state.items.includes(item)) return;
+  _liveDeviceLocationItemId = item.id;
+  _syncLiveLocationInput();
+
+  const finish = () => {
+    if (requestId !== _liveDeviceLocationRequestId) return false;
+    _liveDeviceLocationItemId = null;
+    _syncLiveLocationInput();
+    return true;
+  };
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
+      if (requestId !== _liveDeviceLocationRequestId) return;
       const { latitude, longitude } = pos.coords;
       const name = await reverseGeocode(latitude, longitude);
-      input.disabled = false;
-      _applyResolvedLocation(getSelectedPreviewItem(), latitude, longitude, name || InstaFrameCore.formatCoordinateLabel(latitude, longitude));
+      if (!finish() || !state.items.includes(item)) return;
+      _applyResolvedLocation(item, latitude, longitude, name || InstaFrameCore.formatCoordinateLabel(latitude, longitude));
     },
-    () => { input.value = original; input.disabled = false; showToast(t('msgGeolocationFailed'), 'warn'); },
+    () => {
+      if (!finish()) return;
+      showToast(t('msgGeolocationFailed'), 'warn');
+    },
     { timeout: 10000 }
   );
 }
