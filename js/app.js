@@ -2443,7 +2443,7 @@ function applyPreviewTransform() {
 }
 
 function setPreviewZoom(zoom) {
-  previewZoom = Math.min(Math.max(zoom, 0.5), InstaFrameCore.MAX_PREVIEW_ZOOM || 8);
+  previewZoom = Math.min(Math.max(zoom, 0.5), InstaFrameCore.MAX_PREVIEW_ZOOM || 12);
   applyPreviewTransform();
   const range = document.getElementById('zoomRange');
   if (range) range.value = Math.round(previewZoom * 100);
@@ -2488,7 +2488,7 @@ function selectItem(id) {
 }
 
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
-const PREVIEW_LAYOUT_LONG_EDGE = 5120;
+const PREVIEW_LAYOUT_LONG_EDGE = 6144;
 
 /**
  * Stable hash of settings that affect composition. Preview quality is excluded:
