@@ -927,6 +927,30 @@ test('supported video export selection survives a page reload', async ({ page })
   await expect(page.locator('input[name="exportVideoFormat"]:checked')).toHaveValue(savedChoice);
 });
 
+test('invalid persisted enum values cannot break application startup', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await page.evaluate(() => {
+    const invalid = '\"]';
+    localStorage.setItem('instaframe_settings', JSON.stringify({
+      textColorMode: invalid,
+      locationPosition: invalid,
+      mapOverlayPosition: invalid,
+      frameBackground: invalid,
+      aspectRatio: invalid,
+      aspectOrientation: invalid,
+      exportPhotoFormat: invalid,
+      exportVideoBitrate: invalid,
+    }));
+  });
+  await page.reload();
+
+  await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('#customizePanel')).toHaveClass(/open/);
+  expect(pageErrors).toEqual([]);
+});
+
 test('batch encoding failure restores controls and reports the error', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
