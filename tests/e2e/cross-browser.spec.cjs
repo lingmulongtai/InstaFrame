@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { createJpeg } = require('./fixtures.cjs');
+const { createJpeg, createWebm } = require('./fixtures.cjs');
 
 async function assertNoAxeViolations(page, include) {
   let audit = new AxeBuilder({ page });
@@ -136,6 +136,25 @@ test('export progress exposes a named meter, cancel control, and focus restorati
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#generateAllBtn')).toBeFocused();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+});
+
+test('VP8 WebM input previews or fails explicitly with the browser codec', async ({ page }, testInfo) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'cross-browser.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#preview-1')).toBeVisible();
+  if (testInfo.project.name === 'webkit') {
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+    await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
+  } else {
+    await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+    await expect(page.locator('#previewVideoBar')).toBeVisible();
+    await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => (
+      video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    ))).toBe(true);
+  }
 });
 
 test('crisp auto preview and custom delete confirmation are portable', async ({ page }) => {
