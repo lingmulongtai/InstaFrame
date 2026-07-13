@@ -2869,8 +2869,8 @@ function setupVideoPreviewBar() {
     if (currentEl) currentEl.textContent = _formatVideoTime(video.currentTime);
   });
 
-  // Redraw canvas immediately on seek (even when paused)
-  video.addEventListener('seeking', () => {
+  // Redraw after the browser has decoded the requested frame (even when paused).
+  video.addEventListener('seeked', () => {
     const item = getSelectedPreviewItem();
     if (item && item.isVideo && _videoPreviewItemId === item.id) {
       // Draw one frame right now without waiting for next rAF
@@ -2880,7 +2880,6 @@ function setupVideoPreviewBar() {
         const layout  = FrameEngine.computeVideoFrameLayout(
           video.videoWidth, video.videoHeight, state.settings, item.exif || {}
         );
-        const dpr     = window.devicePixelRatio || 1;
         const scaleX  = canvas.width  / layout.canvasW;
         const scaleY  = canvas.height / layout.canvasH;
         const ctx     = canvas.getContext('2d');
