@@ -3034,6 +3034,11 @@ test('map picker exposes accessible busy states and coalesces place-name lookup'
   await expect(selectCenter).toBeDisabled();
   await expect(confirm).toBeDisabled();
   await expect(close).toBeEnabled();
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(close).toBeFocused();
   expect(await mapContainer.evaluate(element => ({
     inert: element.inert,
     ariaDisabled: element.getAttribute('aria-disabled'),
