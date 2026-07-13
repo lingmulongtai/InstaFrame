@@ -3936,17 +3936,12 @@ function applyEditorSize(size) {
 }
 
 function rerenderCards() {
-  const grid = document.getElementById('imageGrid');
-  grid.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
-  grid.innerHTML = '';
-  const saved = [...state.items];
-  state.items = [];
-  itemIdCounter = 0;
-  saved.forEach(item => {
-    const n = { ...item, id: ++itemIdCounter };
-    state.items.push(n);
-    renderItem(n);
-    if (n.status === 'done') { updateItemStatus(n); updateItemPreview(n); }
+  state.items.forEach(item => {
+    const card = document.getElementById(`item-${item.id}`);
+    const preview = card?.querySelector('.card-preview');
+    preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
+    updateItemStatus(item);
+    if (item.status === 'done') updateItemPreview(item);
   });
   updateUI();
 }
