@@ -1221,12 +1221,18 @@ async function _addFiles(accepted, reservation) {
       try {
         await _loadPreviewImage(item, { retainUncached: true });
       } catch (error) {
-        item.status = 'error';
-        item.errorMsg = error?.code === 'MEDIA_RESOURCE_LIMIT'
-          ? t('msgMediaResourceLimit')
-          : tf('msgUnsupportedMedia', { name: file.name });
-        updateItemStatus(item);
-        showToast(item.errorMsg, 'error');
+        if (error?.name === 'AbortError' && _pageResourcesReleased) {
+          item.status = 'pending';
+          item.errorMsg = null;
+          updateItemStatus(item);
+        } else {
+          item.status = 'error';
+          item.errorMsg = error?.code === 'MEDIA_RESOURCE_LIMIT'
+            ? t('msgMediaResourceLimit')
+            : tf('msgUnsupportedMedia', { name: file.name });
+          updateItemStatus(item);
+          showToast(item.errorMsg, 'error');
+        }
       }
     }
 

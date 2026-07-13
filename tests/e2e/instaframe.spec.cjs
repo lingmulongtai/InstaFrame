@@ -489,6 +489,45 @@ test('page suspension pauses an import after metadata until the page is restored
   await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
 });
 
+test('page suspension does not mark an interrupted preview decode as unsupported', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    window.__nativeSuspensionImage = window.Image;
+    window.__suspendedPreviewDecodeStarted = false;
+    window.exifr = { parse: () => Promise.resolve(null) };
+    window.Image = class SuspendedPreviewImage {
+      constructor() {
+        this.complete = false;
+        this.naturalWidth = 0;
+        this.naturalHeight = 0;
+      }
+      set src(value) {
+        this._src = value;
+        window.__suspendedPreviewDecodeStarted = true;
+      }
+      get src() { return this._src || ''; }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+    };
+    window.__suspendedPreviewImport = window.addFiles([
+      new File([bytes], 'suspended-preview.jpg', { type: 'image/jpeg' }),
+    ]);
+  }, jpegBase64);
+  await expect.poll(() => page.evaluate(() => window.__suspendedPreviewDecodeStarted)).toBe(true);
+
+  await page.evaluate(async () => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    await window.__suspendedPreviewImport;
+    window.Image = window.__nativeSuspensionImage;
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+  await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
+  await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
+});
+
 test('BFCache restore restarts a pending photo card thumbnail', async ({ page }) => {
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
