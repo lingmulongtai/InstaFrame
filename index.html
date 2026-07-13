@@ -710,12 +710,12 @@
           <span data-i18n="emptyTrustBatch">Batch ZIP</span>
         </div>
       </div>
-      <div class="preview-history-wrap" id="previewHistoryWrap">
+      <div class="preview-history-wrap" id="previewHistoryWrap" inert aria-hidden="true">
         <button class="preview-history-btn" id="undoEditBtn" data-i18n="undoEdit" title="Undo">Undo</button>
         <button class="preview-history-btn" id="redoEditBtn" data-i18n="redoEdit" title="Redo">Redo</button>
       </div>
       <!-- Quality button (bottom-left, shown only when preview is active) -->
-      <div class="preview-quality-wrap" id="previewQualityWrap">
+      <div class="preview-quality-wrap" id="previewQualityWrap" inert aria-hidden="true">
         <button class="preview-quality-btn" id="previewQualityBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="previewQualityPopup" data-i18n-attr="title" data-i18n="previewQualityTitle" title="Preview quality">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 3.5V2.5M8 3.5V2.5M12 3.5V2.5"/><path d="M4 8.5h2M6 7l2 1.5L6 10"/></svg>
           <span id="previewQualityLabel">Auto</span>
@@ -729,7 +729,7 @@
         </div>
       </div>
       <!-- EXIF panel (left side, desktop only, shown when preview is active) -->
-      <div class="preview-exif-wrap exif-open" id="previewExifWrap">
+      <div class="preview-exif-wrap exif-open" id="previewExifWrap" inert aria-hidden="true">
         <div class="preview-exif-drawer" id="previewExifDrawer">
           <button type="button" class="preview-exif-drawer-header" aria-expanded="true" aria-controls="previewExifContent">
             <span class="preview-exif-drawer-title" data-i18n="editExif">Edit EXIF</span>
@@ -773,15 +773,15 @@
         </div>
       </div>
       <!-- Zoom controls (vertical bar on right side, shown only when preview is active) -->
-      <div class="preview-zoom-bar" id="previewZoomBar">
+      <div class="preview-zoom-bar" id="previewZoomBar" inert aria-hidden="true">
         <span class="zoom-label" id="zoomLabel">100%</span>
         <button class="zoom-btn" id="zoomInBtn" data-i18n="zoomIn" data-i18n-attr="title,aria-label" title="Zoom in">+</button>
         <input type="range" id="zoomRange" min="50" max="1200" step="10" value="100" orient="vertical" data-i18n="previewZoom" data-i18n-attr="aria-label">
         <button class="zoom-btn" id="zoomOutBtn" data-i18n="zoomOut" data-i18n-attr="title,aria-label" title="Zoom out">−</button>
       </div>
-      <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
+      <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView" inert aria-hidden="true">Reset view</button>
       <!-- Video playback bar (bottom center, shown only when a video is being previewed) -->
-      <div class="preview-video-bar" id="previewVideoBar">
+      <div class="preview-video-bar" id="previewVideoBar" inert aria-hidden="true">
         <button class="video-ctrl-btn" id="videoPlayPauseBtn" data-i18n="videoPlay" data-i18n-attr="title,aria-label" title="Play video">
           <svg id="videoPlayIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M3 2.5l10 5.5-10 5.5V2.5z"/></svg>
           <svg id="videoPauseIcon" class="video-icon-hidden" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>

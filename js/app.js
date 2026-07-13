@@ -191,6 +191,40 @@ function _isPreviewViewModified() {
 function updatePreviewViewModifiedState() {
   const zone = document.getElementById('dropZone');
   if (zone) zone.classList.toggle('view-modified', _isPreviewViewModified());
+  _syncPreviewControlAvailability();
+}
+
+function _syncPreviewControlAvailability() {
+  const zone = document.getElementById('dropZone');
+  if (!zone) return;
+  const hasPreview = zone.classList.contains('has-preview');
+  const hasVideo = hasPreview && zone.classList.contains('has-video');
+  const viewModified = hasPreview && zone.classList.contains('view-modified');
+  const availability = [
+    ['previewHistoryWrap', hasPreview],
+    ['previewQualityWrap', hasPreview && !hasVideo],
+    ['previewExifWrap', hasPreview],
+    ['previewZoomBar', hasPreview],
+    ['previewResetViewBtn', viewModified],
+    ['previewVideoBar', hasVideo],
+  ];
+  const active = document.activeElement;
+  let moveFocus = false;
+  for (const [id, available] of availability) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    if (!available && (element === active || element.contains(active))) moveFocus = true;
+    element.inert = !available;
+    element.setAttribute('aria-hidden', String(!available));
+  }
+  if (!moveFocus) return;
+  const fallback = hasVideo
+    ? document.getElementById('videoPlayPauseBtn')
+    : hasPreview
+      ? document.getElementById('previewQualityBtn')
+      : document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')
+        || _getEmptyImportFocusTarget();
+  fallback?.focus();
 }
 
 function updateHistoryButtons() {
@@ -2982,6 +3016,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
 
   if (emptyEl) emptyEl.style.display = 'none';
   pane.classList.add('has-preview');
+  _syncPreviewControlAvailability();
 }
 
 // ─── Canvas-based Video Preview ──────────────────────────────────────────────
@@ -3052,7 +3087,10 @@ function _failLiveVideoPreview(itemId, generation) {
     canvas.style.opacity = '';
     canvas.style.transform = '';
   }
-  document.getElementById('dropZone')?.classList.remove('has-video');
+  const dropZone = document.getElementById('dropZone');
+  dropZone?.classList.remove('has-video');
+  dropZone?.classList.remove('has-preview');
+  _syncPreviewControlAvailability();
 
   if (!item) return;
   const message = tf('msgUnsupportedMedia', { name: item.file.name });
@@ -3189,6 +3227,8 @@ async function renderLivePreview() {
     canvas.style.height = '';
     if (emptyEl) emptyEl.style.display = '';
     pane.classList.remove('has-preview');
+    pane.classList.remove('has-video');
+    _syncPreviewControlAvailability();
     return;
   }
 
@@ -3217,6 +3257,7 @@ async function renderLivePreview() {
     if (emptyEl) emptyEl.style.display = 'none';
     pane.classList.add('has-preview');
     pane.classList.add('has-video');
+    _syncPreviewControlAvailability();
     _startVideoCanvasPreview(item);
     return;
   }
@@ -3224,6 +3265,7 @@ async function renderLivePreview() {
   _disposeLiveVideoSource();
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
+  _syncPreviewControlAvailability();
 
   // ── Canvas preview with caching ────────────────────────────────────────────
   const hash   = `${item.id}|${_previewSettingsHash()}`;
@@ -3505,6 +3547,7 @@ function updateUI() {
       dropZone.classList.remove('has-preview');
       dropZone.classList.remove('has-video');
     }
+    _syncPreviewControlAvailability();
     const previewCanvas = document.getElementById('livePreviewCanvas');
     if (previewCanvas) { previewCanvas.style.display = 'none'; previewCanvas.style.opacity = ''; previewCanvas.style.transform = ''; }
     const liveVideo = document.getElementById('livePreviewVideo');
