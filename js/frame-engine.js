@@ -14,6 +14,13 @@ const FrameEngine = (() => {
     return error;
   }
 
+  function resolveVideoOutputLimit(maxOutputBytes) {
+    if (maxOutputBytes == null) return MAX_ESTIMATED_VIDEO_BYTES;
+    const requested = Number(maxOutputBytes);
+    if (!Number.isFinite(requested) || requested <= 0) throw resourceLimitError();
+    return Math.min(MAX_ESTIMATED_VIDEO_BYTES, Math.floor(requested));
+  }
+
   function assertNotAborted(signal, message = 'Export cancelled') {
     if (signal?.aborted) throw new DOMException(message, 'AbortError');
   }
@@ -834,6 +841,7 @@ const FrameEngine = (() => {
   async function _renderVideoWebCodecs(file, exif, settings, {
     onProgress,
     videoBitsPerSecond = 10_000_000,
+    maxOutputBytes = MAX_ESTIMATED_VIDEO_BYTES,
     signal,
   } = {}) {
     assertNotAborted(signal);
@@ -907,7 +915,7 @@ const FrameEngine = (() => {
           const canvasH = imageLayout.canvasH;
           const duration = video.duration || 0;
           assertSafeCanvasSize(canvasW, canvasH);
-          if (duration > 0 && duration * videoBitsPerSecond / 8 > MAX_ESTIMATED_VIDEO_BYTES) {
+          if (duration > 0 && duration * videoBitsPerSecond / 8 > maxOutputBytes) {
             throw resourceLimitError();
           }
 
@@ -971,7 +979,7 @@ const FrameEngine = (() => {
               const { buffer } = muxTarget;
               if (!buffer) throw new Error('WebM muxing produced no output');
               const byteLength = buffer.byteLength ?? buffer.length ?? 0;
-              if (byteLength > MAX_ESTIMATED_VIDEO_BYTES) throw resourceLimitError();
+              if (byteLength > maxOutputBytes) throw resourceLimitError();
               if (onProgress) onProgress(1);
               succeed(new Blob([buffer], { type: 'video/webm' }));
             } catch (error) {
@@ -1103,9 +1111,11 @@ const FrameEngine = (() => {
     preferredMime,
     videoBitsPerSecond = 10_000_000,
     preserveAudio = true,
+    maxOutputBytes,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+    const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
@@ -1114,7 +1124,12 @@ const FrameEngine = (() => {
       && (typeof WebMMuxer !== 'undefined' || typeof Muxer !== 'undefined');
     if (!preserveAudio && canUseWebCodecs) {
       try {
-        return await _renderVideoWebCodecs(file, exif, settings, { onProgress, videoBitsPerSecond, signal });
+        return await _renderVideoWebCodecs(file, exif, settings, {
+          onProgress,
+          videoBitsPerSecond,
+          maxOutputBytes: outputByteLimit,
+          signal,
+        });
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
         if (error?.code === 'MEDIA_RESOURCE_LIMIT') throw error;
@@ -1211,7 +1226,7 @@ const FrameEngine = (() => {
         const duration = video.duration || 0;
         try {
           assertSafeCanvasSize(canvasW, canvasH);
-          if (duration > 0 && duration * videoBitsPerSecond / 8 > MAX_ESTIMATED_VIDEO_BYTES) {
+          if (duration > 0 && duration * videoBitsPerSecond / 8 > outputByteLimit) {
             throw resourceLimitError();
           }
         } catch (error) {
@@ -1278,7 +1293,7 @@ const FrameEngine = (() => {
         recorder.ondataavailable = event => {
           if (event.data.size <= 0 || settled) return;
           recordedBytes += event.data.size;
-          if (recordedBytes > MAX_ESTIMATED_VIDEO_BYTES) {
+          if (recordedBytes > outputByteLimit) {
             if (recorder.state !== 'inactive') {
               try { recorder.stop(); } catch (_) {}
             }
@@ -1289,8 +1304,12 @@ const FrameEngine = (() => {
         };
         recorder.onstop = () => {
           if (settled) { cleanup(); return; }
-          settled = true;
           const blob = new Blob(chunks, { type: mimeType });
+          if (blob.size > outputByteLimit) {
+            fail(resourceLimitError());
+            return;
+          }
+          settled = true;
           cleanup();
           resolve(blob);
         };

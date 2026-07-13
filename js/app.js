@@ -1058,11 +1058,14 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) throw new Error(t('msgVideoExportUnavailable'));
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
+      const maxOutputBytes = MAX_RETAINED_OUTPUT_BYTES - _retainedOutputBytes(item);
+      if (maxOutputBytes <= 0) throw _mediaResourceLimitError();
       const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
         item.file, item.exif, state.settings,
         {
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
+          maxOutputBytes,
           onProgress: p => {
             item.progress = p;
             updateItemStatus(item);

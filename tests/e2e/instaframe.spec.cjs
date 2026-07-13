@@ -1539,6 +1539,66 @@ test('WebCodecs output limits cannot be bypassed by MediaRecorder fallback', asy
   });
 });
 
+test('video output limit rejects an oversized estimate before MediaRecorder allocation', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'remaining-budget.webm', { type: 'video/webm' });
+    let recorderConstructed = false;
+    const NativeMediaRecorder = window.MediaRecorder;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { recorderConstructed = true; }
+    };
+    let errorCode = null;
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: true,
+        videoBitsPerSecond: 10_000_000,
+        maxOutputBytes: 1,
+      });
+    } catch (error) {
+      errorCode = error.code;
+    } finally {
+      window.MediaRecorder = NativeMediaRecorder;
+    }
+    return { errorCode, recorderConstructed };
+  }, { base64: createWebm().toString('base64') });
+
+  expect(result).toEqual({
+    errorCode: 'MEDIA_RESOURCE_LIMIT',
+    recorderConstructed: false,
+  });
+});
+
+test('sequential video exports receive only the remaining retained-output budget', async ({ page }) => {
+  const files = [1, 2].map(index => ({
+    name: `budget-${index}.webm`,
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  }));
+  await page.locator('#fileInput').setInputFiles(files);
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await page.evaluate(() => {
+    window.__videoOutputLimits = [];
+    let callCount = 0;
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__videoOutputLimits.push(options.maxOutputBytes);
+      const blob = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' });
+      if (callCount++ === 0) {
+        Object.defineProperty(blob, 'size', { value: 300 * 1024 * 1024 });
+      }
+      return blob;
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('.status-dot.done')).toHaveCount(2);
+  expect(await page.evaluate(() => window.__videoOutputLimits)).toEqual([
+    384 * 1024 * 1024,
+    84 * 1024 * 1024,
+  ]);
+});
+
 test('video cancellation interrupts a pending audio-track sample read', async ({ page }) => {
   await page.evaluate(({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
