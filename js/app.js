@@ -879,6 +879,94 @@ function _cancelQueuedVideoThumbnail(item) {
   }
 }
 
+function _startVideoThumbnail(item) {
+  if (!item?.isVideo || !state.items.includes(item) || item.thumbnailPromise) return item?.thumbnailPromise || null;
+  const previewDiv = document.getElementById(`preview-${item.id}`);
+  if (previewDiv?.querySelector('canvas.thumb-framed')) {
+    item.thumbnailNeedsRestart = false;
+    return null;
+  }
+
+  const thumbnailController = new AbortController();
+  const thumbnailSignal = thumbnailController.signal;
+  item.thumbnailController = thumbnailController;
+  item.thumbnailNeedsRestart = false;
+  const thumbnailGuard = setTimeout(() => {
+    if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
+    item.status = 'error';
+    item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
+    updateItemStatus(item);
+    showToast(item.errorMsg, 'error');
+    thumbnailController.abort();
+  }, VIDEO_THUMBNAIL_GUARD_MS);
+
+  const thumbnailPromise = _queueVideoThumbnail(item, async () => {
+    const img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
+    let framed = null;
+    let thumbnailSource = img;
+    try {
+      // Render a framed preview at thumbnail resolution
+      framed = await FrameEngine.renderFrameWhenReady(
+        img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
+      thumbnailSource = framed;
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      // The video decoded successfully; only framing failed. Draw the
+      // already-decoded image instead of starting the same decode again.
+    }
+    const currentPreview = document.getElementById(`preview-${item.id}`);
+    if (!currentPreview) {
+      if (framed) { framed.width = 0; framed.height = 0; }
+      return;
+    }
+    const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
+    const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
+    if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
+    const maxW = 200, maxH = 200;
+    const scale = Math.min(maxW / sourceW, maxH / sourceH);
+    let thumbnailCanvas = currentPreview.querySelector('canvas.thumb-framed');
+    if (!thumbnailCanvas) {
+      thumbnailCanvas = document.createElement('canvas');
+      thumbnailCanvas.className = 'thumb-framed';
+      currentPreview.insertBefore(thumbnailCanvas, currentPreview.firstChild);
+    }
+    thumbnailCanvas.width = Math.round(sourceW * scale);
+    thumbnailCanvas.height = Math.round(sourceH * scale);
+    thumbnailCanvas.getContext('2d').drawImage(
+      thumbnailSource, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+    if (framed) { framed.width = 0; framed.height = 0; }
+    const origThumb = currentPreview.querySelector('img.thumb-orig');
+    if (origThumb) origThumb.style.display = 'none';
+  })
+    .catch(error => {
+      if (error?.name === 'AbortError') return;
+      if (item.status === 'error' && item.errorMsg) return;
+      item.status = 'error';
+      item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
+      updateItemStatus(item);
+      showToast(item.errorMsg, 'error');
+    })
+    .finally(() => {
+      clearTimeout(thumbnailGuard);
+      if (item.thumbnailController === thumbnailController) item.thumbnailController = null;
+      if (item.thumbnailPromise === thumbnailPromise) item.thumbnailPromise = null;
+    });
+  item.thumbnailPromise = thumbnailPromise;
+  return thumbnailPromise;
+}
+
+function _restartInterruptedVideoThumbnail(item) {
+  if (!item?.thumbnailNeedsRestart || !state.items.includes(item)) return;
+  const restart = () => {
+    if (!item.thumbnailNeedsRestart || !state.items.includes(item)) return;
+    const previewDiv = document.getElementById(`preview-${item.id}`);
+    item.thumbnailNeedsRestart = false;
+    if (!previewDiv?.querySelector('canvas.thumb-framed')) _startVideoThumbnail(item);
+  };
+  if (item.thumbnailPromise) void item.thumbnailPromise.then(restart, restart);
+  else restart();
+}
+
 function gpsToDecimal(dms, ref) {
   if (!Array.isArray(dms) || dms.length < 3) return null;
   const [d, m, s] = dms;
@@ -979,8 +1067,9 @@ async function _addFiles(files) {
       exif,
       canvas:    null,
       videoBlob: null,
-      thumbnailController: video ? new AbortController() : null,
+      thumbnailController: null,
       thumbnailPromise: null,
+      thumbnailNeedsRestart: false,
       exportController: null,
       exportRunToken: null,
       progress:  0,
@@ -1010,69 +1099,7 @@ async function _addFiles(files) {
     if (state.items.length === 1) selectItem(item.id);
 
     // Generate framed thumbnail for video cards asynchronously
-    if (video) {
-      const thumbnailController = item.thumbnailController;
-      const thumbnailGuard = setTimeout(() => {
-        if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
-        item.status = 'error';
-        item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
-        updateItemStatus(item);
-        showToast(item.errorMsg, 'error');
-        thumbnailController.abort();
-      }, VIDEO_THUMBNAIL_GUARD_MS);
-      const thumbnailPromise = _queueVideoThumbnail(item, async () => {
-        const thumbnailSignal = item.thumbnailController.signal;
-        const img = await FrameEngine.captureVideoFrame(file, 0, { signal: thumbnailSignal });
-        let framed = null;
-        let thumbnailSource = img;
-        try {
-          // Render a framed preview at thumbnail resolution
-          framed = await FrameEngine.renderFrameWhenReady(
-            img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
-          thumbnailSource = framed;
-        } catch (error) {
-          if (error?.name === 'AbortError') throw error;
-          // The video decoded successfully; only framing failed. Draw the
-          // already-decoded image instead of starting the same decode again.
-        }
-        const previewDiv = document.getElementById(`preview-${item.id}`);
-        if (!previewDiv) {
-          if (framed) { framed.width = 0; framed.height = 0; }
-          return;
-        }
-        const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
-        const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
-        if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
-        const maxW = 200, maxH = 200;
-        const scale = Math.min(maxW / sourceW, maxH / sourceH);
-        let tc = previewDiv.querySelector('canvas.thumb-framed');
-        if (!tc) {
-          tc = document.createElement('canvas');
-          tc.className = 'thumb-framed';
-          previewDiv.insertBefore(tc, previewDiv.firstChild);
-        }
-        tc.width  = Math.round(sourceW * scale);
-        tc.height = Math.round(sourceH * scale);
-        tc.getContext('2d').drawImage(thumbnailSource, 0, 0, tc.width, tc.height);
-        if (framed) { framed.width = 0; framed.height = 0; }
-        const origThumb = previewDiv.querySelector('img.thumb-orig');
-        if (origThumb) origThumb.style.display = 'none';
-      })
-        .catch(error => {
-          if (error?.name === 'AbortError') return;
-          if (item.status === 'error' && item.errorMsg) return;
-          item.status = 'error';
-          item.errorMsg = tf('msgUnsupportedMedia', { name: file.name });
-          updateItemStatus(item);
-          showToast(item.errorMsg, 'error');
-        })
-        .finally(() => {
-          clearTimeout(thumbnailGuard);
-          if (item.thumbnailController === thumbnailController) item.thumbnailController = null;
-          if (item.thumbnailPromise === thumbnailPromise) item.thumbnailPromise = null;
-        });
-      item.thumbnailPromise = thumbnailPromise;
-    }
+    if (video) _startVideoThumbnail(item);
   }
 
   updateUI();
@@ -5096,6 +5123,7 @@ function _releasePageResources() {
   document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
   state.items.forEach(item => {
     const outputWasActive = item.status === 'done' || item.status === 'processing';
+    if (item.isVideo && item.thumbnailPromise) item.thumbnailNeedsRestart = true;
     _releaseItemOutput(item);
     if (outputWasActive) {
       item.status = 'pending';
@@ -5130,6 +5158,7 @@ function _restorePageResources() {
   state.items.forEach(item => {
     updateItemStatus(item);
     updateItemPreview(item);
+    _restartInterruptedVideoThumbnail(item);
   });
   updateUI();
   updateLiveExifPanel();
