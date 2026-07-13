@@ -443,6 +443,20 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
 });
 
+test('pagehide commits a pending live EXIF edit before releasing preview resources', async ({ page }) => {
+  await uploadJpegs(page);
+  await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
+
+  await page.locator('#live-exif-make').fill('Pagehide Camera');
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await page.waitForTimeout(300);
+
+  await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(page.locator('#live-exif-make')).toHaveValue('Pagehide Camera');
+  await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
+});
+
 test('BFCache restore restarts a pending photo card thumbnail', async ({ page }) => {
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
