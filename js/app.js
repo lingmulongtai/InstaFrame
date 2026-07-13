@@ -3207,24 +3207,33 @@ function setupVideoPreviewBar() {
   video.addEventListener('seeked', () => {
     const item = getSelectedPreviewItem();
     if (item && item.isVideo && _videoPreviewItemId === item.id) {
-      // Draw one frame right now without waiting for next rAF
-      const canvas  = document.getElementById('livePreviewCanvas');
-      const pane    = document.getElementById('dropZone');
-      if (canvas && pane && video.videoWidth) {
-        const layout  = FrameEngine.computeVideoFrameLayout(
-          video.videoWidth, video.videoHeight, state.settings, item.exif || {}
-        );
-        const scaleX  = canvas.width  / layout.canvasW;
-        const scaleY  = canvas.height / layout.canvasH;
-        const ctx     = canvas.getContext('2d');
-        ctx.save();
-        ctx.scale(scaleX, scaleY);
-        _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
-          ctx, video, item.exif || {}, state.settings, layout,
-          _videoPreviewBaseCanvas, Math.min(scaleX, scaleY)
-        );
-        ctx.restore();
-      }
+      const redrawDecodedFrame = () => {
+        if (_videoPreviewItemId !== item.id) return;
+        const canvas  = document.getElementById('livePreviewCanvas');
+        const pane    = document.getElementById('dropZone');
+        if (canvas && pane && video.videoWidth) {
+          const layout  = FrameEngine.computeVideoFrameLayout(
+            video.videoWidth, video.videoHeight, state.settings, item.exif || {}
+          );
+          const scaleX  = canvas.width  / layout.canvasW;
+          const scaleY  = canvas.height / layout.canvasH;
+          const ctx     = canvas.getContext('2d');
+          ctx.save();
+          ctx.scale(scaleX, scaleY);
+          _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
+            ctx, video, item.exif || {}, state.settings, layout,
+            _videoPreviewBaseCanvas, Math.min(scaleX, scaleY)
+          );
+          ctx.restore();
+        }
+        if (!video.paused && !video.ended) _startVideoCanvasPreview(item);
+      };
+
+      _cancelVideoCanvasPreviewFrame();
+      // Cancel a callback queued for the pre-seek frame before drawing the
+      // newly selected current frame. A paused video may not emit another
+      // decoded-frame callback until playback resumes.
+      redrawDecodedFrame();
     }
   });
 
@@ -3529,7 +3538,10 @@ function _cancelVideoCanvasPreviewFrame() {
 function _scheduleVideoCanvasPreviewFrame(video, callback, waitingForData = false) {
   const generation = ++_videoPreviewFrameGeneration;
   const guardedCallback = (...args) => {
-    if (generation === _videoPreviewFrameGeneration) callback(...args);
+    if (generation !== _videoPreviewFrameGeneration) return;
+    _videoPreviewFrameHandle = null;
+    _videoPreviewFrameMode = null;
+    callback(...args);
   };
   if (!video._previewVideoFrameCallbacksUnavailable &&
       typeof video.requestVideoFrameCallback === 'function') {
@@ -3749,8 +3761,6 @@ function _startVideoCanvasPreview(item) {
   }
 
   function draw() {
-    _videoPreviewFrameHandle = null;
-    _videoPreviewFrameMode = null;
     if (_videoPreviewItemId !== item.id) return; // stopped or superseded
     try { drawFrame(); }
     catch { _failLiveVideoPreview(item.id, video._previewSourceGeneration); }
