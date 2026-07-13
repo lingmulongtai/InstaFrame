@@ -1195,7 +1195,10 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     const cancelled = e?.name === 'AbortError';
     if (isCurrent) {
       item.status   = cancelled ? 'pending' : 'error';
-      item.errorMsg = cancelled ? null : (e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit') : e.message);
+      item.errorMsg = cancelled ? null
+        : e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit')
+          : e?.code === 'IMAGE_DECODE_TIMEOUT' ? t('msgImageDecodeTimeout')
+            : e.message;
       if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
       if (onExternalProgress) onExternalProgress(1);
     }
