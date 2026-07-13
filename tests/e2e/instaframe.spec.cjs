@@ -1412,6 +1412,52 @@ test('aborting an image decode revokes its temporary Blob URL', async ({ page })
   expect(result).toEqual({ errorName: 'AbortError', activeUrls: 0 });
 });
 
+test('a stalled photo export decoder times out, revokes its URL, and restores controls', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeCreateObjectURL = URL.createObjectURL.bind(URL);
+    const nativeRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    const stats = { activeUrls, sourceRemoved: 0 };
+    window.__stalledExportImageStats = stats;
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 200 : delay, ...args)
+    );
+    URL.createObjectURL = value => {
+      const url = nativeCreateObjectURL(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeObjectURL(url);
+    };
+    window.Image = class StalledImage {
+      set src(value) { this._src = String(value); }
+      get src() { return this._src || ''; }
+      removeAttribute(name) {
+        if (name === 'src' && this._src) {
+          this._src = '';
+          stats.sourceRemoved += 1;
+        }
+      }
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /took too long/i);
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  expect(await page.evaluate(() => ({
+    activeUrls: window.__stalledExportImageStats.activeUrls.size,
+    sourceRemoved: window.__stalledExportImageStats.sourceRemoved,
+  }))).toEqual({ activeUrls: 0, sourceRemoved: 1 });
+});
+
 test('font loading respects cancellation and falls back after its guard', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const nativeFontLoad = document.fonts.load.bind(document.fonts);

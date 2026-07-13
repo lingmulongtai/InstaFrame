@@ -8,6 +8,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
   const FONT_LOAD_GUARD_MS = 5_000;
+  const IMAGE_LOAD_GUARD_MS = 15_000;
 
   function resourceLimitError() {
     const error = new Error('Media exceeds safe in-browser resource limits');
@@ -715,12 +716,14 @@ const FrameEngine = (() => {
     });
   }
 
-  function loadImage(file, { signal } = {}) {
+  function loadImage(file, { signal, timeoutMs = IMAGE_LOAD_GUARD_MS } = {}) {
     return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
       const img = new Image();
+      const url = URL.createObjectURL(file);
       let settled = false;
+      let timeoutId = null;
       const cleanup = () => {
+        clearTimeout(timeoutId);
         signal?.removeEventListener('abort', abort);
         img.onload = null;
         img.onerror = null;
@@ -746,7 +749,14 @@ const FrameEngine = (() => {
       if (signal?.aborted) { abort(); return; }
       img.onload  = succeed;
       img.onerror = () => fail(new Error('Image load failed'));
-      img.src = url;
+      timeoutId = setTimeout(() => {
+        img.removeAttribute('src');
+        const error = new Error('Image load timed out');
+        error.code = 'IMAGE_DECODE_TIMEOUT';
+        fail(error);
+      }, timeoutMs);
+      try { img.src = url; }
+      catch (error) { fail(error); }
     });
   }
 
