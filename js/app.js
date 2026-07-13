@@ -1305,7 +1305,7 @@ async function removeItem(id, options = {}) {
   }
   const el = document.getElementById(`item-${id}`);
   if (el) {
-    _releaseCardThumbnailUrl(el);
+    _releaseCardPreviewResources(el);
     el.remove();
   }
   // If removed item was selected, select the new first item
@@ -1346,7 +1346,7 @@ async function clearAllItems(skipConfirm = false) {
   state.selectedItemId = null;
   const grid = document.getElementById('imageGrid');
   if (grid) {
-    grid.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
+    grid.querySelectorAll('.image-card').forEach(_releaseCardPreviewResources);
     grid.innerHTML = '';
   }
   updateUI();
@@ -3931,6 +3931,16 @@ function _releaseCardThumbnailUrl(card) {
   thumbnail.removeAttribute('src');
 }
 
+function _releaseCardPreviewResources(card) {
+  _releaseCardThumbnailUrl(card);
+  card?.querySelectorAll?.('canvas.thumb-source, canvas.thumb-framed').forEach(canvas => {
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.remove();
+  });
+  card?.querySelector?.('.card-preview')?.classList.remove('thumbnail-unavailable');
+}
+
 function _discardCardPhotoThumbnail(card, thumbnail, canvas = null) {
   if (canvas) { canvas.width = 0; canvas.height = 0; }
   _releaseCardThumbnailUrl(card);
@@ -4177,7 +4187,11 @@ function updateItemPreview(item) {
     if (item.isVideo && framedCanvas) {
       if (origThumb) origThumb.style.display = 'none';
     } else {
-      if (framedCanvas) framedCanvas.remove();
+      if (framedCanvas) {
+        framedCanvas.width = 0;
+        framedCanvas.height = 0;
+        framedCanvas.remove();
+      }
       if (sourceCanvas) sourceCanvas.style.display = '';
       if (origThumb) origThumb.style.display = sourceCanvas ? 'none' : '';
     }
@@ -5647,11 +5661,11 @@ function _releasePageResources() {
   _cancelLocationNetworkRequests();
   _releaseMapPickerResources();
   _releasePendingDownloadUrls();
-  document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
   state.items.forEach(item => {
     const outputWasActive = item.status === 'done' || item.status === 'processing';
-    if (item.isVideo && item.thumbnailPromise) item.thumbnailNeedsRestart = true;
-    if (!item.isVideo && item.photoThumbnailPromise) item.photoThumbnailNeedsRestart = true;
+    const shouldRestoreThumbnail = item.status !== 'error';
+    if (item.isVideo) item.thumbnailNeedsRestart = shouldRestoreThumbnail;
+    else item.photoThumbnailNeedsRestart = shouldRestoreThumbnail;
     _cancelPhotoThumbnail(item);
     _releaseItemOutput(item);
     if (outputWasActive) {
@@ -5661,6 +5675,7 @@ function _releasePageResources() {
       updateItemStatus(item);
     }
     updateItemPreview(item);
+    _releaseCardPreviewResources(document.getElementById(`item-${item.id}`));
   });
   for (const entry of _imgLoadEntries.values()) entry.controller.abort();
   _imgLoadEntries.clear();
