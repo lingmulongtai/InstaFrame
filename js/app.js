@@ -911,7 +911,10 @@ async function removeItem(id, options = {}) {
     state.items.splice(idx, 1);
   }
   const el = document.getElementById(`item-${id}`);
-  if (el) el.remove();
+  if (el) {
+    _releaseCardThumbnailUrl(el);
+    el.remove();
+  }
   // If removed item was selected, select the new first item
   if (state.selectedItemId === id) {
     state.selectedItemId = null;
@@ -946,7 +949,10 @@ async function clearAllItems(skipConfirm = false) {
   state.items = [];
   state.selectedItemId = null;
   const grid = document.getElementById('imageGrid');
-  if (grid) grid.innerHTML = '';
+  if (grid) {
+    grid.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
+    grid.innerHTML = '';
+  }
   updateUI();
   scheduleLivePreview();
   showToast(t('msgClearedAll'), 'info');
@@ -2233,6 +2239,10 @@ let _livePreviewTimer = null;
 
 function scheduleLivePreview() {
   clearTimeout(_livePreviewTimer);
+  // Invalidate work immediately, rather than waiting for the debounced render
+  // to begin. A removed item must not be able to finish during this window and
+  // reinsert a large canvas into the preview cache.
+  _renderSeq += 1;
   // HTML preview updates are near-instant; canvas still needs debounce
   _livePreviewTimer = setTimeout(renderLivePreview, 80);
 }
@@ -2831,6 +2841,13 @@ async function renderLivePreview() {
 }
 
 // ─── DOM Rendering ────────────────────────────────────────────────────────────
+function _releaseCardThumbnailUrl(card) {
+  const thumbnail = card?.querySelector?.('img.thumb-orig');
+  if (!thumbnail?._objectUrl) return;
+  URL.revokeObjectURL(thumbnail._objectUrl);
+  thumbnail._objectUrl = null;
+}
+
 function renderItem(item) {
   const grid = document.getElementById('imageGrid');
   const emptyMsg = document.getElementById('emptyMsg');
@@ -2866,7 +2883,8 @@ function renderItem(item) {
 
   if (thumbSrc) {
     const thumb = card.querySelector('img.thumb-orig');
-    const releaseThumbUrl = () => URL.revokeObjectURL(thumbSrc);
+    if (thumb) thumb._objectUrl = thumbSrc;
+    const releaseThumbUrl = () => _releaseCardThumbnailUrl(card);
     thumb?.addEventListener('load', releaseThumbUrl, { once: true });
     thumb?.addEventListener('error', releaseThumbUrl, { once: true });
     if (thumb?.complete) releaseThumbUrl();
@@ -3909,6 +3927,7 @@ function applyEditorSize(size) {
 
 function rerenderCards() {
   const grid = document.getElementById('imageGrid');
+  grid.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
   grid.innerHTML = '';
   const saved = [...state.items];
   state.items = [];
@@ -4320,6 +4339,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('pagehide', () => {
     _activeExportController?.abort();
     _disposeLiveVideoSource();
+    document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
     state.items.forEach(_releaseItemOutput);
     for (const entry of _imgLoadEntries.values()) entry.controller.abort();
     _imgLoadEntries.clear();

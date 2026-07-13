@@ -919,6 +919,66 @@ test('photo card and preview Blob URLs are revoked after rerender and removal', 
   }))).toEqual({ created: 3, revoked: 3, active: 0 });
 });
 
+test('removing a card revokes its thumbnail URL even while image events are pending', async ({ page }) => {
+  await page.addInitScript(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const addEventListener = EventTarget.prototype.addEventListener;
+    window.__pendingThumbnailUrls = new Set();
+    URL.createObjectURL = value => {
+      const url = create(value);
+      window.__pendingThumbnailUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      window.__pendingThumbnailUrls.delete(url);
+      revoke(url);
+    };
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (this instanceof HTMLImageElement && this.classList.contains('thumb-orig') && ['load', 'error'].includes(type)) return;
+      return addEventListener.call(this, type, listener, options);
+    };
+  });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'pending-thumbnail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+  await expect(page.locator('#item-1')).toBeVisible();
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__pendingThumbnailUrls.size)).toBe(0);
+});
+
+test('removal invalidates an in-flight preview before the next debounced render', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__stalePreviewCanvas = null;
+    window.__resolveStalePreview = null;
+    window.FrameEngine.renderFrameWhenReady = () => new Promise(resolve => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4096;
+      canvas.height = 2731;
+      window.__stalePreviewCanvas = canvas;
+      window.__resolveStalePreview = () => resolve(canvas);
+    });
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'stale-preview.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+  await expect.poll(() => page.evaluate(() => typeof window.__resolveStalePreview)).toBe('function');
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await page.evaluate(() => window.__resolveStalePreview());
+  await expect.poll(() => page.evaluate(() => ({
+    staleWidth: window.__stalePreviewCanvas.width,
+    liveWidth: document.getElementById('livePreviewCanvas').width,
+  }))).toEqual({ staleWidth: 0, liveWidth: 0 });
+});
+
 test('custom delete confirmation supports cancel, Escape, focus, and clear all', async ({ page }) => {
   await uploadJpegs(page, 2);
   const firstRemove = page.locator('#item-1 [data-action="remove"]');
