@@ -3052,7 +3052,10 @@ function updateUI() {
   setVisible(document.getElementById('imageSection'), hasItems, 'flex');
   setVisible(document.getElementById('emptyHint'),    !hasItems);
   const resizeHandle = document.getElementById('mainResizeHandle');
-  if (resizeHandle) resizeHandle.style.display = hasItems ? 'block' : 'none';
+  if (resizeHandle) {
+    resizeHandle.style.display = hasItems ? 'block' : 'none';
+    resizeHandle.tabIndex = hasItems && window.innerWidth > 768 ? 0 : -1;
+  }
 
   // Update mobile tap-to-import overlay
   if (typeof _updateMobileEmptyOverlay === 'function') {
@@ -3921,11 +3924,25 @@ function setupSidebarResize() {
   const sidebar = document.querySelector('.sidebar');
   if (!handle || !sidebar) return;
 
+  const minWidth = 220;
+  const maxWidth = 480;
+  const applyWidth = (value, persist = false) => {
+    const width = Math.min(Math.max(Math.round(value), minWidth), maxWidth);
+    document.documentElement.style.setProperty('--sidebar-w', width + 'px');
+    handle.setAttribute('aria-valuenow', String(width));
+    if (persist) {
+      const nextPrefs = loadPrefs();
+      nextPrefs.sidebarWidth = width;
+      savePrefs(nextPrefs);
+      scheduleLivePreview();
+    }
+    return width;
+  };
+
   const prefs = loadPrefs();
   if (prefs.sidebarWidth) {
-    const w = Math.min(Math.max(prefs.sidebarWidth, 220), 480);
-    document.documentElement.style.setProperty('--sidebar-w', w + 'px');
-  }
+    applyWidth(prefs.sidebarWidth);
+  } else applyWidth(sidebar.offsetWidth);
 
   let _resizing = false;
   let _startX   = 0;
@@ -3944,8 +3961,7 @@ function setupSidebarResize() {
   window.addEventListener('mousemove', e => {
     if (!_resizing) return;
     const delta = isRight() ? _startX - e.clientX : e.clientX - _startX;
-    const w = Math.min(Math.max(_startW + delta, 220), 480);
-    document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+    applyWidth(_startW + delta);
   });
 
   window.addEventListener('mouseup', () => {
@@ -3953,10 +3969,19 @@ function setupSidebarResize() {
     _resizing = false;
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
-    // Persist width
-    const p = loadPrefs();
-    p.sidebarWidth = sidebar.offsetWidth;
-    savePrefs(p);
+    applyWidth(sidebar.offsetWidth, true);
+  });
+
+  handle.addEventListener('keydown', event => {
+    const current = sidebar.offsetWidth;
+    let next = null;
+    if (event.key === 'ArrowLeft') next = current + (isRight() ? 10 : -10);
+    if (event.key === 'ArrowRight') next = current + (isRight() ? -10 : 10);
+    if (event.key === 'Home') next = minWidth;
+    if (event.key === 'End') next = maxWidth;
+    if (next == null) return;
+    event.preventDefault();
+    applyWidth(next, true);
   });
 }
 
@@ -4281,8 +4306,27 @@ function setupMainResize() {
   const preview = document.querySelector('.preview-area');
   if (!handle || !preview) return;
 
+  const getMinHeight = () => Math.max(120, parseFloat(getComputedStyle(preview).minHeight) || 0);
+  const getMaxHeight = () => Math.max(getMinHeight(), window.innerHeight - 160);
+  const applyHeight = (value, persist = false) => {
+    const minHeight = getMinHeight();
+    const maxHeight = getMaxHeight();
+    const height = Math.min(Math.max(Math.round(value), minHeight), maxHeight);
+    preview.style.height = height + 'px';
+    handle.setAttribute('aria-valuemin', String(Math.round(minHeight)));
+    handle.setAttribute('aria-valuemax', String(Math.round(maxHeight)));
+    handle.setAttribute('aria-valuenow', String(height));
+    if (persist) {
+      const nextPrefs = loadPrefs();
+      nextPrefs.previewHeight = height + 'px';
+      savePrefs(nextPrefs);
+      scheduleLivePreview();
+    }
+    return height;
+  };
+
   const prefs = loadPrefs();
-  if (prefs.previewHeight) preview.style.height = prefs.previewHeight;
+  applyHeight(prefs.previewHeight ? parseFloat(prefs.previewHeight) : preview.offsetHeight);
 
   let _resizing = false, _startY = 0, _startH = 0;
 
@@ -4297,9 +4341,7 @@ function setupMainResize() {
   });
   window.addEventListener('mousemove', e => {
     if (!_resizing) return;
-    const h = Math.min(Math.max(_startH + (e.clientY - _startY), 120),
-                       window.innerHeight - 160);
-    preview.style.height = h + 'px';
+    applyHeight(_startH + (e.clientY - _startY));
   });
   window.addEventListener('mouseup', () => {
     if (!_resizing) return;
@@ -4307,10 +4349,18 @@ function setupMainResize() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     handle.classList.remove('resizing');
-    const p = loadPrefs();
-    p.previewHeight = preview.offsetHeight + 'px';
-    savePrefs(p);
-    scheduleLivePreview();
+    applyHeight(preview.offsetHeight, true);
+  });
+  handle.addEventListener('keydown', event => {
+    const current = preview.offsetHeight;
+    let next = null;
+    if (event.key === 'ArrowUp') next = current - 10;
+    if (event.key === 'ArrowDown') next = current + 10;
+    if (event.key === 'Home') next = getMinHeight();
+    if (event.key === 'End') next = getMaxHeight();
+    if (next == null) return;
+    event.preventDefault();
+    applyHeight(next, true);
   });
 }
 
