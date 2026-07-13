@@ -1386,6 +1386,10 @@ function _requestLoadedMediaFocus() {
   if (_tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
 }
 
+function _queueLoadedMediaFocus() {
+  _pendingLoadedMediaFocus = true;
+}
+
 function _settleLoadedMediaFocus() {
   if (_pendingLoadedMediaFocus && _tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
 }
@@ -3297,6 +3301,10 @@ function selectItem(id) {
   if (window.innerWidth <= 768) {
     document.body.setAttribute('data-mobile-tab', 'preview');
     _setMobileTabState(document.getElementById('mobileTabBar'), 'preview');
+    // The Photos panel becomes inert immediately. Wait for the newly selected
+    // photo/video preview to expose the matching visible control before moving
+    // focus, rather than leaving focus on the now-hidden card.
+    _queueLoadedMediaFocus();
   }
   updateLiveExifPanel();
   scheduleLivePreview();
