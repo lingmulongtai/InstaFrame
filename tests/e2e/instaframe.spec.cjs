@@ -680,6 +680,9 @@ test('responsive transitions keep focus in the matching workspace panel', async 
   await expect(photoPreview).toBeFocused();
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(page.locator('#settingsPanel')).toBeVisible();
+  await expect(page.locator('body')).not.toHaveAttribute('data-mobile-tab');
+  expect(await page.locator('#settingsPanel').evaluate(element => element.inert)).toBe(false);
   const fontSelect = page.locator('#fontFamily');
   await fontSelect.focus();
   await page.evaluate(() => {
