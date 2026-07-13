@@ -1386,18 +1386,12 @@ test('a stalled vendor script times out and can be retried', async ({ page }) =>
 });
 
 test('a release revision follows the app into lazy EXIF and ZIP dependencies', async ({ page }) => {
-  const revision = 'abcdef123456';
-  await page.route('http://127.0.0.1:4173/', async route => {
-    const response = await route.fetch();
-    const body = (await response.text()).replace(
-      /\b(src|href)="((?:js|css|vendor)\/[^"?]+)"/g,
-      `$1="$2?v=${revision}"`
-    );
-    await route.fulfill({ response, body });
-  });
+  const revision = await page.locator('script[src*="js/app.js"]').evaluate(element => (
+    new URL(element.src).searchParams.get('v')
+  ));
+  expect(revision).toMatch(/^[a-f0-9]{12}$/);
   const requested = [];
   page.on('request', request => requested.push(request.url()));
-  await page.reload();
 
   await uploadJpegs(page, 2);
   await expect(page.locator('#live-exif-make')).toHaveValue('FUJIFILM');
