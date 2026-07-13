@@ -166,6 +166,43 @@ test('workspace resize separators support keyboard control and expose their valu
   await expect(mainHandle).toHaveAccessibleName('プレビューパネルの高さを変更');
 });
 
+test('every BFCache pagehide releases Blob URLs and restores a usable pending preview', async ({ page }) => {
+  await page.evaluate(() => {
+    const active = new Set();
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = value => {
+      const url = create(value);
+      active.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      active.delete(url);
+      revoke(url);
+    };
+    window.__activePageObjectUrls = active;
+  });
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await page.evaluate(() => window.triggerDownload(new Blob(['download']), 'resource-check.txt'));
+  await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBeGreaterThan(0);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
+  await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(page.locator('#livePreviewCanvas')).toBeVisible();
+  await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
+
+  await page.evaluate(() => window.triggerDownload(new Blob(['download-again']), 'resource-check-2.txt'));
+  await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
+});
+
 test('translated dynamic controls and location icon radio state stay synchronized', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

@@ -181,6 +181,7 @@ const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
 const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
 const _mapImgLoadCancels = new Set(); // cancellation callbacks for active Mapbox images
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
+const _downloadUrlTimers = new Map(); // active download Blob URL → delayed cleanup timer
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _previewRenderController = null;
 let   _exportCancelRequested = false;
@@ -1371,7 +1372,20 @@ function triggerDownload(blob, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const timer = setTimeout(() => _releaseDownloadUrl(url), 5000);
+  _downloadUrlTimers.set(url, timer);
+}
+
+function _releaseDownloadUrl(url) {
+  const timer = _downloadUrlTimers.get(url);
+  if (timer == null) return;
+  clearTimeout(timer);
+  _downloadUrlTimers.delete(url);
+  URL.revokeObjectURL(url);
+}
+
+function _releasePendingDownloadUrls() {
+  for (const url of [..._downloadUrlTimers.keys()]) _releaseDownloadUrl(url);
 }
 
 function _mediaResourceLimitError() {
@@ -4380,6 +4394,58 @@ function setupCardSize() {
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
+function _releasePageResources() {
+  clearTimeout(_livePreviewTimer);
+  _livePreviewTimer = null;
+  _renderSeq += 1;
+  _exportCancelRequested = true;
+  _activeExportController?.abort();
+  _previewRenderController?.abort();
+  _previewRenderController = null;
+  _disposeLiveVideoSource();
+  _releasePendingDownloadUrls();
+  document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
+  state.items.forEach(item => {
+    const outputWasActive = item.status === 'done' || item.status === 'processing';
+    _releaseItemOutput(item);
+    if (outputWasActive) {
+      item.status = 'pending';
+      item.progress = 0;
+      item.errorMsg = null;
+      updateItemStatus(item);
+    }
+  });
+  for (const entry of _imgLoadEntries.values()) entry.controller.abort();
+  _imgLoadEntries.clear();
+  _transientPreviewImages.clear();
+  for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
+  _imgCache.clear();
+  for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
+  _frameCache.clear();
+  const liveCanvas = document.getElementById('livePreviewCanvas');
+  if (liveCanvas) {
+    liveCanvas.width = 0;
+    liveCanvas.height = 0;
+    liveCanvas.style.display = 'none';
+  }
+  _cancelMapImageLoads();
+  _mapImgCache.clear();
+}
+
+function _restorePageResources() {
+  _exportCancelRequested = false;
+  _activeExportController = null;
+  setGlobalBusy(false);
+  hideProgress();
+  state.items.forEach(item => {
+    updateItemStatus(item);
+    updateItemPreview(item);
+  });
+  updateUI();
+  updateLiveExifPanel();
+  scheduleLivePreview();
+}
+
 // Apply theme & layout immediately (before paint) to avoid flash
 ;(function() {
   const p = loadPrefs();
@@ -4451,21 +4517,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Hide image section by default
   document.getElementById('imageSection').style.display = 'none';
-  window.addEventListener('pagehide', () => {
-    _activeExportController?.abort();
-    _previewRenderController?.abort();
-    _previewRenderController = null;
-    _disposeLiveVideoSource();
-    document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
-    state.items.forEach(_releaseItemOutput);
-    for (const entry of _imgLoadEntries.values()) entry.controller.abort();
-    _imgLoadEntries.clear();
-    _transientPreviewImages.clear();
-    for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
-    _imgCache.clear();
-    for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
-    _frameCache.clear();
-    _cancelMapImageLoads();
-    _mapImgCache.clear();
-  }, { once: true });
+  window.addEventListener('pagehide', _releasePageResources);
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) _restorePageResources();
+  });
 });
