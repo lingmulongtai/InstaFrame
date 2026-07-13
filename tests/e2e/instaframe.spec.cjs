@@ -347,6 +347,27 @@ test('video shortcuts do not steal Space from destructive dialog buttons', async
   await expect(remove).toBeFocused();
 });
 
+test('modal background stays inert and focus remains in the dialog across responsive changes', async ({ page }) => {
+  await uploadJpegs(page);
+  const remove = page.locator('[data-action="remove"]');
+  await remove.focus();
+  await remove.press('Enter');
+  const modal = page.locator('#destructiveConfirmModal');
+  await expect(page.locator('#destructiveConfirmCancelBtn')).toBeFocused();
+  expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(true);
+  expect(await page.locator('#mobileTabBar').evaluate(element => element.inert)).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await modal.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  expect(await modal.evaluate(element => element.contains(document.activeElement))).toBe(true);
+
+  await page.keyboard.press('Escape');
+  await expect(remove).toBeFocused();
+  expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(false);
+  expect(await page.locator('#mobileTabBar').evaluate(element => element.inert)).toBe(false);
+});
+
 test('dynamic panels and selectors expose keyboard state without hidden focus targets', async ({ page }) => {
   const customize = page.locator('#customizePanel');
   await expect(customize).toHaveAttribute('aria-hidden', 'true');
