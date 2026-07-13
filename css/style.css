@@ -15,11 +15,11 @@
   --text:       #111114;
   /* light-only defaults continued below */
   --text-2:     #5f5f6b;
-  --text-3:     #9999a8;
+  --text-3:     #666673;
   --accent:     #08798f;
   --accent-h:   #056579;
   --card-min-w: 200px;
-  --danger:     #dc2626;
+  --danger:     #b91c1c;
   --r:          7px;
   --r-lg:       12px;
   --shadow:     0 1px 4px rgba(0,0,0,0.08), 0 2px 10px rgba(0,0,0,0.05);
@@ -54,7 +54,7 @@
   --border:     #32323b;
   --text:       #f0f0f3;
   --text-2:     #9898a8;
-  --text-3:     #55555f;
+  --text-3:     #aaaab6;
   --shadow:     0 1px 4px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
   --shadow-lg:  0 8px 32px rgba(0,0,0,0.5);
 }
@@ -66,7 +66,7 @@
     --border:     #32323b;
     --text:       #f0f0f3;
     --text-2:     #9898a8;
-    --text-3:     #55555f;
+    --text-3:     #aaaab6;
     --shadow:     0 1px 4px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
     --shadow-lg:  0 8px 32px rgba(0,0,0,0.5);
   }
@@ -92,8 +92,8 @@
   --surface-2: #243044;
   --border:    #2d3d55;
   --text:      #d0d8e8;
-  --text-2:    #8899b0;
-  --text-3:    #4a5a70;
+  --text-2:    #aebdd0;
+  --text-3:    #9aaac0;
   --shadow:    0 1px 4px rgba(0,0,0,0.4), 0 2px 10px rgba(0,0,0,0.25);
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.55);
 }
@@ -1424,7 +1424,7 @@ input[type="range"]:focus-visible {
   border: none;
   padding: 2px;
   cursor: pointer;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255,255,255,0.55);
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -1443,7 +1443,7 @@ input[type="range"]:focus-visible {
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255,255,255,0.55);
 }
 
 .preview-exif-grid {
