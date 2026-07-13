@@ -693,6 +693,36 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
+test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__photoEncodeStarted = false;
+    window.__pendingPhotoEncodeCallback = null;
+    HTMLCanvasElement.prototype.toBlob = callback => {
+      window.__photoEncodeStarted = true;
+      window.__pendingPhotoEncodeCallback = callback;
+    };
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__photoEncodeStarted)).toBe(true);
+  await page.locator('#cancelExportBtn').click();
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await page.evaluate(() => {
+    window.__pendingPhotoEncodeCallback(new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+  });
+  await page.waitForTimeout(50);
+  expect(downloads).toBe(0);
+});
+
 test('batch generation reports failed items instead of announcing complete success', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

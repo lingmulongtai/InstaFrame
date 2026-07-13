@@ -638,26 +638,49 @@ const FrameEngine = (() => {
     return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   }
 
-  function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92 } = {}) {
+  function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92, signal = null } = {}) {
     const mime = format === 'png'  ? 'image/png'
                : format === 'webp' ? 'image/webp'
                :                     'image/jpeg';
     // PNG is lossless — no quality arg
-    return new Promise((resolve, reject) =>
-      canvas.toBlob(async blob => {
-        if (!blob) { reject(new Error('Image encoding failed')); return; }
-        try {
-          const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
-          if (!hasImageSignature(bytes, format)) {
-            reject(new Error(`Browser did not encode the requested ${mime} format`));
-            return;
+    assertNotAborted(signal);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal?.removeEventListener('abort', abort);
+      const succeed = blob => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(blob);
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
+      try {
+        canvas.toBlob(async blob => {
+          if (settled) return;
+          if (!blob) { fail(new Error('Image encoding failed')); return; }
+          try {
+            const bytes = await _readBlobBytesWithSignal(blob.slice(0, 16), signal);
+            if (!hasImageSignature(bytes, format)) {
+              fail(new Error(`Browser did not encode the requested ${mime} format`));
+              return;
+            }
+            succeed(blob.type.toLowerCase() === mime ? blob : new Blob([blob], { type: mime }));
+          } catch (error) {
+            fail(error);
           }
-          resolve(blob.type.toLowerCase() === mime ? blob : new Blob([blob], { type: mime }));
-        } catch (error) {
-          reject(error);
-        }
-      }, mime, format === 'png' ? undefined : quality)
-    );
+        }, mime, format === 'png' ? undefined : quality);
+      } catch (error) {
+        fail(error);
+      }
+    });
   }
 
   function loadImage(file, { signal } = {}) {

@@ -1292,7 +1292,7 @@ async function downloadAll() {
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
         addZipEntry(name, item.videoBlob);
       } else if (item.canvas) {
-        const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
+        const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal: controller.signal });
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
         addZipEntry(name, blob, true);
       }
@@ -1300,9 +1300,13 @@ async function downloadAll() {
   } catch (error) {
     setGlobalBusy(false);
     hideProgress();
+    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
     _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
-    showToast(t(error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed'), 'error');
+    const messageKey = cancelled
+      ? 'msgExportCancelled'
+      : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
+    showToast(t(messageKey), cancelled ? 'warn' : 'error');
     return;
   }
 
