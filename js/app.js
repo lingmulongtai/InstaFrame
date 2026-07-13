@@ -3900,8 +3900,21 @@ async function renderLivePreview() {
     if (renderedPixels <= MAX_FRAME_CACHE_PIXELS) _frameCache.set(hash, rendered);
     else { rendered.width = 0; rendered.height = 0; }
     applyPreviewTransform();
-  } catch (_e) {
-    // Non-critical — silently ignore preview failures
+  } catch (error) {
+    if (error?.name === 'AbortError' || signal.aborted || seq !== _renderSeq) return;
+    // Framing and optional map failures remain non-critical. A source image
+    // decode failure is different: the item cannot ever be previewed or
+    // exported, so keep the card and live preview in an explicit error state.
+    if (_imgFailed.has(item.id)) {
+      item.status = 'error';
+      if (error?.code === 'MEDIA_RESOURCE_LIMIT') {
+        _setLocalizedItemError(item, 'msgMediaResourceLimit');
+      } else if (!item.errorMsg) {
+        _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+      }
+      updateItemStatus(item);
+      _setLivePreviewError(_getItemErrorMessage(item));
+    }
   } finally {
     if (_previewRenderController === controller) _previewRenderController = null;
   }
@@ -4000,7 +4013,15 @@ function _startPhotoThumbnail(item) {
       }
       finish(resolve, undefined, 'compact');
     };
-    const failed = () => finish(resolve, undefined, 'discard');
+    const failed = () => {
+      if (signal.aborted || _pageResourcesReleased || !state.items.includes(item)) {
+        aborted();
+        return;
+      }
+      const error = new Error('Photo thumbnail decode failed');
+      error.code = 'IMAGE_DECODE_FAILED';
+      finish(reject, error, 'discard');
+    };
     const aborted = () => finish(
       reject,
       new DOMException('Thumbnail cancelled', 'AbortError'),
@@ -4013,7 +4034,16 @@ function _startPhotoThumbnail(item) {
     if (thumbnail.complete) queueMicrotask(thumbnail.naturalWidth ? loaded : failed);
   }))
     .catch(error => {
-      if (error?.name !== 'AbortError') _discardCardPhotoThumbnail(card, thumbnail);
+      if (error?.name === 'AbortError' || !state.items.includes(item)) return;
+      _discardCardPhotoThumbnail(card, thumbnail);
+      if (error?.code === 'IMAGE_DECODE_FAILED') {
+        _imgFailed.add(item.id);
+        item.status = 'error';
+        const message = _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+        updateItemStatus(item);
+        if (state.selectedItemId === item.id) _setLivePreviewError(message);
+        showToast(message, 'error');
+      }
     })
     .finally(() => {
       clearTimeout(thumbnailGuard);
