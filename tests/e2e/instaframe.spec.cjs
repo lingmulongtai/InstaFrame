@@ -115,6 +115,18 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
 
+test('initial translated UI exposes the matching document language', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
+
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#dropZone')).toContainText('Drop photos here');
+});
+
 test('empty import focus is visible and leaves the tab order after media is added', async ({ page }) => {
   const input = page.locator('#fileInput');
   await input.focus();
