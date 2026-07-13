@@ -2376,11 +2376,12 @@ test('failed live video previews release source, RAF, and canvas resources', asy
     { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
     { name: 'error.webm', mimeType: 'video/webm', buffer: createWebm() },
     { name: 'timeout.webm', mimeType: 'video/webm', buffer: createWebm() },
+    { name: 'metadata-only.webm', mimeType: 'video/webm', buffer: createWebm() },
     { name: 'throw.webm', mimeType: 'video/webm', buffer: createWebm() },
   ]);
-  await expect(page.locator('#preview-4')).toBeVisible();
-  await expect.poll(() => page.locator('#preview-2 canvas, #preview-3 canvas, #preview-4 canvas').evaluateAll(
-    canvases => canvases.length === 3 && canvases.every(canvas => canvas.width > 0 && canvas.height > 0)
+  await expect(page.locator('#preview-5')).toBeVisible();
+  await expect.poll(() => page.locator('#preview-2 canvas, #preview-3 canvas, #preview-4 canvas, #preview-5 canvas').evaluateAll(
+    canvases => canvases.length === 4 && canvases.every(canvas => canvas.width > 0 && canvas.height > 0)
   )).toBe(true);
 
   await page.evaluate(() => {
@@ -2508,16 +2509,34 @@ test('failed live video previews release source, RAF, and canvas resources', asy
   });
   await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
 
-  await page.evaluate(() => { window.__failedLiveVideoControl.loadMode = 'throw'; });
   await page.locator('#preview-4').click();
+  await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => !!video._objUrl)).toBe(true);
+  await page.locator('#livePreviewVideo').dispatchEvent('loadedmetadata');
   await expect(page.locator('#status-badge-4 .status-dot')).toHaveClass(/error/);
-  await expect(page.locator('#livePreviewError')).toContainText('throw.webm');
+  await expect(page.locator('#livePreviewError')).toContainText('metadata-only.webm');
   await expect.poll(resourceState).toEqual({
     activeUrls: 0,
     activeRafs: 0,
     created: 3,
     revoked: 3,
     sourceRemoved: 3,
+    hasObjectUrl: false,
+    hasSourceId: false,
+    canvasWidth: 0,
+    canvasHeight: 0,
+  });
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+
+  await page.evaluate(() => { window.__failedLiveVideoControl.loadMode = 'throw'; });
+  await page.locator('#preview-5').click();
+  await expect(page.locator('#status-badge-5 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#livePreviewError')).toContainText('throw.webm');
+  await expect.poll(resourceState).toEqual({
+    activeUrls: 0,
+    activeRafs: 0,
+    created: 4,
+    revoked: 4,
+    sourceRemoved: 4,
     hasObjectUrl: false,
     hasSourceId: false,
     canvasWidth: 0,
