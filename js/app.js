@@ -625,7 +625,7 @@ function _getMapboxUsage() {
   }
 }
 
-function _trackMapboxLoad() {
+function _trackMapboxRequest() {
   try {
     const usage = _getMapboxUsage();
     usage.dayCount += 1;
@@ -703,13 +703,17 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
     }, MAP_IMAGE_LOAD_GUARD_MS);
     img.crossOrigin = 'anonymous';
     img.onload  = () => {
-      _trackMapboxLoad();
       if (_mapImgCache.size >= 12) _mapImgCache.delete(_mapImgCache.keys().next().value);
       _mapImgCache.set(key, img);
       finish(img);
     };
     img.onerror = () => finish(null);
-    try { img.src = url; }
+    try {
+      img.src = url;
+      // Count started requests, including failures and timeouts. A success-only
+      // counter would let repeated billable failures bypass the local guard.
+      _trackMapboxRequest();
+    }
     catch {
       img.removeAttribute('src');
       finish(null);

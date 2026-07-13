@@ -2842,6 +2842,55 @@ test('a stalled Mapbox image times out and releases its source', async ({ page }
   expect(result).toEqual({ value: null, sourceAssigned: true, sourceRemoved: 1 });
 });
 
+test('failed Mapbox requests still consume the local safety limit', async ({ page }) => {
+  await page.evaluate(() => {
+    const day = new Date().toISOString().slice(0, 10);
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.test',
+    }));
+    localStorage.setItem('instaframe_mb_usage_v2', JSON.stringify({
+      day,
+      month: day.slice(0, 7),
+      dayCount: 99,
+      monthCount: 99,
+    }));
+  });
+  await page.reload();
+
+  const result = await page.evaluate(async () => {
+    let requests = 0;
+    window.Image = class FailedMapImage {
+      set src(value) {
+        this._src = String(value);
+        requests += 1;
+        queueMicrotask(() => this.onerror?.(new Event('error')));
+      }
+      get src() { return this._src || ''; }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+    };
+
+    const first = await window._fetchMapOverlayImage(35.0116, 135.7681);
+    const second = await window._fetchMapOverlayImage(35.0117, 135.7682);
+    const usage = JSON.parse(localStorage.getItem('instaframe_mb_usage_v2'));
+    return {
+      first,
+      second,
+      requests,
+      dayCount: usage.dayCount,
+      monthCount: usage.monthCount,
+    };
+  });
+
+  expect(result).toEqual({
+    first: null,
+    second: null,
+    requests: 1,
+    dayCount: 100,
+    monthCount: 100,
+  });
+});
+
 test('map picker loads its UI library locally after consent', async ({ page }) => {
   const requests = [];
   page.on('request', request => {
