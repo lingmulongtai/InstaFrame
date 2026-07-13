@@ -1010,6 +1010,10 @@ input[type="range"]:focus-visible {
   font-size: 12px;
   font-weight: 650;
 }
+.preview-area > input[type="file"]:focus-visible ~ .preview-empty .preview-empty-cta {
+  outline: 3px solid #67e8f9;
+  outline-offset: 4px;
+}
 .preview-empty-trust {
   display: flex;
   justify-content: center;

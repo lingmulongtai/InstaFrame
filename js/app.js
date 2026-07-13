@@ -935,7 +935,7 @@ async function removeItem(id, options = {}) {
   scheduleLivePreview();
   const focusTarget = state.items.length
     ? document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')
-    : document.getElementById('fileInput');
+    : _getEmptyImportFocusTarget();
   focusTarget?.focus();
   return true;
 }
@@ -967,8 +967,16 @@ async function clearAllItems(skipConfirm = false) {
   updateUI();
   scheduleLivePreview();
   showToast(t('msgClearedAll'), 'info');
-  document.getElementById('fileInput')?.focus();
+  _getEmptyImportFocusTarget()?.focus();
   return true;
+}
+
+function _getEmptyImportFocusTarget() {
+  const mobilePhotosTab = window.innerWidth <= 768
+    && document.body.getAttribute('data-mobile-tab') === 'photos';
+  return mobilePhotosTab
+    ? document.getElementById('mobileAddBtn')
+    : document.getElementById('fileInput');
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -3018,6 +3026,13 @@ function updateItemPreview(item) {
 
 function updateUI() {
   const hasItems = state.items.length > 0;
+  const fileInput = document.getElementById('fileInput');
+  if (fileInput) {
+    fileInput.tabIndex = hasItems ? -1 : 0;
+    if (hasItems && document.activeElement === fileInput) {
+      document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')?.focus();
+    }
+  }
   const exifWrap = document.getElementById('previewExifWrap');
   if (exifWrap) {
     exifWrap.inert = !hasItems;
