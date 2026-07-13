@@ -589,14 +589,14 @@ const FrameEngine = (() => {
     ctx.restore();
   }
 
-  function applyPostProcess(src, settings) {
+  function computePostProcessLayout(sourceW, sourceH, settings) {
     const {
-      frameColor = '#F0F0F0',
       outerPadding = 0,
       aspectRatio = 'original',
       aspectOrientation = 'auto',
     } = settings;
-    let W = src.width, H = src.height;
+    const W = sourceW;
+    const H = sourceH;
 
     let tW = W, tH = H;
     if (aspectRatio && aspectRatio !== 'original') {
@@ -617,21 +617,35 @@ const FrameEngine = (() => {
     }
 
     const pad = Math.round(Math.max(tW, tH) * (outerPadding || 0) / 100);
-    const fW = tW + pad * 2, fH = tH + pad * 2;
-    if (fW === W && fH === H) return src;
-    assertSafeCanvasSize(fW, fH);
+    const canvasW = tW + pad * 2;
+    const canvasH = tH + pad * 2;
+    return {
+      canvasW,
+      canvasH,
+      contentX: Math.round((canvasW - W) / 2),
+      contentY: Math.round((canvasH - H) / 2),
+      changed: canvasW !== W || canvasH !== H,
+    };
+  }
+
+  function applyPostProcess(src, settings) {
+    const { frameColor = '#F0F0F0' } = settings;
+    const layout = computePostProcessLayout(src.width, src.height, settings);
+    if (!layout.changed) return src;
+    const { canvasW, canvasH, contentX, contentY } = layout;
+    assertSafeCanvasSize(canvasW, canvasH);
 
     const out = document.createElement('canvas');
-    out.width = fW; out.height = fH;
+    out.width = canvasW; out.height = canvasH;
     const ctx = out.getContext('2d');
     if (!ctx) throw new Error('Canvas rendering is unavailable');
     if (settings.frameBackground === 'blur') {
-      drawBlurBackground(ctx, src, fW, fH, settings);
+      drawBlurBackground(ctx, src, canvasW, canvasH, settings);
     } else {
       ctx.fillStyle = frameColor;
-      ctx.fillRect(0, 0, fW, fH);
+      ctx.fillRect(0, 0, canvasW, canvasH);
     }
-    ctx.drawImage(src, Math.round((fW - W) / 2), Math.round((fH - H) / 2));
+    ctx.drawImage(src, contentX, contentY);
     return out;
   }
 
@@ -890,6 +904,7 @@ const FrameEngine = (() => {
       video.preload = 'auto';
       let encoder = null;
       let canvas = null;
+      let baseCanvas = null;
       let frameCallbackId = null;
       let settled = false;
       let finalizing = false;
@@ -911,6 +926,7 @@ const FrameEngine = (() => {
           try { encoder.close(); } catch (_) {}
         }
         if (canvas) { canvas.width = 0; canvas.height = 0; }
+        if (baseCanvas) { baseCanvas.width = 0; baseCanvas.height = 0; }
       };
       const succeed = blob => {
         if (settled) return;
@@ -933,35 +949,12 @@ const FrameEngine = (() => {
           assertNotAborted(signal);
           const W = video.videoWidth, H = video.videoHeight;
           if (!W || !H) throw new Error('Invalid video dimensions');
-
-          const isPortrait    = H > W;
-          const ts            = settings.thicknessScale || 1;
-          const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
-          const sideBorder    = baseBorder * 0.5;
-          const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
-          const locationExtra = showLoc ? H * 0.038 * ts : 0;
-          const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
-          const pf  = isPortrait ? 0.75 : 1.0;
-          const sB  = sideBorder   * pf;
-          const tB  = sideBorder   * pf;
-          const bB  = bottomBorder * pf;
-          const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
-          const canvasW = Math.round(W + sB * 2);
-          const canvasH = imageLayout.canvasH;
+          const layout = computeVideoFrameLayout(W, H, settings, exif);
+          const { canvasW, canvasH } = layout;
           const duration = video.duration || 0;
-          assertSafeCanvasSize(canvasW, canvasH);
           if (duration > 0 && duration * videoBitsPerSecond / 8 > maxOutputBytes) {
             throw resourceLimitError();
           }
-
-          const layout = {
-            canvasW, canvasH,
-            imageBottom: imageLayout.imageBottom,
-            bottomAreaHeight: bB,
-            isPortrait,
-            frameColor: settings.frameColor || '#F0F0F0',
-          };
-          const frameColor = settings.frameColor || '#F0F0F0';
           const fps        = 30;
           const frameDurUs = Math.round(1_000_000 / fps);
 
@@ -1028,15 +1021,7 @@ const FrameEngine = (() => {
             try {
               assertNotAborted(signal);
               const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
-              if (settings.frameBackground === 'blur') {
-                drawBlurBackground(ctx, video, canvasW, canvasH, settings);
-              } else {
-                ctx.fillStyle = frameColor;
-                ctx.fillRect(0, 0, canvasW, canvasH);
-              }
-              drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
-              drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-              drawExifText(ctx, exif, settings, layout);
+              baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
 
               let frame = null;
               try {
@@ -1188,6 +1173,7 @@ const FrameEngine = (() => {
       let outputStream = null;
       let sourceStream = null;
       let canvas = null;
+      let baseCanvas = null;
       let recorder = null;
       let rafId = null;
       let stopTimer = null;
@@ -1217,6 +1203,7 @@ const FrameEngine = (() => {
         if (sourceStream) sourceStream.getTracks().forEach(track => track.stop());
         if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
         if (canvas) { canvas.width = 0; canvas.height = 0; }
+        if (baseCanvas) { baseCanvas.width = 0; baseCanvas.height = 0; }
         signal?.removeEventListener('abort', abort);
       };
 
@@ -1242,25 +1229,10 @@ const FrameEngine = (() => {
           const W = video.videoWidth;
           const H = video.videoHeight;
           if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
-
-        const isPortrait      = H > W;
-        const ts              = settings.thicknessScale || 1;
-        const baseBorder      = Math.min(W, H) * 0.05 * 1.2 * ts;
-        const sideBorder      = baseBorder * 0.5;
-        const showLoc         = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
-        const locationExtra   = showLoc ? H * 0.038 * ts : 0;
-        const bottomBorder    = sideBorder * 4 + H * 0.10 * ts + locationExtra;
-        const pf          = isPortrait ? 0.75 : 1.0;
-        const sB = sideBorder    * pf;
-        const tB = sideBorder    * pf;
-        const bB = bottomBorder  * pf;
-        const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
-
-        const canvasW = Math.round(W + sB * 2);
-        const canvasH = imageLayout.canvasH;
+        const layout = computeVideoFrameLayout(W, H, settings, exif);
+        const { canvasW, canvasH } = layout;
         const duration = video.duration || 0;
         try {
-          assertSafeCanvasSize(canvasW, canvasH);
           if (duration > 0 && duration * videoBitsPerSecond / 8 > outputByteLimit) {
             throw resourceLimitError();
           }
@@ -1274,15 +1246,6 @@ const FrameEngine = (() => {
         canvas.height = canvasH;
         const ctx     = canvas.getContext('2d');
         if (!ctx) { fail(new Error('Canvas rendering is unavailable')); return; }
-
-        const layout = {
-          canvasW, canvasH,
-          imageBottom: imageLayout.imageBottom,
-          bottomAreaHeight: bB,
-          isPortrait,
-          frameColor: settings.frameColor || '#F0F0F0',
-        };
-        const frameColor = settings.frameColor || '#F0F0F0';
 
         // ── Preserve the source audio without playing it on the page ──
         let audioTrack = null;
@@ -1355,15 +1318,7 @@ const FrameEngine = (() => {
         function drawLoop() {
           try {
             assertNotAborted(signal);
-            if (settings.frameBackground === 'blur') {
-              drawBlurBackground(ctx, video, canvasW, canvasH, settings);
-            } else {
-              ctx.fillStyle = frameColor;
-              ctx.fillRect(0, 0, canvasW, canvasH);
-            }
-            drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
-            drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-            drawExifText(ctx, exif, settings, layout);
+            baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
 
             if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
 
@@ -1406,13 +1361,13 @@ const FrameEngine = (() => {
    * Compute the frame layout for a video given its pixel dimensions and current settings.
    * Returns the same shape used internally by _renderVideoWebCodecs / _renderVideoMediaRecorder.
    */
-  function computeVideoFrameLayout(videoW, videoH, settings) {
+  function computeVideoFrameLayout(videoW, videoH, settings, exif = {}) {
     const W = videoW, H = videoH;
     const isPortrait    = H > W;
     const ts            = settings.thicknessScale || 1;
     const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
     const sideBorder    = baseBorder * 0.5;
-    const showLoc       = settings.showLocation && settings.locationPosition === 'below-exif';
+    const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
     const locationExtra = showLoc ? H * 0.038 * ts : 0;
     const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
     const pf            = isPortrait ? 0.75 : 1.0;
@@ -1420,12 +1375,21 @@ const FrameEngine = (() => {
     const tB            = sideBorder   * pf;
     const bB            = bottomBorder * pf;
     const imageLayout   = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
-    const canvasW       = Math.round(W + sB * 2);
-    const canvasH       = imageLayout.canvasH;
+    const baseCanvasW   = Math.round(W + sB * 2);
+    const baseCanvasH   = imageLayout.canvasH;
     const frameColor    = settings.frameColor || '#F0F0F0';
+    assertSafeCanvasSize(baseCanvasW, baseCanvasH);
+    const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, settings);
+    assertSafeCanvasSize(postProcess.canvasW, postProcess.canvasH);
     return {
       W, H, sB, tB, bB,
-      canvasW, canvasH,
+      baseCanvasW,
+      baseCanvasH,
+      canvasW: postProcess.canvasW,
+      canvasH: postProcess.canvasH,
+      frameX: postProcess.contentX,
+      frameY: postProcess.contentY,
+      hasPostProcess: postProcess.changed,
       imageTop:    imageLayout.imageTop,
       imageBottom: imageLayout.imageBottom,
       isPortrait,
@@ -1438,25 +1402,76 @@ const FrameEngine = (() => {
    * ctx must already be scaled so that 1 unit = 1 logical canvas pixel
    * (i.e. the caller handles DPR scaling before calling this).
    */
-  function drawVideoFrameSync(ctx, video, exif, settings, layout) {
-    const { W, H, sB, canvasW, canvasH, imageTop, imageBottom, bB, isPortrait, frameColor } = layout;
+  function drawVideoBaseFrameSync(ctx, video, exif, settings, layout) {
+    const {
+      W, H, sB, baseCanvasW, baseCanvasH,
+      imageTop, imageBottom, bB, isPortrait, frameColor,
+    } = layout;
 
     if (settings.frameBackground === 'blur') {
-      drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+      drawBlurBackground(ctx, video, baseCanvasW, baseCanvasH, settings);
     } else {
       ctx.fillStyle = frameColor;
-      ctx.fillRect(0, 0, canvasW, canvasH);
+      ctx.fillRect(0, 0, baseCanvasW, baseCanvasH);
     }
     drawImageAtY(ctx, video, sB, imageTop, W, H);
     drawInnerShadow(ctx, sB, imageTop, W, H);
     drawExifText(ctx, exif || {}, settings, {
-      canvasW,
-      canvasH,
+      canvasW: baseCanvasW,
+      canvasH: baseCanvasH,
       imageBottom,
       bottomAreaHeight: bB,
       isPortrait,
       frameColor,
     });
+  }
+
+  function drawVideoFrameSync(ctx, video, exif, settings, layout, reusableBaseCanvas = null, baseScale = 1) {
+    if (!layout.hasPostProcess) {
+      if (reusableBaseCanvas) {
+        reusableBaseCanvas.width = 0;
+        reusableBaseCanvas.height = 0;
+      }
+      drawVideoBaseFrameSync(ctx, video, exif, settings, layout);
+      return null;
+    }
+
+    if (settings.frameBackground !== 'blur') {
+      if (reusableBaseCanvas) {
+        reusableBaseCanvas.width = 0;
+        reusableBaseCanvas.height = 0;
+      }
+      ctx.fillStyle = layout.frameColor;
+      ctx.fillRect(0, 0, layout.canvasW, layout.canvasH);
+      ctx.save();
+      ctx.translate(layout.frameX, layout.frameY);
+      drawVideoBaseFrameSync(ctx, video, exif, settings, layout);
+      ctx.restore();
+      return null;
+    }
+
+    const baseCanvas = reusableBaseCanvas || document.createElement('canvas');
+    const safeBaseScale = Math.max(0.01, Math.min(1, Number(baseScale) || 1));
+    const scratchW = Math.max(1, Math.round(layout.baseCanvasW * safeBaseScale));
+    const scratchH = Math.max(1, Math.round(layout.baseCanvasH * safeBaseScale));
+    if (baseCanvas.width !== scratchW || baseCanvas.height !== scratchH) {
+      baseCanvas.width = scratchW;
+      baseCanvas.height = scratchH;
+    }
+    const baseContext = baseCanvas.getContext('2d');
+    if (!baseContext) throw new Error('Canvas rendering is unavailable');
+    baseContext.save();
+    baseContext.scale(scratchW / layout.baseCanvasW, scratchH / layout.baseCanvasH);
+    drawVideoBaseFrameSync(baseContext, video, exif, settings, layout);
+    baseContext.restore();
+
+    drawBlurBackground(ctx, baseCanvas, layout.canvasW, layout.canvasH, settings);
+    ctx.drawImage(
+      baseCanvas,
+      0, 0, scratchW, scratchH,
+      layout.frameX, layout.frameY, layout.baseCanvasW, layout.baseCanvasH
+    );
+    return baseCanvas;
   }
 
   return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
