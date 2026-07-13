@@ -3001,6 +3001,74 @@ test('device location stays bound to the photo that requested it', async ({ page
   await expect(page.locator('#live-exif-location')).toHaveValue('');
 });
 
+test('removing a photo aborts its in-flight place-name lookup', async ({ page }) => {
+  await uploadJpegs(page, 1, true);
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+    const nativeFetch = window.fetch;
+    const nativeShowToast = window.showToast;
+    window.__removedLocationToasts = [];
+    window.showToast = (message, type) => {
+      window.__removedLocationToasts.push({ message, type });
+      nativeShowToast(message, type);
+    };
+    window.fetch = (input, options = {}) => {
+      if (!String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        return nativeFetch(input, options);
+      }
+      window.__removedLocationSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        window.__finishRemovedLocation = () => resolve(new Response(JSON.stringify({
+          address: { city: 'Detached City', country: 'Japan' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('Request cancelled', 'AbortError'));
+        }, { once: true });
+      });
+    };
+  });
+
+  await page.locator('#resolveLocationNameBtn').click();
+  await expect.poll(() => page.evaluate(() => !!window.__removedLocationSignal)).toBe(true);
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+
+  await expect.poll(() => page.evaluate(() => window.__removedLocationSignal.aborted)).toBe(true);
+  await page.evaluate(() => window.__finishRemovedLocation());
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => window.__removedLocationToasts.some(entry => entry.type === 'success'))).toBe(false);
+});
+
+test('removed device-location targets skip reverse geocoding', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+    window.__removedDeviceLookupCalls = 0;
+    const nativeFetch = window.fetch;
+    window.fetch = (input, options) => {
+      if (String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        window.__removedDeviceLookupCalls += 1;
+      }
+      return nativeFetch(input, options);
+    };
+    navigator.geolocation.getCurrentPosition = success => {
+      window.__finishRemovedDeviceLocation = success;
+    };
+  });
+
+  await page.locator('#getDeviceLocationBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__finishRemovedDeviceLocation)).toBe('function');
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await page.evaluate(() => window.__finishRemovedDeviceLocation({
+    coords: { latitude: 35.0116, longitude: 135.7681 },
+  }));
+  await page.waitForTimeout(50);
+
+  expect(await page.evaluate(() => window.__removedDeviceLookupCalls)).toBe(0);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+});
+
 test('location requests time out instead of waiting indefinitely', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));

@@ -295,6 +295,9 @@ let _locationConsentResolver = null;
 let _locationPrivacyPreviousFocus = null;
 let _liveDeviceLocationRequestId = 0;
 let _liveDeviceLocationItemId = null;
+let _liveDeviceLocationTargetId = null;
+let _liveDeviceLocationController = null;
+let _resolveLiveLocationOperation = null;
 let _destructiveConfirmResolver = null;
 let _destructiveConfirmPreviousFocus = null;
 
@@ -465,6 +468,7 @@ function setupAccessibleFormNames() {
 function _cancelLocationNetworkRequests() {
   for (const controller of _locationFetchControllers) controller.abort();
   _locationFetchControllers.clear();
+  _cancelLocationOperations();
 }
 
 async function _fetchLocationJson(url, options = {}, controller = new AbortController()) {
@@ -1223,6 +1227,7 @@ async function removeItem(id, options = {}) {
   const item = state.items.find(candidate => candidate.id === id);
   if (!item) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ filename: item.file?.name })) return false;
+  _cancelLocationOperations(id);
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) {
@@ -2448,6 +2453,21 @@ function applyLiveExifEdit(item, nextExif) {
   scheduleLivePreview();
 }
 
+function _cancelLocationOperations(itemId = null) {
+  if (!itemId || _resolveLiveLocationOperation?.itemId === itemId) {
+    _resolveLiveLocationOperation?.controller.abort();
+    _resolveLiveLocationOperation = null;
+  }
+  if (!itemId || _liveDeviceLocationTargetId === itemId) {
+    _liveDeviceLocationController?.abort();
+    _liveDeviceLocationController = null;
+    _liveDeviceLocationTargetId = null;
+    _liveDeviceLocationItemId = null;
+    _liveDeviceLocationRequestId += 1;
+    _syncLiveLocationInput();
+  }
+}
+
 function _applyResolvedLocation(item, latitude, longitude, label) {
   if (!item) return;
   if (!item.exif) item.exif = {};
@@ -2468,47 +2488,81 @@ function _applyResolvedLocation(item, latitude, longitude, label) {
 }
 
 async function resolveLiveExifLocation() {
-  const item = getSelectedPreviewItem();
-  const latitude = item?.exif?.latitude;
-  const longitude = item?.exif?.longitude;
+  const target = (() => {
+    const item = getSelectedPreviewItem();
+    return item ? {
+      itemId: item.id,
+      latitude: item.exif?.latitude,
+      longitude: item.exif?.longitude,
+    } : null;
+  })();
+  const { itemId, latitude, longitude } = target || {};
   if (latitude == null || longitude == null) {
     showToast(t('msgNoLocationCoordinates'), 'warn');
     return;
   }
-  if (!await requestLocationNetworkConsent()) return;
-  const name = await reverseGeocode(latitude, longitude);
-  if (!name) {
-    showToast(t('msgLocationLookupFailed'), 'warn');
-    return;
+  _resolveLiveLocationOperation?.controller.abort();
+  const operation = { itemId, latitude, longitude, controller: new AbortController() };
+  _resolveLiveLocationOperation = operation;
+  const currentItem = () => {
+    if (_resolveLiveLocationOperation !== operation || operation.controller.signal.aborted) return null;
+    const item = state.items.find(candidate => candidate.id === itemId);
+    return item?.exif?.latitude === latitude && item?.exif?.longitude === longitude ? item : null;
+  };
+  try {
+    if (!await requestLocationNetworkConsent() || !currentItem()) return;
+    const name = await reverseGeocode(latitude, longitude, { signal: operation.controller.signal });
+    const item = currentItem();
+    if (!item) return;
+    if (!name) {
+      showToast(t('msgLocationLookupFailed'), 'warn');
+      return;
+    }
+    _applyResolvedLocation(item, latitude, longitude, name);
+    showToast(t('msgLocationResolved'), 'success');
+  } finally {
+    if (_resolveLiveLocationOperation === operation) _resolveLiveLocationOperation = null;
   }
-  _applyResolvedLocation(item, latitude, longitude, name);
-  showToast(t('msgLocationResolved'), 'success');
 }
 
 async function getLiveDeviceLocation() {
   if (!navigator.geolocation) { showToast(t('msgGeolocationUnsupported'), 'warn'); return; }
-  const item = getSelectedPreviewItem();
-  if (!item) return;
+  const itemId = getSelectedPreviewItem()?.id;
+  if (!itemId) return;
+  _liveDeviceLocationController?.abort();
+  const controller = new AbortController();
+  _liveDeviceLocationController = controller;
+  _liveDeviceLocationTargetId = itemId;
   const requestId = ++_liveDeviceLocationRequestId;
   _liveDeviceLocationItemId = null;
   _syncLiveLocationInput();
-  if (!await requestLocationNetworkConsent()) return;
-  if (requestId !== _liveDeviceLocationRequestId || !state.items.includes(item)) return;
-  _liveDeviceLocationItemId = item.id;
+  if (!await requestLocationNetworkConsent()) {
+    if (_liveDeviceLocationController === controller) _cancelLocationOperations(itemId);
+    return;
+  }
+  if (requestId !== _liveDeviceLocationRequestId || controller.signal.aborted
+    || !state.items.some(item => item.id === itemId)) return;
+  _liveDeviceLocationItemId = itemId;
   _syncLiveLocationInput();
 
   const finish = () => {
-    if (requestId !== _liveDeviceLocationRequestId) return false;
+    if (requestId !== _liveDeviceLocationRequestId || _liveDeviceLocationController !== controller
+      || controller.signal.aborted) return null;
+    const item = state.items.find(candidate => candidate.id === itemId) || null;
+    _liveDeviceLocationController = null;
+    _liveDeviceLocationTargetId = null;
     _liveDeviceLocationItemId = null;
     _syncLiveLocationInput();
-    return true;
+    return item;
   };
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
-      if (requestId !== _liveDeviceLocationRequestId) return;
+      if (requestId !== _liveDeviceLocationRequestId || controller.signal.aborted
+        || !state.items.some(item => item.id === itemId)) return;
       const { latitude, longitude } = pos.coords;
-      const name = await reverseGeocode(latitude, longitude);
-      if (!finish() || !state.items.includes(item)) return;
+      const name = await reverseGeocode(latitude, longitude, { signal: controller.signal });
+      const item = finish();
+      if (!item) return;
       _applyResolvedLocation(item, latitude, longitude, name || InstaFrameCore.formatCoordinateLabel(latitude, longitude));
     },
     () => {
