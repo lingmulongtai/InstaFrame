@@ -59,6 +59,7 @@ const state = {
 let itemIdCounter = 0;
 let previewZoom   = 1.0;
 let previewPan    = { x: 0, y: 0 };
+let _pendingLoadedMediaFocus = false;
 const SETTINGS_HISTORY_LIMIT = 80;
 const _settingsUndoStack = [];
 const _settingsRedoStack = [];
@@ -1138,9 +1139,27 @@ function _getEmptyImportFocusTarget() {
 function _getLoadedMediaFocusTarget() {
   const mobilePreviewTab = window.innerWidth <= 768
     && document.body.getAttribute('data-mobile-tab') === 'preview';
-  return mobilePreviewTab
-    ? document.getElementById('previewQualityBtn')
-    : document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview');
+  if (mobilePreviewTab) {
+    const hasVideo = document.getElementById('dropZone')?.classList.contains('has-video');
+    return document.getElementById(hasVideo ? 'videoPlayPauseBtn' : 'previewQualityBtn');
+  }
+  return document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview');
+}
+
+function _tryFocusLoadedMediaTarget() {
+  const target = _getLoadedMediaFocusTarget();
+  if (!target || target.inert || target.closest('[inert]') || target.getClientRects().length === 0) return false;
+  target.focus();
+  return document.activeElement === target;
+}
+
+function _requestLoadedMediaFocus() {
+  _pendingLoadedMediaFocus = true;
+  if (_tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
+}
+
+function _settleLoadedMediaFocus() {
+  if (_pendingLoadedMediaFocus && _tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -3017,6 +3036,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   if (emptyEl) emptyEl.style.display = 'none';
   pane.classList.add('has-preview');
   _syncPreviewControlAvailability();
+  _settleLoadedMediaFocus();
 }
 
 // ─── Canvas-based Video Preview ──────────────────────────────────────────────
@@ -3258,6 +3278,7 @@ async function renderLivePreview() {
     pane.classList.add('has-preview');
     pane.classList.add('has-video');
     _syncPreviewControlAvailability();
+    _settleLoadedMediaFocus();
     _startVideoCanvasPreview(item);
     return;
   }
@@ -3507,7 +3528,7 @@ function updateUI() {
   if (fileInput) {
     fileInput.tabIndex = hasItems ? -1 : 0;
     if (hasItems && document.activeElement === fileInput) {
-      _getLoadedMediaFocusTarget()?.focus();
+      _requestLoadedMediaFocus();
     }
   }
   const exifWrap = document.getElementById('previewExifWrap');
@@ -3541,6 +3562,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
+    _pendingLoadedMediaFocus = false;
     _disposeLiveVideoSource();
     const dropZone = document.getElementById('dropZone');
     if (dropZone) {
@@ -3761,7 +3783,7 @@ function setupDropZone() {
       await addFiles(fileInput.files);
       fileInput.value = '';
       if (fileInput === mobileInput && state.items.length > previousCount) {
-        _getLoadedMediaFocusTarget()?.focus();
+        _requestLoadedMediaFocus();
       }
     });
   });
