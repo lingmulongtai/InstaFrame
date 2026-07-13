@@ -868,6 +868,40 @@ test('video thumbnail decoding is limited to two active jobs', async ({ page }) 
   }))).toEqual({ peak: 2, completed: 6 });
 });
 
+test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__thumbnailExportOrder = { started: false, settled: false, encoderSawSettled: false };
+    window.FrameEngine.captureVideoFrame = (_file, _time, options) => new Promise((resolve, reject) => {
+      window.__thumbnailExportOrder.started = true;
+      options.signal.addEventListener('abort', () => {
+        queueMicrotask(() => {
+          window.__thumbnailExportOrder.settled = true;
+          reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+        });
+      }, { once: true });
+    });
+    window.FrameEngine.renderVideoFrameWhenReady = async () => {
+      window.__thumbnailExportOrder.encoderSawSettled = window.__thumbnailExportOrder.settled;
+      return new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' });
+    };
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'thumbnail-before-export.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.started)).toBe(true);
+
+  await page.locator('#generateAllBtn').click();
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__thumbnailExportOrder)).toEqual({
+    started: true,
+    settled: true,
+    encoderSawSettled: true,
+  });
+});
+
 test('an unsupported video thumbnail is decoded only once before reporting an error', async ({ page }) => {
   await page.evaluate(() => {
     window.__thumbnailDecodeAttempts = 0;

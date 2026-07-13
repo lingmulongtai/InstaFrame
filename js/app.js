@@ -858,6 +858,7 @@ async function _addFiles(files) {
       canvas:    null,
       videoBlob: null,
       thumbnailController: video ? new AbortController() : null,
+      thumbnailPromise: null,
       exportController: null,
       exportRunToken: null,
       progress:  0,
@@ -897,7 +898,7 @@ async function _addFiles(files) {
         showToast(item.errorMsg, 'error');
         thumbnailController.abort();
       }, VIDEO_THUMBNAIL_GUARD_MS);
-      _queueVideoThumbnail(item, async () => {
+      const thumbnailPromise = _queueVideoThumbnail(item, async () => {
         const thumbnailSignal = item.thumbnailController.signal;
         const img = await FrameEngine.captureVideoFrame(file, 0, { signal: thumbnailSignal });
         let framed = null;
@@ -946,7 +947,9 @@ async function _addFiles(files) {
         .finally(() => {
           clearTimeout(thumbnailGuard);
           if (item.thumbnailController === thumbnailController) item.thumbnailController = null;
+          if (item.thumbnailPromise === thumbnailPromise) item.thumbnailPromise = null;
         });
+      item.thumbnailPromise = thumbnailPromise;
     }
   }
 
@@ -1037,6 +1040,15 @@ function _isCurrentItemExport(item, runToken, signal) {
   return !signal.aborted && item.exportRunToken === runToken && state.items.includes(item);
 }
 
+async function _releaseItemThumbnailBeforeExport(item, signal) {
+  const thumbnailPromise = item.thumbnailPromise;
+  if (!thumbnailPromise) return;
+  item.thumbnailController?.abort();
+  _cancelQueuedVideoThumbnail(item);
+  await thumbnailPromise;
+  if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+}
+
 async function generateItem(item, onExternalProgress = null, parentSignal = null) {
   if (item.exportController || !state.items.includes(item)) return false;
   const controller = new AbortController();
@@ -1054,6 +1066,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
 
   try {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+    await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) throw new Error(t('msgVideoExportUnavailable'));
