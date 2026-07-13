@@ -3050,10 +3050,10 @@ function renderItem(item) {
   const thumbSrc = item.isVideo ? '' : URL.createObjectURL(item.file);
 
   card.innerHTML = `
-    <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}">
+    <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}" aria-describedby="status-badge-${item.id}">
       ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
       <img class="thumb-orig" src="${thumbSrc}" alt="">
-      <div class="card-status" id="status-badge-${item.id}" role="status" aria-live="polite" aria-atomic="true">
+      <div class="card-status" id="status-badge-${item.id}">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
       </div>
