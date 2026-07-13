@@ -1471,6 +1471,40 @@ test('aggregate source bytes reject only files beyond the 512 MiB workspace limi
   await expect(page.locator('#toast')).toContainText(/1/);
 });
 
+test('unsupported media is rejected visibly without hiding accepted files', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'notes.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7 unsupported media fixture'),
+  });
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#toast')).toContainText(/1 file.*unsupported media type/i);
+
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    await window.addFiles([
+      new File(['plain text'], 'notes.txt', { type: 'text/plain' }),
+      new File([bytes], 'accepted.jpg', { type: 'image/jpeg' }),
+    ]);
+  }, jpegBase64);
+
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  await expect(page.locator('#toast')).toContainText(/1 file.*unsupported media type/i);
+
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'notes.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7 unsupported media fixture'),
+  });
+  await expect(page.locator('#toast')).toContainText(/未対応.*1件/);
+});
+
 test('decoded photos above 60 megapixels fail before entering preview caches', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(async base64 => {
