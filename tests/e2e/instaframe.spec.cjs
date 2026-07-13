@@ -1916,11 +1916,33 @@ test('Japanese preview quality labels change raster density without moving compo
   expect(max.cssHeight).toBeCloseTo(draft.cssHeight, 0);
   expect(max.backingWidth).toBeGreaterThan(draft.backingWidth);
 
+  await page.evaluate(() => window.setPreviewZoom(8));
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewBackingScale))).toBeGreaterThanOrEqual(7.9);
+});
+
+test('zoom controls keep the same visual rate at low and high magnification', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => window.setPreviewZoom(1));
+  await page.locator('#zoomInBtn').click();
+  await expect(page.locator('#zoomLabel')).toHaveText('120%');
+
+  await page.evaluate(() => window.setPreviewZoom(6));
+  await page.locator('#zoomInBtn').click();
+  await expect(page.locator('#zoomLabel')).toHaveText('720%');
+
+  await page.evaluate(() => window.setPreviewZoom(1));
+  await page.locator('#dropZone').dispatchEvent('wheel', { deltaY: -100 });
+  await expect(page.locator('#zoomLabel')).toHaveText('112%');
+  await page.evaluate(() => window.setPreviewZoom(6));
+  await page.locator('#dropZone').dispatchEvent('wheel', { deltaY: -100 });
+  await expect(page.locator('#zoomLabel')).toHaveText('672%');
+
   await page.locator('#zoomRange').evaluate(element => {
-    element.value = '800';
+    element.value = '625';
     element.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewBackingScale))).toBeGreaterThanOrEqual(7.9);
+  await expect(page.locator('#zoomLabel')).toHaveText('245%');
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuetext', '245%');
 });
 
 test('large preview downscaling stays lossless and avoids a JPEG round-trip', async ({ page }) => {
