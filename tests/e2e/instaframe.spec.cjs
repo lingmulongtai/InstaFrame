@@ -445,10 +445,13 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
 
   await uploadJpegs(page);
   await expect(page.locator('#preview-1')).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('.preview-exif-drawer-header').press('Enter');
+  const exifToggle = page.locator('.preview-exif-drawer-header');
+  await expect(exifToggle).toHaveJSProperty('tagName', 'BUTTON');
+  await exifToggle.click();
   await expect(page.locator('#previewExifContent')).toHaveAttribute('aria-hidden', 'true');
   expect(await page.locator('#previewExifContent').evaluate(element => element.inert)).toBe(true);
-  await page.locator('.preview-exif-drawer-header').press('Enter');
+  await exifToggle.press('Enter');
+  await expect(page.locator('#previewExifContent')).toHaveAttribute('aria-hidden', 'false');
 
   await page.locator('#previewQualityBtn').press('Enter');
   await expect(page.locator('#previewQualityBtn')).toHaveAttribute('aria-expanded', 'true');

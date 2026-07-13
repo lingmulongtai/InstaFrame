@@ -1388,7 +1388,13 @@ input[type="range"]:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   padding: 10px 12px 8px;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
