@@ -197,6 +197,7 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await uploadJpegs(page);
   await page.locator('#generateAllBtn').click();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
   await page.evaluate(() => window.triggerDownload(new Blob(['download']), 'resource-check.txt'));
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBeGreaterThan(0);
 
@@ -204,6 +205,8 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
   await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
+  await expect(page.locator('#preview-1 img.thumb-orig')).toBeVisible();
 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect(page.locator('#livePreviewCanvas')).toBeVisible();
