@@ -916,6 +916,15 @@ const FrameEngine = (() => {
       let frameCallbackId = null;
       let settled = false;
       let finalizing = false;
+      let backpressurePauseGeneration = 0;
+
+      const playVideo = () => {
+        const pauseGeneration = backpressurePauseGeneration;
+        return video.play().catch(error => {
+          if (error?.name === 'AbortError' && backpressurePauseGeneration !== pauseGeneration) return;
+          throw error;
+        });
+      };
 
       const cleanup = () => {
         signal?.removeEventListener('abort', abort);
@@ -1045,6 +1054,7 @@ const FrameEngine = (() => {
               let resumeAfterDrain = false;
               if ((Number(encoder.encodeQueueSize) || 0) >= MAX_PENDING_VIDEO_ENCODES) {
                 resumeAfterDrain = !video.ended;
+                backpressurePauseGeneration += 1;
                 video.pause();
                 await encoder.flush();
                 if (settled || finalizing) return;
@@ -1063,7 +1073,7 @@ const FrameEngine = (() => {
               if (settled || finalizing) return;
 
               if (!video.ended) {
-                if (resumeAfterDrain && video.paused) await video.play();
+                if (resumeAfterDrain && video.paused) await playVideo();
                 if (settled || finalizing) return;
                 frameCallbackId = video.requestVideoFrameCallback(onFrame);
               } else {
@@ -1077,7 +1087,7 @@ const FrameEngine = (() => {
           video.onended = finalize;
           video.playbackRate = 16;
           frameCallbackId = video.requestVideoFrameCallback(onFrame);
-          video.play().catch(fail);
+          playVideo().catch(fail);
         } catch (error) {
           fail(error);
         }
