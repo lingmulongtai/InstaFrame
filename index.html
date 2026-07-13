@@ -781,7 +781,7 @@
       <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView">Reset view</button>
       <!-- Video playback bar (bottom center, shown only when a video is being previewed) -->
       <div class="preview-video-bar" id="previewVideoBar">
-        <button class="video-ctrl-btn" id="videoPlayPauseBtn" data-i18n="videoPlayPause" data-i18n-attr="aria-label">
+        <button class="video-ctrl-btn" id="videoPlayPauseBtn" data-i18n="videoPlay" data-i18n-attr="title,aria-label" title="Play video">
           <svg id="videoPlayIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M3 2.5l10 5.5-10 5.5V2.5z"/></svg>
           <svg id="videoPauseIcon" class="video-icon-hidden" viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
         </button>
@@ -792,7 +792,7 @@
         <span class="video-time-label" id="videoDuration">0:00</span>
         <!-- Volume control -->
         <div class="video-volume-wrap">
-          <button class="video-ctrl-btn video-mute-btn" id="videoMuteBtn" data-i18n="videoMute" data-i18n-attr="title,aria-label" title="Mute or unmute video">
+          <button class="video-ctrl-btn video-mute-btn" id="videoMuteBtn" data-i18n="videoMute" data-i18n-attr="title,aria-label" title="Mute video">
             <svg id="videoVolIcon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
               <path d="M8 2.5L4.5 5.5H2v5h2.5L8 13.5V2.5z"/>
               <path d="M10.5 5a4 4 0 0 1 0 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>

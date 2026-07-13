@@ -1834,6 +1834,55 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   }))).toEqual({ hasSource: false, hasObjectUrl: false, hasSourceId: false, paused: true });
 });
 
+test('video controls announce their current action and restore audible volume', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'controls.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#previewVideoBar')).toBeVisible();
+  const playPause = page.locator('#videoPlayPauseBtn');
+  const mute = page.locator('#videoMuteBtn');
+  const volume = page.locator('#videoVolumeRange');
+  await expect(playPause).toHaveAccessibleName(/play|再生/i);
+  await expect(mute).toHaveAccessibleName(/mute|ミュート/i);
+
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    window.__previewPaused = false;
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => window.__previewPaused,
+    });
+    Object.defineProperty(video, 'ended', { configurable: true, get: () => false });
+    video.dispatchEvent(new Event('play'));
+  });
+  await expect(playPause).toHaveAccessibleName(/pause|一時停止/i);
+  await page.evaluate(() => {
+    window.__previewPaused = true;
+    document.getElementById('livePreviewVideo').dispatchEvent(new Event('pause'));
+  });
+  await expect(playPause).toHaveAccessibleName(/play|再生/i);
+
+  await volume.fill('0.4');
+  await volume.fill('0');
+  await expect(mute).toHaveAccessibleName(/unmute|解除/i);
+  await mute.click();
+  expect(await page.locator('#livePreviewVideo').evaluate(video => ({
+    muted: video.muted,
+    volume: video.volume,
+  }))).toEqual({ muted: false, volume: 0.4 });
+  await expect(mute).toHaveAccessibleName(/mute|ミュート/i);
+
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    video.muted = true;
+    video.dispatchEvent(new Event('volumechange'));
+  });
+  await page.locator('#langToggleBtn').click();
+  await expect(mute).toHaveAccessibleName('Unmute video');
+});
+
 test('photo card and preview Blob URLs remain bounded across language refresh and removal', async ({ page }) => {
   await page.addInitScript(() => {
     const create = URL.createObjectURL.bind(URL);
