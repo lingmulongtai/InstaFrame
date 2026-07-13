@@ -12,6 +12,7 @@ const FrameEngine = (() => {
   const IMAGE_LOAD_GUARD_MS = 15_000;
   const VIDEO_METADATA_GUARD_MS = 15_000;
   const VIDEO_PROGRESS_GUARD_MS = 60_000;
+  const VIDEO_RECORDER_FLUSH_DELAY_MS = 120;
   let textBackgroundSampler = null;
 
   function resourceLimitError() {
@@ -1322,17 +1323,27 @@ const FrameEngine = (() => {
         );
       };
 
+      const armFinalizationWatchdog = () => {
+        if (progressTimer != null) clearTimeout(progressTimer);
+        progressTimer = setTimeout(
+          () => fail(mediaTimeoutError('recorder finalization')),
+          VIDEO_RECORDER_FLUSH_DELAY_MS +
+            resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS)
+        );
+      };
+
       const stopRecorderAfterFlush = () => {
         if (settled || stopTimer != null) return;
         if (rafId != null) {
           cancelAnimationFrame(rafId);
           rafId = null;
         }
+        armFinalizationWatchdog();
         stopTimer = setTimeout(() => {
           stopTimer = null;
           if (settled || !recorder || recorder.state === 'inactive') return;
           try { recorder.stop(); } catch (error) { fail(error); }
-        }, 120);
+        }, VIDEO_RECORDER_FLUSH_DELAY_MS);
       };
 
       video.onloadedmetadata = () => {
@@ -1431,8 +1442,6 @@ const FrameEngine = (() => {
           fail(event.error || new Error('Video recording failed'));
         };
         video.onended = () => {
-          if (progressTimer != null) clearTimeout(progressTimer);
-          progressTimer = null;
           stopRecorderAfterFlush();
         };
 
