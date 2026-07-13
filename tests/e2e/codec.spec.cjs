@@ -19,6 +19,14 @@ const mediaFixtures = [
     buffer: fs.readFileSync(path.resolve(__dirname, 'codec-fixture.mov')),
     allowedErrorProjects: new Set(['webkit']),
   },
+  {
+    label: 'H.264/AAC M4V',
+    name: 'cross-browser.m4v',
+    mimeType: 'video/x-m4v',
+    majorBrand: 'isom',
+    buffer: fs.readFileSync(path.resolve(__dirname, 'codec-fixture.mp4')),
+    allowedErrorProjects: new Set(['webkit']),
+  },
 ];
 
 test.beforeEach(async ({ page }) => {
