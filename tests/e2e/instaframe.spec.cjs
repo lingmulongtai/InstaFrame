@@ -343,6 +343,37 @@ test('photo card decoders stay bounded during a large import', async ({ page }) 
   expect(await page.evaluate(() => window.__maxPhotoThumbnailDecoders)).toBe(2);
 });
 
+test('live EXIF edits do not cancel an independent photo card thumbnail', async ({ page }) => {
+  await page.evaluate(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__exifThumbnailReleases = [];
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          window.__exifThumbnailReleases.push(() => {
+            delete this.complete;
+            descriptor.set.call(this, value);
+          });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+  await uploadJpegs(page);
+  await expect.poll(() => page.evaluate(() => window.__exifThumbnailReleases.length)).toBe(1);
+
+  await page.locator('#live-exif-make').fill('Edited Camera');
+  await page.waitForTimeout(150);
+  await page.evaluate(() => window.__exifThumbnailReleases[0]());
+
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
+  await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
+});
+
 test('failed photo thumbnail compaction releases its decoded image and canvas', async ({ page }) => {
   await page.evaluate(() => {
     const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;

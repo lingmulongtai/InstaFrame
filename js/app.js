@@ -923,6 +923,13 @@ function _cancelQueuedPhotoThumbnail(item) {
   }
 }
 
+function _cancelPhotoThumbnail(item) {
+  if (!item) return;
+  item.photoThumbnailController?.abort();
+  _cancelQueuedPhotoThumbnail(item);
+  item.photoThumbnailController = null;
+}
+
 function _drainVideoThumbnailQueue() {
   while (_activeVideoThumbnails < MAX_ACTIVE_VIDEO_THUMBNAILS && _videoThumbnailQueue.length) {
     const entry = _videoThumbnailQueue.shift();
@@ -1231,6 +1238,7 @@ async function removeItem(id, options = {}) {
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) {
+    _cancelPhotoThumbnail(state.items[idx]);
     _releaseItemOutput(state.items[idx]);
     state.items.splice(idx, 1);
   }
@@ -1267,7 +1275,10 @@ async function clearAllItems(skipConfirm = false) {
   if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
-  state.items.forEach(_releaseItemOutput);
+  state.items.forEach(item => {
+    _cancelPhotoThumbnail(item);
+    _releaseItemOutput(item);
+  });
   state.items = [];
   state.selectedItemId = null;
   const grid = document.getElementById('imageGrid');
@@ -3243,9 +3254,6 @@ function _releaseItemOutput(item) {
   item.thumbnailController?.abort();
   _cancelQueuedVideoThumbnail(item);
   item.thumbnailController = null;
-  item.photoThumbnailController?.abort();
-  _cancelQueuedPhotoThumbnail(item);
-  item.photoThumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
   item.videoBlob = null;
@@ -5423,6 +5431,7 @@ function _releasePageResources() {
     const outputWasActive = item.status === 'done' || item.status === 'processing';
     if (item.isVideo && item.thumbnailPromise) item.thumbnailNeedsRestart = true;
     if (!item.isVideo && item.photoThumbnailPromise) item.photoThumbnailNeedsRestart = true;
+    _cancelPhotoThumbnail(item);
     _releaseItemOutput(item);
     if (outputWasActive) {
       item.status = 'pending';
