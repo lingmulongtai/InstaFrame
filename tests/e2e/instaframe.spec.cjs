@@ -457,6 +457,38 @@ test('pagehide commits a pending live EXIF edit before releasing preview resourc
   await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
 });
 
+test('page suspension pauses an import after metadata until the page is restored', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    window.__suspendedImportMetadataStarted = false;
+    window.exifr = {
+      parse: () => new Promise(resolve => {
+        window.__suspendedImportMetadataStarted = true;
+        window.__releaseSuspendedImportMetadata = resolve;
+      }),
+    };
+    window.__suspendedImport = window.addFiles([
+      new File([bytes], 'suspended-import.jpg', { type: 'image/jpeg' }),
+    ]);
+  }, jpegBase64);
+  await expect.poll(() => page.evaluate(() => window.__suspendedImportMetadataStarted)).toBe(true);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    window.__releaseSuspendedImportMetadata({ Make: 'RESTORED IMPORT' });
+  });
+  await page.waitForTimeout(300);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#livePreviewCanvas')).toHaveJSProperty('width', 0);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await page.evaluate(() => window.__suspendedImport);
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  await expect(page.locator('#live-exif-make')).toHaveValue('RESTORED IMPORT');
+  await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
+});
+
 test('BFCache restore restarts a pending photo card thumbnail', async ({ page }) => {
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');

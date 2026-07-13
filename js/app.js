@@ -91,6 +91,8 @@ const _locationFetchControllers = new Set();
 let _importQueueTail = Promise.resolve();
 let _reservedImportItems = 0;
 let _reservedImportBytes = 0;
+let _pageResourcesReleased = false;
+const _pageRestoreWaiters = new Set();
 const APP_ASSET_VERSION = (() => {
   try {
     return new URL(document.currentScript?.src || '', document.baseURI).searchParams.get('v') || '';
@@ -1148,6 +1150,12 @@ function _releaseImportReservation(reservation) {
   reservation.remainingBytes = 0;
 }
 
+async function _waitForPageResourcesRestore() {
+  while (_pageResourcesReleased) {
+    await new Promise(resolve => _pageRestoreWaiters.add(resolve));
+  }
+}
+
 function addFiles(files) {
   // Reserve aggregate capacity before queueing so repeated drops cannot retain
   // batches that are already known to exceed the browser-safe limits.
@@ -1180,6 +1188,10 @@ async function _addFiles(accepted, reservation) {
   for (const file of accepted) {
     const video = isVideoFile(file);
     const exif  = video ? await readVideoMetadata(file) : await readExif(file);
+    // Metadata decoders are not uniformly abortable. If they finish after
+    // pagehide, retain the queued File but do not create DOM, Blob URLs, or
+    // Canvas resources until pageshow restores the workspace.
+    await _waitForPageResourcesRestore();
     const item  = {
       id: ++itemIdCounter,
       file,
@@ -2952,6 +2964,14 @@ function _waitForPreviewResource(promise, signal) {
 }
 
 function scheduleLivePreview() {
+  if (_pageResourcesReleased) {
+    clearTimeout(_livePreviewTimer);
+    _livePreviewTimer = null;
+    _previewRenderController?.abort();
+    _previewRenderController = null;
+    _renderSeq += 1;
+    return;
+  }
   clearTimeout(_livePreviewTimer);
   _previewRenderController?.abort();
   _previewRenderController = null;
@@ -5415,6 +5435,7 @@ function setupCardSize() {
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 function _releasePageResources() {
+  _pageResourcesReleased = true;
   // Commit the user's last debounced EXIF keystroke before freezing the page.
   // applyLiveExifEdit schedules a preview render, which is cancelled below so
   // released Canvas and Blob resources cannot be recreated while suspended.
@@ -5463,6 +5484,10 @@ function _releasePageResources() {
 }
 
 function _restorePageResources() {
+  _pageResourcesReleased = false;
+  const restoreWaiters = [..._pageRestoreWaiters];
+  _pageRestoreWaiters.clear();
+  restoreWaiters.forEach(resolve => resolve());
   _exportCancelRequested = false;
   _activeExportController = null;
   setGlobalBusy(false);
