@@ -130,10 +130,13 @@ test('consent and map dialogs support axe, keyboard selection, Escape, and focus
 test('export progress exposes a named meter, cancel control, and focus restoration', async ({ page }) => {
   await uploadJpeg(page, 2);
   await page.evaluate(() => {
-    const render = window.FrameEngine.renderFrameWhenReady;
     window.FrameEngine.renderFrameWhenReady = async (...args) => {
-      await new Promise(resolve => setTimeout(resolve, 2_000));
-      return render(...args);
+      const signal = args[3]?.signal;
+      await new Promise((_, reject) => {
+        const abort = () => reject(new DOMException('Export cancelled', 'AbortError'));
+        if (signal?.aborted) { abort(); return; }
+        signal?.addEventListener('abort', abort, { once: true });
+      });
     };
   });
   await page.locator('#generateAllBtn').focus();
