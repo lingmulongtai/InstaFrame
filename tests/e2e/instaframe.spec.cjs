@@ -1361,6 +1361,35 @@ test('removal invalidates an in-flight preview before the next debounced render'
   }))).toEqual({ staleWidth: 0, liveWidth: 0 });
 });
 
+test('superseded preview work receives an AbortSignal before the next render starts', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    window.__previewAbortObserved = false;
+    window.__previewRenderStarted = false;
+    let calls = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      calls += 1;
+      if (calls > 1) return render(...args);
+      const signal = args[3].signal;
+      window.__previewRenderStarted = true;
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          window.__previewAbortObserved = true;
+          reject(new DOMException('Preview cancelled', 'AbortError'));
+        }, { once: true });
+      });
+    };
+  });
+
+  await page.locator('label:has(input[name="frameColor"][value="#1a1a1a"])').click();
+  await expect.poll(() => page.evaluate(() => window.__previewRenderStarted)).toBe(true);
+  await page.locator('label:has(input[name="frameColor"][value="#9E9E9E"])').click();
+
+  await expect.poll(() => page.evaluate(() => window.__previewAbortObserved)).toBe(true);
+  await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+});
+
 test('custom delete confirmation supports cancel, Escape, focus, and clear all', async ({ page }) => {
   await uploadJpegs(page, 2);
   const firstRemove = page.locator('#item-1 [data-action="remove"]');
