@@ -3902,15 +3902,14 @@ async function renderLivePreview() {
     applyPreviewTransform();
   } catch (error) {
     if (error?.name === 'AbortError' || signal.aborted || seq !== _renderSeq) return;
-    // Framing and optional map failures remain non-critical. A source image
-    // decode failure is different: the item cannot ever be previewed or
-    // exported, so keep the card and live preview in an explicit error state.
-    if (_imgFailed.has(item.id)) {
-      item.status = 'error';
+    // Framing, optional map, and isolated live-decoder failures remain
+    // non-critical because a fresh export decode may recover. Surface only a
+    // failure already confirmed by the independent card decoder, or a hard
+    // resource limit that cannot recover on retry.
+    if (_imgFailed.has(item.id) && (item.status === 'error' || error?.code === 'MEDIA_RESOURCE_LIMIT')) {
       if (error?.code === 'MEDIA_RESOURCE_LIMIT') {
+        item.status = 'error';
         _setLocalizedItemError(item, 'msgMediaResourceLimit');
-      } else if (!item.errorMsg) {
-        _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
       }
       updateItemStatus(item);
       _setLivePreviewError(_getItemErrorMessage(item));
