@@ -507,6 +507,23 @@ test('modal background stays inert and focus remains in the dialog across respon
   expect(await page.locator('#mobileTabBar').evaluate(element => element.inert)).toBe(false);
 });
 
+test('modal focus return activates its hidden mobile workspace panel', async ({ page }) => {
+  await page.locator('#customizeBtn').click();
+  const managePrivacy = page.locator('#manageLocationPrivacyBtn');
+  await managePrivacy.click();
+  await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#settingsPanel')).toBeHidden();
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#locationPrivacyModal')).not.toHaveClass(/open/);
+  await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#settingsPanel')).toBeVisible();
+  await expect(managePrivacy).toBeFocused();
+});
+
 test('dynamic panels and selectors expose keyboard state without hidden focus targets', async ({ page }) => {
   const customize = page.locator('#customizePanel');
   await expect(customize).toHaveAttribute('aria-hidden', 'true');
