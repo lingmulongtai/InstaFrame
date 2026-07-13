@@ -50,6 +50,37 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('browser contract runs against the allowlisted release artifact', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const localAssets = [...document.querySelectorAll('link[href], script[src]')]
+      .map(element => new URL(element.href || element.src, location.href))
+      .filter(url => url.origin === location.origin);
+    const assetStatuses = await Promise.all(localAssets.map(async url => ({
+      path: url.pathname,
+      status: (await fetch(url)).status,
+    })));
+    const revisions = [...new Set(localAssets.map(url => url.searchParams.get('v')))];
+    const sensitiveStatuses = await Promise.all([
+      '/package.json',
+      '/.git/config',
+      '/tests/e2e/instaframe.spec.cjs',
+      '/.env',
+    ].map(async pathName => ({ path: pathName, status: (await fetch(pathName)).status })));
+    return { assetStatuses, revisions, sensitiveStatuses };
+  });
+
+  expect(result.assetStatuses.length).toBeGreaterThan(3);
+  expect(result.assetStatuses.every(asset => asset.status === 200)).toBe(true);
+  expect(result.revisions).toHaveLength(1);
+  expect(result.revisions[0]).toMatch(/^[a-f0-9]{12}$/);
+  expect(result.sensitiveStatuses).toEqual([
+    { path: '/package.json', status: 404 },
+    { path: '/.git/config', status: 404 },
+    { path: '/tests/e2e/instaframe.spec.cjs', status: 404 },
+    { path: '/.env', status: 404 },
+  ]);
+});
+
 test('self-hosted fonts and initial UI are accessible without Google requests', async ({ page }) => {
   const families = [
     'Inter', 'Montserrat', 'DM Sans', 'Lato', 'Poppins', 'Raleway', 'Nunito',
