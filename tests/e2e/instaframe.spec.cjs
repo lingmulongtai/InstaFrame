@@ -819,6 +819,23 @@ test('switching photos cannot discard a pending live EXIF edit', async ({ page }
   await expect(page.locator('#live-exif-make')).toHaveValue('FUJIFILM');
 });
 
+test('undo restores JPEG quality controls after a PNG history state', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('label[for="bg-blur"]').click();
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('label:has(#showExifInfo)').click();
+  await expect(page.locator('#photoQualityRow')).toBeHidden();
+  await expect(page.locator('#photoQualityRange')).toBeDisabled();
+
+  await page.locator('#undoEditBtn').click();
+  await page.locator('#undoEditBtn').click();
+
+  await expect(page.locator('#fmt-jpeg')).toBeChecked();
+  await expect(page.locator('#photoQualityRow')).toBeVisible();
+  await expect(page.locator('#photoQualityRow')).not.toHaveAttribute('hidden');
+  await expect(page.locator('#photoQualityRange')).toBeEnabled();
+});
+
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await uploadJpegs(page, 2);
   const downloadPromise = page.waitForEvent('download');
