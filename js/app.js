@@ -286,7 +286,16 @@ function _restoreModalTriggerFocus(target) {
   if (!target?.isConnected || typeof target.focus !== 'function') return;
   const restore = () => {
     if (!target.isConnected || document.querySelector('.map-modal.open')) return;
+    let fallbackTab = null;
+    const panel = target.closest?.('.mobile-tab-panel');
+    if (window.innerWidth <= 768 && panel && (panel.hidden || panel.inert)) {
+      const tabBar = document.getElementById('mobileTabBar');
+      fallbackTab = [...(tabBar?.querySelectorAll('.tab-btn') || [])]
+        .find(button => button.getAttribute('aria-controls') === panel.id) || null;
+      if (fallbackTab?.dataset.tab) _setMobileTabState(tabBar, fallbackTab.dataset.tab);
+    }
     target.focus();
+    if (document.activeElement !== target && fallbackTab?.getClientRects().length) fallbackTab.focus();
   };
   restore();
   if (document.activeElement !== target) requestAnimationFrame(restore);
