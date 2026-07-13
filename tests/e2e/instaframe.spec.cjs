@@ -2194,6 +2194,40 @@ test('live video preview keeps the requested ratio and padding after seeking', a
   await expect.poll(() => canvas.evaluate(element => element.width / element.height)).toBeCloseTo(expectedRatio, 2);
 });
 
+test('paused live video preview redraws only when its frame changes', async ({ page }) => {
+  await page.evaluate(() => {
+    const original = window.FrameEngine.drawVideoFrameSync;
+    window.__liveVideoDrawCount = 0;
+    window.FrameEngine.drawVideoFrameSync = (...args) => {
+      window.__liveVideoDrawCount += 1;
+      return original(...args);
+    };
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'paused-preview.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__liveVideoDrawCount)).toBeGreaterThan(0);
+
+  const pausedCount = await page.evaluate(async () => {
+    const video = document.getElementById('livePreviewVideo');
+    video.pause();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    return window.__liveVideoDrawCount;
+  });
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => window.__liveVideoDrawCount)).toBeLessThanOrEqual(pausedCount + 1);
+
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    video.loop = true;
+    return video.play();
+  });
+  await expect.poll(() => page.evaluate(() => window.__liveVideoDrawCount)).toBeGreaterThan(pausedCount + 2);
+  await page.locator('#livePreviewVideo').evaluate(video => video.pause());
+});
+
 test('social presets are labelled and enforce portrait composition', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
