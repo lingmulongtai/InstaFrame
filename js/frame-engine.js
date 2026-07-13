@@ -994,7 +994,32 @@ const FrameEngine = (() => {
    * @param {object}   [opts]
    * @param {function} [opts.onProgress]  called with 0..1 during encoding
    */
-  async function _fileHasAudioTrackHint(file) {
+  async function _readBlobBytesWithSignal(blob, signal) {
+    assertNotAborted(signal);
+    if (!signal) return new Uint8Array(await blob.arrayBuffer());
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal.removeEventListener('abort', abort);
+      const succeed = buffer => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(new Uint8Array(buffer));
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) { abort(); return; }
+      blob.arrayBuffer().then(succeed, fail);
+    });
+  }
+
+  async function _fileHasAudioTrackHint(file, signal) {
     const sampleSize = 1024 * 1024;
     const extension = String(file.name || '').split('.').pop().toLowerCase();
     const mime = String(file.type || '').toLowerCase();
@@ -1014,15 +1039,16 @@ const FrameEngine = (() => {
     };
 
     try {
-      const head = new Uint8Array(await file.slice(0, sampleSize).arrayBuffer());
+      const head = await _readBlobBytesWithSignal(file.slice(0, sampleSize), signal);
       const samples = [head];
       if (file.size > sampleSize) {
-        samples.push(new Uint8Array(await file.slice(Math.max(0, file.size - sampleSize)).arrayBuffer()));
+        samples.push(await _readBlobBytesWithSignal(file.slice(Math.max(0, file.size - sampleSize)), signal));
       }
       if (isWebM) return samples.some(bytes => contains(bytes, [0x83, 0x81, 0x02])); // EBML TrackType = audio
       if (isMp4) return samples.some(bytes => contains(bytes, [0x73, 0x6f, 0x75, 0x6e])); // MP4 handler "soun"
       return samples.some(bytes => contains(bytes, [0x61, 0x75, 0x64, 0x73])); // AVI stream "auds"
-    } catch (_) {
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       return null;
     }
   }
@@ -1056,7 +1082,7 @@ const FrameEngine = (() => {
     // Pre-load fonts (same as photo path)
     await loadFrameFonts(settings);
 
-    const sourceHasAudio = await _fileHasAudioTrackHint(file);
+    const sourceHasAudio = await _fileHasAudioTrackHint(file, signal);
 
     return new Promise((resolve, reject) => {
       const url   = URL.createObjectURL(file);

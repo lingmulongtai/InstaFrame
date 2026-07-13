@@ -903,6 +903,32 @@ test('WebCodecs output limits cannot be bypassed by MediaRecorder fallback', asy
   });
 });
 
+test('video cancellation interrupts a pending audio-track sample read', async ({ page }) => {
+  await page.evaluate(({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'audio-sniff-cancel.webm', { type: 'video/webm' });
+    const arrayBuffer = Blob.prototype.arrayBuffer;
+    window.__audioSniffStarted = false;
+    Blob.prototype.arrayBuffer = function () {
+      window.__audioSniffStarted = true;
+      return new Promise(() => {});
+    };
+    window.__audioSniffAbortController = new AbortController();
+    window.__audioSniffResult = { state: 'pending' };
+    window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+      preserveAudio: true,
+      signal: window.__audioSniffAbortController.signal,
+    }).then(
+      () => { window.__audioSniffResult = { state: 'resolved' }; },
+      error => { window.__audioSniffResult = { state: 'rejected', name: error.name }; }
+    ).finally(() => { Blob.prototype.arrayBuffer = arrayBuffer; });
+  }, { base64: createWebm().toString('base64') });
+
+  await expect.poll(() => page.evaluate(() => window.__audioSniffStarted)).toBe(true);
+  await page.evaluate(() => window.__audioSniffAbortController.abort());
+  await expect.poll(() => page.evaluate(() => window.__audioSniffResult)).toEqual({ state: 'rejected', name: 'AbortError' });
+});
+
 test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
   const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 4096, 2731);
   await page.locator('#fileInput').setInputFiles({
