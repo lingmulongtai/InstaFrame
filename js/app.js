@@ -1370,6 +1370,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   item.exportRunToken = runToken;
   const signal = controller.signal;
   let shouldUpdate = true;
+  let recoveredPreviewDecode = false;
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
@@ -1406,6 +1407,9 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       item.videoBlob = videoBlob;
     } else {
       const img = await FrameEngine.loadImage(item.file, { signal });
+      // A full export decode proves that a prior live-preview failure was
+      // transient. Let the selected item retry instead of remaining blacklisted.
+      recoveredPreviewDecode = _imgFailed.delete(item.id);
       if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       // Pre-fetch map overlay image if enabled and coordinates are available
       let mapOverlayImg = null;
@@ -1460,6 +1464,9 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     updateItemStatus(item);
     updateItemPreview(item);
     updateUI();
+    if (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id) {
+      scheduleLivePreview();
+    }
   }
   return shouldUpdate && item.status === 'done';
 }
