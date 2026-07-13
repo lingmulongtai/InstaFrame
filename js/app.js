@@ -1674,15 +1674,26 @@ function restoreSettings() {
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-function markDoneItemsPending() {
-  state.items.forEach(i => {
-    if (i.status === 'done') {
-      i.status = 'pending';
-      _releaseItemOutput(i);
-      updateItemStatus(i);
-      updateItemPreview(i);
-    }
+function markItemsPending(predicate = () => true) {
+  const affected = state.items.filter(item =>
+    predicate(item) && (item.status === 'done' || item.status === 'processing')
+  );
+  if (affected.length && _globalExportBusy && _activeExportController && !_activeExportController.signal.aborted) {
+    _exportCancelRequested = true;
+    _activeExportController.abort();
+  }
+  affected.forEach(item => {
+    item.status = 'pending';
+    item.progress = 0;
+    item.errorMsg = null;
+    _releaseItemOutput(item);
+    updateItemStatus(item);
+    updateItemPreview(item);
   });
+}
+
+function markDoneItemsPending() {
+  markItemsPending();
 }
 
 function applySettings() {
@@ -3356,13 +3367,7 @@ function onVideoExportSettingChange() {
   state.settings.exportVideoBitrate = vbr ? parseInt(vbr.value, 10) : 8;
   saveSettings();
   // Video format change requires re-encoding → mark video items as pending
-  state.items.forEach(i => {
-    if (i.isVideo && i.status === 'done') {
-      i.status    = 'pending';
-      _releaseItemOutput(i);
-      updateItemStatus(i);
-    }
-  });
+  markItemsPending(item => item.isVideo);
   updateUI();
 }
 

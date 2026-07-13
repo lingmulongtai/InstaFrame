@@ -1006,6 +1006,31 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
+test('changing frame settings aborts active work and invalidates the whole batch', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    window.__settingsChangeAbortObserved = false;
+    window.FrameEngine.renderFrameWhenReady = (_image, _exif, _settings, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        window.__settingsChangeAbortObserved = true;
+        reject(new DOMException('Export cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await page.locator('#thicknessRange').evaluate(input => {
+    input.value = '1.1';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__settingsChangeAbortObserved)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('.status-dot.pending')).toHaveCount(2);
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+});
+
 test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
