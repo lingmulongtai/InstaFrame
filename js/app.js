@@ -1785,6 +1785,14 @@ function _syncPhotoQualityAvailability(format) {
   });
 }
 
+function _findRadioByValue(name, value) {
+  return Array.from(document.getElementsByName(name)).find(control => (
+    control instanceof HTMLInputElement &&
+    control.type === 'radio' &&
+    control.value === String(value)
+  )) || null;
+}
+
 function restoreSettings() {
   let saved;
   try {
@@ -1809,7 +1817,7 @@ function restoreSettings() {
     } else {
       const standardColors = ['#ffffff', '#F0F0F0', '#9E9E9E', '#1a1a1a'];
       if (standardColors.includes(saved.frameColor)) {
-        const r = document.querySelector(`input[name="frameColor"][value="${saved.frameColor}"]`);
+        const r = _findRadioByValue('frameColor', saved.frameColor);
         if (r) r.checked = true;
       }
     }
@@ -1839,7 +1847,7 @@ function restoreSettings() {
   }
 
   if (saved.textColorMode) {
-    const mode = document.querySelector(`input[name="textColorMode"][value="${saved.textColorMode}"]`);
+    const mode = _findRadioByValue('textColorMode', saved.textColorMode);
     if (mode) mode.checked = true;
   }
   if (saved.textColor) {
@@ -1866,11 +1874,11 @@ function restoreSettings() {
 
   // Location position
   if (saved.locationPosition) {
-    const r = document.querySelector(`input[name="locationPos"][value="${saved.locationPosition}"]`);
+    const r = _findRadioByValue('locationPos', saved.locationPosition);
     if (r) r.checked = true;
   }
   if (saved.mapOverlayPosition) {
-    const r = document.querySelector(`input[name="mapOverlayPos"][value="${saved.mapOverlayPosition}"]`);
+    const r = _findRadioByValue('mapOverlayPos', saved.mapOverlayPosition);
     if (r) r.checked = true;
   }
   // Show/hide location position row and map overlay rows
@@ -1887,7 +1895,7 @@ function restoreSettings() {
 
   // Frame background mode
   if (saved.frameBackground) {
-    const r = document.querySelector(`input[name="frameBackground"][value="${saved.frameBackground}"]`);
+    const r = _findRadioByValue('frameBackground', saved.frameBackground);
     if (r) r.checked = true;
   }
   const isBlurBg = saved.frameBackground === 'blur';
@@ -1928,18 +1936,18 @@ function restoreSettings() {
   }
   // Aspect ratio
   if (saved.aspectRatio) {
-    const r = document.querySelector(`input[name="aspectRatio"][value="${saved.aspectRatio}"]`);
+    const r = _findRadioByValue('aspectRatio', saved.aspectRatio);
     if (r) r.checked = true;
   }
   if (saved.aspectOrientation) {
-    const r = document.querySelector(`input[name="aspectOrientation"][value="${saved.aspectOrientation}"]`);
+    const r = _findRadioByValue('aspectOrientation', saved.aspectOrientation);
     if (r) r.checked = true;
   }
 
   // ── Export settings ──────────────────────────────────────────────────────
   // Photo format
   if (saved.exportPhotoFormat) {
-    const r = document.querySelector(`input[name="exportPhotoFormat"][value="${saved.exportPhotoFormat}"]`);
+    const r = _findRadioByValue('exportPhotoFormat', saved.exportPhotoFormat);
     if (r) {
       r.checked = true;
       _syncPhotoQualityAvailability(saved.exportPhotoFormat);
@@ -1956,7 +1964,7 @@ function restoreSettings() {
   state.settings.exportVideoFormat = saved.exportVideoFormat || '';
   // Video bitrate
   if (saved.exportVideoBitrate != null) {
-    const r = document.querySelector(`input[name="exportVideoBitrate"][value="${saved.exportVideoBitrate}"]`);
+    const r = _findRadioByValue('exportVideoBitrate', saved.exportVideoBitrate);
     if (r) r.checked = true;
   }
 }
