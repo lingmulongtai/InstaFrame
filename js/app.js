@@ -5370,6 +5370,7 @@ function setupMainResize() {
 
   const getMinHeight = () => Math.max(120, parseFloat(getComputedStyle(preview).minHeight) || 0);
   const getMaxHeight = () => Math.max(getMinHeight(), window.innerHeight - 160);
+  let preferredHeight = preview.offsetHeight;
   const applyHeight = (value, persist = false) => {
     const minHeight = getMinHeight();
     const maxHeight = getMaxHeight();
@@ -5379,6 +5380,7 @@ function setupMainResize() {
     handle.setAttribute('aria-valuemax', String(Math.round(maxHeight)));
     handle.setAttribute('aria-valuenow', String(height));
     if (persist) {
+      preferredHeight = height;
       const nextPrefs = loadPrefs();
       nextPrefs.previewHeight = height + 'px';
       savePrefs(nextPrefs);
@@ -5388,7 +5390,11 @@ function setupMainResize() {
   };
 
   const prefs = loadPrefs();
-  applyHeight(prefs.previewHeight ? parseFloat(prefs.previewHeight) : preview.offsetHeight);
+  const savedHeight = parseFloat(prefs.previewHeight);
+  if (Number.isFinite(savedHeight)) preferredHeight = savedHeight;
+  applyHeight(preferredHeight);
+
+  window.addEventListener('resize', () => applyHeight(preferredHeight));
 
   let _resizing = false, _startY = 0, _startH = 0;
 
