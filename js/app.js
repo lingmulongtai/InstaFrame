@@ -3677,9 +3677,9 @@ function updateUI() {
   const clrBtn  = document.getElementById('clearAllBtn');
   const counter = document.getElementById('imageCounter');
 
-  if (genBtn)  genBtn.disabled  = !hasItems;
-  if (dlBtn)   dlBtn.disabled   = !hasItems;
-  if (clrBtn)  clrBtn.disabled  = !hasItems;
+  if (genBtn)  genBtn.disabled  = _globalExportBusy || !hasItems;
+  if (dlBtn)   dlBtn.disabled   = _globalExportBusy || !hasItems;
+  if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasItems;
   if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
 
   setVisible(document.getElementById('imageSection'), hasItems, 'flex');
@@ -3722,7 +3722,7 @@ function updateUI() {
   // Per-item download buttons: always enabled (auto-generate on click)
   state.items.forEach(item => {
     const dlBtn = document.getElementById(`dl-btn-${item.id}`);
-    if (dlBtn) dlBtn.disabled = (item.status === 'processing');
+    if (dlBtn) dlBtn.disabled = _globalExportBusy || item.status === 'processing';
   });
 }
 

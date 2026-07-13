@@ -811,6 +811,33 @@ test('batch encoding failure restores controls and reports the error', async ({ 
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
+test('single export keeps every export action locked through final encoding', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    window.__releaseSingleExport = null;
+    window.FrameEngine.canvasToBlob = () => new Promise(resolve => {
+      window.__releaseSingleExport = () => resolve(new Blob([
+        new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      ], { type: 'image/jpeg' }));
+    });
+  });
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseSingleExport)).toBe('function');
+
+  await expect(page.locator('#dl-btn-1')).toBeDisabled();
+  await expect(page.locator('#dl-btn-2')).toBeDisabled();
+  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#downloadAllBtn')).toBeDisabled();
+  await expect(page.locator('#clearAllBtn')).toBeDisabled();
+
+  await page.evaluate(() => window.__releaseSingleExport());
+  await downloadPromise;
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#dl-btn-2')).toBeEnabled();
+});
+
 test('heavy local processors load only when their features are used', async ({ page }) => {
   const loadedResources = () => page.evaluate(() => (
     performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname)
