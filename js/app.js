@@ -4925,11 +4925,15 @@ function setupMobileTabs() {
   let mobileLayoutActive = isMobile();
   let lastFocusedMobileTab = null;
   let lastFocusedResizeHandleTab = null;
+  let lastFocusedDesktopElement = null;
 
   document.addEventListener('focusin', event => {
     if (event.target?.id === 'sidebarResizeHandle') lastFocusedResizeHandleTab = 'settings';
     else if (event.target?.id === 'mainResizeHandle') lastFocusedResizeHandleTab = 'preview';
     else if (!isMobile()) lastFocusedResizeHandleTab = null;
+    if (!isMobile() && event.target?.closest?.('.mobile-tab-panel')) {
+      lastFocusedDesktopElement = event.target;
+    }
   });
 
   function switchTab(tab) {
@@ -5001,11 +5005,23 @@ function setupMobileTabs() {
     else {
       const activePanel = activeElement?.closest?.('.mobile-tab-panel');
       const focusedPanelTab = tabForPanel(activePanel);
+      const rememberedPanel = lastFocusedDesktopElement?.isConnected
+        ? lastFocusedDesktopElement.closest('.mobile-tab-panel')
+        : null;
+      const rememberedPanelTab = layoutChanged && !openModalContainsFocus
+        ? tabForPanel(rememberedPanel)
+        : null;
+      const restoreRememberedFocus = rememberedPanelTab
+        && !focusedPanelTab
+        && !focusedResizeHandleTab
+        && (!activeElement || activeElement === document.body || !activeElement.isConnected);
       const currentTab = document.body.getAttribute('data-mobile-tab');
-      const activeTab = focusedPanelTab || focusedResizeHandleTab || currentTab || 'preview';
+      const activeTab = focusedPanelTab || focusedResizeHandleTab || rememberedPanelTab || currentTab || 'preview';
       if (layoutChanged || !currentTab || (focusedPanelTab && focusedPanelTab !== currentTab)) {
         _setMobileTabState(tabBar, activeTab);
-        if ((focusedResizeHandleTab || hiddenResizeHandleFocused || (!activePanel && activeElement !== document.body))
+        if (restoreRememberedFocus && !openModalContainsFocus) {
+          lastFocusedDesktopElement.focus();
+        } else if ((focusedResizeHandleTab || hiddenResizeHandleFocused || (!activePanel && activeElement !== document.body))
           && !openModalContainsFocus) {
           tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
         }
