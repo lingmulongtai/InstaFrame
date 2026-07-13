@@ -138,6 +138,36 @@ test('translated dynamic controls and location icon radio state stay synchronize
   await expect(page.locator('.icon-pick-btn[data-icon="pin"]')).toHaveAttribute('aria-label', 'ピン');
 });
 
+test('language switching preserves card identity, selection, and video thumbnails', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles([
+    {
+      name: 'remove-before-language.jpg',
+      mimeType: 'image/jpeg',
+      buffer: createJpeg(),
+    },
+    {
+      name: 'selected-video.webm',
+      mimeType: 'video/webm',
+      buffer: createWebm(),
+    },
+  ]);
+
+  await expect(page.locator('#item-2 canvas.thumb-framed')).toBeVisible();
+  await page.locator('#preview-2').click();
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('#preview-2')).toHaveAttribute('aria-pressed', 'true');
+
+  await page.locator('#langToggleBtn').click();
+
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect(page.locator('#item-2 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#preview-2')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#preview-2')).toHaveAttribute('aria-label', /selected-video\.webm/);
+});
+
 test('share dialog supports axe, Escape, and focus return', async ({ page }) => {
   await page.locator('#shareAppBtn').focus();
   await page.locator('#shareAppBtn').press('Enter');
