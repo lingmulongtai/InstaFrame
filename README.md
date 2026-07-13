@@ -66,13 +66,13 @@
 - 動画サムネイルの同時デコードは最大2件、同一項目の生成処理は最大1件
 - MediaRecorderの実チャンクが512 MiBを超える前に録画を中断
 
-30項目を超える場合は上限内でも先に警告します。上限を超えたファイルは追加または生成せず、既に追加した項目は保持します。書き出しはキャンセルでき、削除・再編集・ページ離脱時にはCanvas、Blob URL、MediaStream、AudioContextを解放します。
+30項目を超える場合は上限内でも先に警告します。上限を超えたファイルは追加または生成せず、既に追加した項目は保持します。書き出しはキャンセルでき、削除・再編集・ページ離脱時にはCanvas、Blob URL、MediaStream、AudioContextを解放します。戻る/進むキャッシュから復帰した場合は、解放済みの生成結果を未処理へ戻してライブプレビューを再構築します。
 
 ## プレビュー画質の設計
 
 以前は画質ごとに元画像を600〜2400pxへ縮小してからフレームを再計算していたため、丸め誤差で文字位置が変化していました。現在は次の二層構造です。
 
-1. 構図、枠、文字座標を固定された5120pxの論理解像度で一度だけ計算
+1. 構図、枠、文字座標を固定された6144pxの論理解像度で一度だけ計算
 2. 下書き・標準・高画質・最高画質は、表示キャンバスのピクセル密度だけを変更
 3. Autoは通常表示でも最低2倍、ズーム時は倍率に合わせて最大12倍のバックバッファへ再描画
 4. プレビュー用の縮小画素はJPEGへ再圧縮せず、ロスレスなCanvasのままフレームへ渡す
@@ -97,7 +97,7 @@
 
 ## ローカル実行
 
-初回に `npm.cmd install` を実行してください。`index.html`を直接開くこともできますが、依存ライブラリの準備とブラウザのセキュリティ制限回避を兼ねた、同梱のローカルHTTPサーバーを推奨します。
+初回に `npm.cmd ci` を実行してください。`index.html`を直接開くこともできますが、依存ライブラリの準備とブラウザのセキュリティ制限回避を兼ねた、同梱のローカルHTTPサーバーを推奨します。
 
 ```powershell
 npm.cmd run serve
@@ -108,7 +108,7 @@ npm.cmd run serve
 ## 開発とテスト
 
 ```powershell
-npm.cmd install
+npm.cmd ci
 npm.cmd run prepare:vendor
 npx.cmd playwright install chromium
 npm.cmd test
@@ -129,8 +129,10 @@ npm.cmd test
 - 複数JPEGのZIP出力
 - 大量バッチのメモリ警告、入力・画素・Canvas・生成済み出力の安全上限、書き出しキャンセル
 - EXIF・ZIP・フォントが必要になるまで初回取得されないこと
-- 処理中エンコーダーへのAbortSignal伝播、動画プレビューとカードBlob URLの解放
-- 日本語画質UIと固定レイアウト
+- 処理中エンコーダーと写真エンコードへのAbortSignal伝播、動画プレビュー・カード・ダウンロードBlob URLの解放
+- 戻る/進むキャッシュを繰り返した場合のCanvas・Blob URL解放とプレビュー復帰
+- 日本語画質UI、6144px固定レイアウト、最大1200%のズーム追従バックバッファ
+- リサイズ境界のキーボード操作と、デスクトップ / モバイル遷移時のフォーカス維持
 - GPS読込時に同意前の位置情報通信がないこと
 - 外部ネットワークを遮断した状態での写真プレビュー・書き出し
 - 同意後の地図UIが自己ホストLeafletを読み、Leaflet CDNへ接続しないこと
@@ -181,6 +183,6 @@ InstaFrame/
 
 ## English summary
 
-InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating layout, so typography and composition remain stable.
+InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom.
 
 Run `npm install`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract. GitHub Pages deploys an allowlisted `dist/` artifact only.
