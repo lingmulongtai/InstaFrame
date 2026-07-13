@@ -746,7 +746,33 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
 //   canvas: HTMLCanvasElement | null,
 //   status: 'pending' | 'processing' | 'done' | 'error',
 //   errorMsg: string | null,
+//   errorKey: string | null,
+//   errorValues: object | null,
 // }
+
+function _setLocalizedItemError(item, key, values = {}) {
+  item.errorKey = key;
+  item.errorValues = { ...values };
+  item.errorMsg = tf(key, values);
+  return item.errorMsg;
+}
+
+function _setRawItemError(item, message) {
+  item.errorKey = null;
+  item.errorValues = null;
+  item.errorMsg = message || '';
+  return item.errorMsg;
+}
+
+function _clearItemError(item) {
+  item.errorKey = null;
+  item.errorValues = null;
+  item.errorMsg = null;
+}
+
+function _getItemErrorMessage(item) {
+  return item?.errorKey ? tf(item.errorKey, item.errorValues || {}) : (item?.errorMsg || '');
+}
 
 // ─── Font popularity ──────────────────────────────────────────────────────────
 const FONT_USAGE_KEY = 'instaframe_font_usage';
@@ -985,7 +1011,7 @@ function _startVideoThumbnail(item) {
     thumbnailGuard = setTimeout(() => {
       if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
       item.status = 'error';
-      item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
+      _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
       updateItemStatus(item);
       showToast(item.errorMsg, 'error');
       thumbnailController.abort();
@@ -1031,7 +1057,7 @@ function _startVideoThumbnail(item) {
       if (error?.name === 'AbortError') return;
       if (item.status === 'error' && item.errorMsg) return;
       item.status = 'error';
-      item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
+      _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
       updateItemStatus(item);
       showToast(item.errorMsg, 'error');
     })
@@ -1208,6 +1234,8 @@ async function _addFiles(accepted, reservation) {
       progress:  0,
       status:    'pending',
       errorMsg:  null,
+      errorKey:  null,
+      errorValues: null,
       isVideo:   video,
     };
     _consumeImportReservation(reservation, file);
@@ -1222,13 +1250,15 @@ async function _addFiles(accepted, reservation) {
       } catch (error) {
         if (error?.name === 'AbortError' && _pageResourcesReleased) {
           item.status = 'pending';
-          item.errorMsg = null;
+          _clearItemError(item);
           updateItemStatus(item);
         } else {
           item.status = 'error';
-          item.errorMsg = error?.code === 'MEDIA_RESOURCE_LIMIT'
-            ? t('msgMediaResourceLimit')
-            : tf('msgUnsupportedMedia', { name: file.name });
+          if (error?.code === 'MEDIA_RESOURCE_LIMIT') {
+            _setLocalizedItemError(item, 'msgMediaResourceLimit');
+          } else {
+            _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: file.name });
+          }
           updateItemStatus(item);
           showToast(item.errorMsg, 'error');
         }
@@ -1380,7 +1410,11 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
-      if (!mime) throw new Error(t('msgVideoExportUnavailable'));
+      if (!mime) {
+        const error = new Error(t('msgVideoExportUnavailable'));
+        error.code = 'VIDEO_EXPORT_UNAVAILABLE';
+        throw error;
+      }
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
       const maxOutputBytes = MAX_RETAINED_OUTPUT_BYTES - _retainedOutputBytes(item);
       if (maxOutputBytes <= 0) throw _mediaResourceLimitError();
@@ -1438,17 +1472,18 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
-    item.errorMsg = null;
+    _clearItemError(item);
   } catch (e) {
     const isCurrent = item.exportRunToken === runToken && state.items.includes(item);
     if (!isCurrent) shouldUpdate = false;
     const cancelled = e?.name === 'AbortError';
     if (isCurrent) {
-      item.status   = cancelled ? 'pending' : 'error';
-      item.errorMsg = cancelled ? null
-        : e?.code === 'MEDIA_RESOURCE_LIMIT' ? t('msgMediaResourceLimit')
-          : e?.code === 'IMAGE_DECODE_TIMEOUT' ? t('msgImageDecodeTimeout')
-            : e.message;
+      item.status = cancelled ? 'pending' : 'error';
+      if (cancelled) _clearItemError(item);
+      else if (e?.code === 'MEDIA_RESOURCE_LIMIT') _setLocalizedItemError(item, 'msgMediaResourceLimit');
+      else if (e?.code === 'IMAGE_DECODE_TIMEOUT') _setLocalizedItemError(item, 'msgImageDecodeTimeout');
+      else if (e?.code === 'VIDEO_EXPORT_UNAVAILABLE') _setLocalizedItemError(item, 'msgVideoExportUnavailable');
+      else _setRawItemError(item, e.message);
       if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
       if (onExternalProgress) onExternalProgress(1);
     }
@@ -2100,7 +2135,7 @@ function markItemsPending(predicate = () => true) {
   affected.forEach(item => {
     item.status = 'pending';
     item.progress = 0;
-    item.errorMsg = null;
+    _clearItemError(item);
     _releaseItemOutput(item);
     updateItemStatus(item);
     updateItemPreview(item);
@@ -2483,6 +2518,7 @@ function applyLiveExifEdit(item, nextExif) {
   syncCard('exif-location', item.exif.location);
 
   item.status = 'pending';
+  _clearItemError(item);
   _releaseItemOutput(item);
   _invalidateItemCache(item.id);
   updateItemStatus(item);
@@ -2517,6 +2553,7 @@ function _applyResolvedLocation(item, latitude, longitude, label) {
   const cardInput = document.getElementById(`exif-location-${item.id}`);
   if (cardInput) cardInput.value = item.exif.location;
   item.status = 'pending';
+  _clearItemError(item);
   _releaseItemOutput(item);
   _invalidateItemCache(item.id);
   updateItemStatus(item);
@@ -3517,9 +3554,8 @@ function _failLiveVideoPreview(itemId, generation) {
   _syncPreviewControlAvailability();
 
   if (!item) return;
-  const message = tf('msgUnsupportedMedia', { name: item.file.name });
   item.status = 'error';
-  item.errorMsg = message;
+  const message = _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
   updateItemStatus(item);
   _setLivePreviewError(message);
 }
@@ -3955,9 +3991,11 @@ function updateItemStatus(item) {
   const text = badge.querySelector('.status-text');
 
   dot.className = `status-dot ${item.status}`;
-  if (item.status === 'error' && item.errorMsg) {
-    badge.setAttribute('aria-label', item.errorMsg);
-    badge.title = item.errorMsg;
+  const errorMessage = item.status === 'error' ? _getItemErrorMessage(item) : '';
+  if (errorMessage) {
+    item.errorMsg = errorMessage;
+    badge.setAttribute('aria-label', errorMessage);
+    badge.title = errorMessage;
   } else {
     badge.removeAttribute('aria-label');
     badge.removeAttribute('title');
@@ -5025,6 +5063,11 @@ function rerenderCards() {
     updateItemStatus(item);
     if (item.status === 'done') updateItemPreview(item);
   });
+  const livePreviewError = document.getElementById('livePreviewError');
+  if (livePreviewError && !livePreviewError.hidden) {
+    const selectedItem = getSelectedPreviewItem();
+    if (selectedItem?.status === 'error') _setLivePreviewError(_getItemErrorMessage(selectedItem));
+  }
   updateUI();
 }
 
@@ -5483,7 +5526,7 @@ function _releasePageResources() {
     if (outputWasActive) {
       item.status = 'pending';
       item.progress = 0;
-      item.errorMsg = null;
+      _clearItemError(item);
       updateItemStatus(item);
     }
     updateItemPreview(item);
