@@ -889,6 +889,67 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
   expect(downloads).toBe(0);
 });
 
+test('single photo cancellation interrupts a pending canvas encode', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__singlePhotoEncodeStarted = false;
+    window.__pendingSinglePhotoEncodeCallback = null;
+    HTMLCanvasElement.prototype.toBlob = callback => {
+      window.__singlePhotoEncodeStarted = true;
+      window.__pendingSinglePhotoEncodeCallback = callback;
+    };
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#dl-btn-1').click();
+  await expect.poll(() => page.evaluate(() => window.__singlePhotoEncodeStarted)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await page.locator('#cancelExportBtn').click();
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  await expect(page.locator('#dl-btn-1')).toBeEnabled();
+  await page.evaluate(() => {
+    window.__pendingSinglePhotoEncodeCallback(new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+  });
+  await page.waitForTimeout(50);
+  expect(downloads).toBe(0);
+});
+
+test('removing a photo during its final encode discards the stale download', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__singlePhotoEncodeStarted = false;
+    window.__pendingSinglePhotoEncodeCallback = null;
+    HTMLCanvasElement.prototype.toBlob = callback => {
+      window.__singlePhotoEncodeStarted = true;
+      window.__pendingSinglePhotoEncodeCallback = callback;
+    };
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#dl-btn-1').click();
+  await expect.poll(() => page.evaluate(() => window.__singlePhotoEncodeStarted)).toBe(true);
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+
+  await page.evaluate(() => {
+    window.__pendingSinglePhotoEncodeCallback(new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+  });
+  await page.waitForTimeout(50);
+  expect(downloads).toBe(0);
+});
+
 test('batch generation reports failed items instead of announcing complete success', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

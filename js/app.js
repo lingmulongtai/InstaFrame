@@ -1159,22 +1159,42 @@ async function applyAndDownloadSingle(id) {
   const item = state.items.find(i => i.id === id);
   if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
 
-  if (item.status !== 'done') {
-    // Generate first
-    setGlobalBusy(true);
-    item.status    = 'pending';
-    _releaseItemOutput(item);
-    const controller = new AbortController();
-    _activeExportController = controller;
-    showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-    await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
+  _exportCancelRequested = false;
+  const controller = new AbortController();
+  const downloadRunToken = {};
+  _activeExportController = controller;
+  setGlobalBusy(true);
+  showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
+
+  try {
+    if (item.status !== 'done') {
+      // Generate first
+      item.status = 'pending';
+      _releaseItemOutput(item);
+      await generateItem(
+        item,
+        p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
+        controller.signal
+      );
+    }
+
+    if (!_exportCancelRequested && !controller.signal.aborted && item.status === 'done') {
+      item.exportController = controller;
+      item.exportRunToken = downloadRunToken;
+      showProgress(t('progressPreparing'), 1);
+      await downloadSingle(id, { signal: controller.signal, runToken: downloadRunToken });
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') showToast(t('msgExportFailed'), 'error');
+  } finally {
+    if (item.exportRunToken === downloadRunToken) {
+      item.exportController = null;
+      item.exportRunToken = null;
+    }
     setGlobalBusy(false);
     hideProgress();
     if (_activeExportController === controller) _activeExportController = null;
-  }
-
-  if (item.status === 'done') {
-    await downloadSingle(id);
+    _exportCancelRequested = false;
   }
 }
 
@@ -1194,22 +1214,22 @@ function _videoExt(blob) {
   return blob.type.includes('mp4') ? 'mp4' : 'webm';
 }
 
-async function downloadSingle(id) {
+async function downloadSingle(id, { signal = null, runToken = null } = {}) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
+  const isCurrent = () => !signal?.aborted && state.items.includes(item) &&
+    (!runToken || item.exportRunToken === runToken);
 
-  try {
-    if (item.isVideo && item.videoBlob) {
-      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
-      triggerDownload(item.videoBlob, name);
-    } else if (item.canvas) {
-      const opts = _photoExportOpts();
-      const blob = await FrameEngine.canvasToBlob(item.canvas, opts);
-      const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-      triggerDownload(blob, name);
-    }
-  } catch {
-    showToast(t('msgExportFailed'), 'error');
+  if (!isCurrent()) throw new DOMException('Export cancelled', 'AbortError');
+  if (item.isVideo && item.videoBlob) {
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
+    triggerDownload(item.videoBlob, name);
+  } else if (item.canvas) {
+    const opts = _photoExportOpts();
+    const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal });
+    if (!isCurrent()) throw new DOMException('Export cancelled', 'AbortError');
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
+    triggerDownload(blob, name);
   }
 }
 
