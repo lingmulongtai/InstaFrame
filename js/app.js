@@ -3550,6 +3550,15 @@ function _scheduleVideoCanvasPreviewFrame(video, callback, waitingForData = fals
     _videoPreviewFrameMode = null;
     callback(...args);
   };
+  // requestVideoFrameCallback is tied to frame presentation and is not
+  // guaranteed to fire for a newly loaded video that remains paused. Poll only
+  // the readiness phase so the first decoded frame appears deterministically;
+  // subsequent playback frames still use the decoded-frame callback below.
+  if (waitingForData) {
+    _videoPreviewFrameMode = 'timeout';
+    _videoPreviewFrameHandle = setTimeout(guardedCallback, 100);
+    return;
+  }
   if (!video._previewVideoFrameCallbacksUnavailable &&
       typeof video.requestVideoFrameCallback === 'function') {
     try {
@@ -3560,13 +3569,8 @@ function _scheduleVideoCanvasPreviewFrame(video, callback, waitingForData = fals
       video._previewVideoFrameCallbacksUnavailable = true;
     }
   }
-  if (waitingForData) {
-    _videoPreviewFrameMode = 'timeout';
-    _videoPreviewFrameHandle = setTimeout(guardedCallback, 100);
-  } else {
-    _videoPreviewFrameMode = 'animation';
-    _videoPreviewFrameHandle = requestAnimationFrame(guardedCallback);
-  }
+  _videoPreviewFrameMode = 'animation';
+  _videoPreviewFrameHandle = requestAnimationFrame(guardedCallback);
 }
 
 function _stopVideoCanvasPreview() {
