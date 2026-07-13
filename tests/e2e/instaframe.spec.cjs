@@ -2129,6 +2129,7 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   await expect(page.locator('#locationPrivacyModal')).toHaveClass(/open/);
   await page.locator('#locationPrivacyOnceBtn').click();
   await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
   expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.js'))).toBe(true);
   expect(requests.some(url => url.includes('/vendor/leaflet/leaflet.css'))).toBe(true);
   expect(requests.some(url => /cdn\.jsdelivr\.net.*leaflet|unpkg\.com.*leaflet/.test(url))).toBe(false);
@@ -2141,6 +2142,105 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   expect(await mapStatus.evaluate(element => element.closest('[aria-modal="true"]')?.id)).toBe('mapPickerModal');
   await page.keyboard.press('Tab');
   await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
+});
+
+test('map picker exposes accessible busy states and coalesces place-name lookup', async ({ page }) => {
+  let releaseLeaflet;
+  let markLeafletRequested;
+  const leafletRequested = new Promise(resolve => { markLeafletRequested = resolve; });
+  await page.route('**/vendor/leaflet/leaflet.js*', async route => {
+    markLeafletRequested();
+    await new Promise(resolve => { releaseLeaflet = resolve; });
+    await route.continue();
+  });
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = () => {};
+  });
+  await uploadJpegs(page);
+
+  const modal = page.locator('#mapPickerModal');
+  const mapContainer = page.locator('#mapPickerContainer');
+  const selectCenter = page.locator('#selectMapCenterBtn');
+  const confirm = page.locator('#confirmMapLocationBtn');
+  const close = page.locator('#mapPickerCloseBtn');
+
+  await page.locator('#openMapPickerBtn').click();
+  await leafletRequested;
+  await expect(modal).toHaveClass(/open/);
+  await expect(modal).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#mapPickerCoords')).toContainText(/loading map|マップを読み込んで/i);
+  await expect(selectCenter).toBeDisabled();
+  await expect(confirm).toBeDisabled();
+  await expect(close).toBeEnabled();
+  expect(await mapContainer.evaluate(element => ({
+    inert: element.inert,
+    ariaDisabled: element.getAttribute('aria-disabled'),
+  }))).toEqual({ inert: true, ariaDisabled: 'true' });
+  const loadingAxe = await new AxeBuilder({ page }).include('#mapPickerModal').analyze();
+  expect(loadingAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+
+  releaseLeaflet();
+  await expect(modal).toHaveAttribute('aria-busy', 'false');
+  await expect(selectCenter).toBeEnabled();
+  await expect(confirm).toBeEnabled();
+  expect(await mapContainer.evaluate(element => ({
+    inert: element.inert,
+    ariaDisabled: element.getAttribute('aria-disabled'),
+  }))).toEqual({ inert: false, ariaDisabled: 'false' });
+
+  await page.evaluate(() => {
+    const nativeFetch = window.fetch;
+    window.__mapLookupCalls = 0;
+    window.fetch = (input, options = {}) => {
+      if (String(input).startsWith('https://nominatim.openstreetmap.org/reverse')) {
+        window.__mapLookupCalls += 1;
+        if (window.__mapLookupCalls === 1) {
+          window.__mapLookupSignal = options.signal;
+          return new Promise((resolve, reject) => {
+            options.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Request cancelled', 'AbortError'));
+            }, { once: true });
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ address: { city: 'Kyoto', country: 'Japan' } }),
+        });
+      }
+      return nativeFetch(input, options);
+    };
+  });
+
+  await selectCenter.click();
+  await confirm.click();
+  await expect.poll(() => page.evaluate(() => window.__mapLookupCalls)).toBe(1);
+  await expect(modal).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#mapPickerCoords')).toContainText(/looking up place name|地名を検索/i);
+  await expect(selectCenter).toBeDisabled();
+  await expect(confirm).toBeDisabled();
+  const lookupAxe = await new AxeBuilder({ page }).include('#mapPickerModal').analyze();
+  expect(lookupAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
+  await page.evaluate(() => void window.confirmMapLocation());
+  expect(await page.evaluate(() => window.__mapLookupCalls)).toBe(1);
+
+  await close.click();
+  await expect(modal).not.toHaveClass(/open/);
+  await expect.poll(() => page.evaluate(() => window.__mapLookupSignal?.aborted)).toBe(true);
+  await expect(page.locator('#live-exif-location')).toHaveValue('');
+
+  await page.locator('#openMapPickerBtn').click();
+  await expect(modal).toHaveClass(/open/);
+  await expect(modal).toHaveAttribute('aria-busy', 'false');
+  await selectCenter.click();
+  await confirm.click();
+  await expect(modal).not.toHaveClass(/open/);
+  await expect(page.locator('#live-exif-location')).toHaveValue('Kyoto, Japan');
+  expect(await page.evaluate(() => window.__mapLookupCalls)).toBe(2);
 });
 
 test('closing the map picker aborts its IP fallback and releases the map', async ({ page }) => {

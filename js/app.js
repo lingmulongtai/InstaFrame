@@ -828,15 +828,25 @@ function gpsToDecimal(dms, ref) {
 }
 
 const _geocodeCache = {};
-async function reverseGeocode(lat, lon) {
-  if (!hasLocationNetworkConsent()) return null;
+async function reverseGeocode(lat, lon, { signal = null } = {}) {
+  if (!hasLocationNetworkConsent() || signal?.aborted) return null;
   const language = currentLang === 'ja' ? 'ja' : 'en';
   const key = `${language}:${lat.toFixed(3)},${lon.toFixed(3)}`;
   if (_geocodeCache[key]) return _geocodeCache[key];
-  const data = await _fetchLocationJson(
-    `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-    { headers: { 'Accept-Language': language } }
-  );
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  let data = null;
+  try {
+    data = await _fetchLocationJson(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+      { headers: { 'Accept-Language': language } },
+      controller
+    );
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
   if (!data) return null;
   const a = data.address || {};
   const city    = a.city || a.town || a.village || a.county || '';
@@ -2188,6 +2198,25 @@ let _mapPickerLon    = null;
 let _leafletLoadPromise = null;
 let _mapPickerLocationRequestId = 0;
 let _ipLocationController = null;
+let _mapPickerConfirmController = null;
+
+function _setMapPickerBusy(busy, statusKey = null) {
+  const modal = document.getElementById('mapPickerModal');
+  const container = document.getElementById('mapPickerContainer');
+  const selectCenter = document.getElementById('selectMapCenterBtn');
+  const confirm = document.getElementById('confirmMapLocationBtn');
+  modal?.setAttribute('aria-busy', String(busy));
+  if (container) {
+    container.inert = busy;
+    container.setAttribute('aria-disabled', String(busy));
+  }
+  if (selectCenter) selectCenter.disabled = busy;
+  if (confirm) confirm.disabled = busy;
+  if (statusKey) {
+    const status = document.getElementById('mapPickerCoords');
+    if (status) status.textContent = t(statusKey);
+  }
+}
 
 function _ensureLeafletStylesheet() {
   const hasLeafletCss = !!document.querySelector('link[href*="leaflet.css"]');
@@ -2242,13 +2271,12 @@ async function openMapPicker() {
     : document.getElementById('openMapPickerBtn');
   if (!await requestLocationNetworkConsent()) return;
   _setModalOpen(modal, true);
-  modal.setAttribute('aria-busy', 'true');
+  _setMapPickerBusy(true, 'mapLoading');
   modal._previousFocus = previousFocus;
   const locationRequestId = ++_mapPickerLocationRequestId;
   _mapPickerLat = null;
   _mapPickerLon = null;
   const coordsEl = document.getElementById('mapPickerCoords');
-  if (coordsEl) coordsEl.textContent = t('mapClickHint');
   document.getElementById('mapPickerCloseBtn')?.focus();
   const leafletReady = await ensureLeafletLoaded();
   if (locationRequestId !== _mapPickerLocationRequestId || !modal.classList.contains('open')) return;
@@ -2257,8 +2285,6 @@ async function openMapPicker() {
     showToast(t('msgMapLoadFailed'), 'error');
     return;
   }
-  modal.setAttribute('aria-busy', 'false');
-
   // Initialize Leaflet map in the next animation frame so the container
   // has a layout (width/height) before Leaflet tries to measure it.
   await new Promise(r => requestAnimationFrame(r));
@@ -2292,8 +2318,12 @@ async function openMapPicker() {
       _mapPickerMarker = L.marker([lat, lon]).addTo(_mapPickerMap);
     }
     if (coordsEl) coordsEl.textContent = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+    _setMapPickerBusy(false);
     return;
   }
+
+  if (coordsEl) coordsEl.textContent = t('mapClickHint');
+  _setMapPickerBusy(false);
 
   // Try browser geolocation first, then IP-based fallback. The browser API has
   // no cancellation primitive, so a generation id prevents late callbacks
@@ -2346,6 +2376,8 @@ function _releaseMapPickerResources() {
   _mapPickerLocationRequestId += 1;
   _ipLocationController?.abort();
   _ipLocationController = null;
+  _mapPickerConfirmController?.abort();
+  _mapPickerConfirmController = null;
   if (_mapPickerMap) _mapPickerMap.remove();
   _mapPickerMap = null;
   _mapPickerMarker = null;
@@ -2356,7 +2388,7 @@ function closeMapPicker() {
   const modal = document.getElementById('mapPickerModal');
   if (modal) {
     _setModalOpen(modal, false);
-    modal.setAttribute('aria-busy', 'false');
+    _setMapPickerBusy(false);
     const previousFocus = modal._previousFocus;
     modal._previousFocus = null;
     _restoreModalTriggerFocus(previousFocus);
@@ -2364,6 +2396,7 @@ function closeMapPicker() {
 }
 
 async function confirmMapLocation() {
+  if (_mapPickerConfirmController) return;
   if (_mapPickerLat == null || _mapPickerLon == null) {
     const coords = document.getElementById('mapPickerCoords');
     if (coords) {
@@ -2374,20 +2407,35 @@ async function confirmMapLocation() {
     return;
   }
   const lat = _mapPickerLat, lon = _mapPickerLon;
+  const modal = document.getElementById('mapPickerModal');
+  const locationRequestId = _mapPickerLocationRequestId;
+  const controller = new AbortController();
+  _mapPickerConfirmController = controller;
+  _setMapPickerBusy(true, 'mapLocationLookup');
+  try {
+    // Resolve location name via reverse geocoding. Closing the modal aborts the
+    // request and the generation check prevents a late response from updating
+    // a different item or a newly opened picker.
+    const name = await reverseGeocode(lat, lon, { signal: controller.signal });
+    if (controller.signal.aborted || locationRequestId !== _mapPickerLocationRequestId || !modal?.classList.contains('open')) return;
+    const locStr = name || InstaFrameCore.formatCoordinateLabel(lat, lon);
 
-  // Resolve location name via reverse geocoding
-  const name = await reverseGeocode(lat, lon);
-  const locStr = name || InstaFrameCore.formatCoordinateLabel(lat, lon);
+    // Update live EXIF panel input
+    const locInput = document.getElementById('live-exif-location');
+    if (locInput) locInput.value = locStr;
 
-  // Update live EXIF panel input
-  const locInput = document.getElementById('live-exif-location');
-  if (locInput) locInput.value = locStr;
+    // Store lat/lon on the current item's exif and apply
+    const item = getSelectedPreviewItem();
+    if (item) _applyResolvedLocation(item, lat, lon, locStr);
 
-  // Store lat/lon on the current item's exif and apply
-  const item = getSelectedPreviewItem();
-  if (item) _applyResolvedLocation(item, lat, lon, locStr);
-
-  closeMapPicker();
+    _mapPickerConfirmController = null;
+    closeMapPicker();
+  } finally {
+    if (_mapPickerConfirmController === controller) {
+      _mapPickerConfirmController = null;
+      if (modal?.classList.contains('open')) _setMapPickerBusy(false);
+    }
+  }
 }
 
 // ─── Share Modal ───────────────────────────────────────────────────────────────
