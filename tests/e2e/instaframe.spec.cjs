@@ -3097,6 +3097,14 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   expect(await mapStatus.evaluate(element => element.closest('[aria-modal="true"]')?.id)).toBe('mapPickerModal');
   await page.keyboard.press('Tab');
   await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
+
+  const mapSurface = page.getByRole('region', { name: /pick on map|マップで選択/i });
+  await expect(mapSurface).toHaveAccessibleDescription(/use the arrow keys|矢印キー/i);
+  await mapSurface.focus();
+  const mapPosition = await mapSurface.locator('.leaflet-map-pane').evaluate(element => element.style.transform);
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => mapSurface.locator('.leaflet-map-pane').evaluate(element => element.style.transform))
+    .not.toBe(mapPosition);
 });
 
 test('map picker exposes accessible busy states and coalesces place-name lookup', async ({ page }) => {

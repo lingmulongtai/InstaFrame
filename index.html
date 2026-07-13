@@ -945,7 +945,8 @@
       <button class="map-modal-close" id="mapPickerCloseBtn" data-i18n-attr="title,aria-label" data-i18n="close" title="Close">×</button>
     </div>
     <p id="mapPickerHelp" class="map-picker-help" data-i18n="mapKeyboardHelp">Use the arrow keys to move the map, then choose its center or click a point.</p>
-    <div id="mapPickerContainer" class="map-picker-container" tabindex="0"></div>
+    <div id="mapPickerContainer" class="map-picker-container" tabindex="0" role="region"
+         aria-labelledby="mapPickerModalTitle" aria-describedby="mapPickerHelp"></div>
     <div class="map-modal-footer">
       <span id="mapPickerCoords" class="map-picker-coords" role="status" aria-live="polite" data-i18n="mapClickHint">Click on the map to select a location</span>
       <button type="button" class="btn btn-secondary btn-sm" id="selectMapCenterBtn" data-i18n="mapSelectCenter">Use map center</button>
