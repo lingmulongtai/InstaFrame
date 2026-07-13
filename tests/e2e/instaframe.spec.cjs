@@ -1181,6 +1181,57 @@ test('video thumbnail decoding is limited to two active jobs', async ({ page }) 
   }))).toEqual({ peak: 2, completed: 6 });
 });
 
+test('queued video thumbnails receive a full decoder timeout after starting', async ({ page }) => {
+  await page.evaluate(async () => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 100 : delay, ...args)
+    );
+    window.readVideoMetadata = async () => window.emptyExif();
+    window.__queuedThumbnailTimeoutStats = { active: 0, peak: 0, completed: 0, aborted: 0 };
+    window.FrameEngine.captureVideoFrame = (_file, _time, { signal }) => new Promise((resolve, reject) => {
+      const stats = window.__queuedThumbnailTimeoutStats;
+      let settled = false;
+      stats.active += 1;
+      stats.peak = Math.max(stats.peak, stats.active);
+      const timer = nativeSetTimeout(() => {
+        if (settled) return;
+        settled = true;
+        stats.active -= 1;
+        stats.completed += 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = 96;
+        canvas.height = 64;
+        resolve(canvas);
+      }, 80);
+      signal.addEventListener('abort', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        stats.active -= 1;
+        stats.aborted += 1;
+        reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+      }, { once: true });
+    });
+    window.FrameEngine.renderFrameWhenReady = async source => source;
+    await window.addFiles(Array.from({ length: 6 }, (_, index) => (
+      new File(['video'], `timeout-queued-${index}.webm`, { type: 'video/webm' })
+    )));
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const stats = window.__queuedThumbnailTimeoutStats;
+    return stats.completed + stats.aborted;
+  })).toBe(6);
+  expect(await page.evaluate(() => window.__queuedThumbnailTimeoutStats)).toEqual({
+    active: 0,
+    peak: 2,
+    completed: 6,
+    aborted: 0,
+  });
+  await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
+});
+
 test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
   await page.evaluate(() => {
     window.__thumbnailExportOrder = { started: false, settled: false, encoderSawSettled: false };

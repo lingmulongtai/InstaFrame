@@ -919,16 +919,19 @@ function _startVideoThumbnail(item) {
   const thumbnailSignal = thumbnailController.signal;
   item.thumbnailController = thumbnailController;
   item.thumbnailNeedsRestart = false;
-  const thumbnailGuard = setTimeout(() => {
-    if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
-    item.status = 'error';
-    item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
-    updateItemStatus(item);
-    showToast(item.errorMsg, 'error');
-    thumbnailController.abort();
-  }, VIDEO_THUMBNAIL_GUARD_MS);
+  let thumbnailGuard = null;
 
   const thumbnailPromise = _queueVideoThumbnail(item, async () => {
+    // Queue wait time is not decoder time. Start the guard only after this item
+    // receives one of the bounded active-thumbnail slots.
+    thumbnailGuard = setTimeout(() => {
+      if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
+      item.status = 'error';
+      item.errorMsg = tf('msgUnsupportedMedia', { name: item.file.name });
+      updateItemStatus(item);
+      showToast(item.errorMsg, 'error');
+      thumbnailController.abort();
+    }, VIDEO_THUMBNAIL_GUARD_MS);
     const img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
     let framed = null;
     let thumbnailSource = img;
