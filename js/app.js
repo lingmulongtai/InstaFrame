@@ -4654,6 +4654,13 @@ function setupMobileTabs() {
   function isMobile() { return window.innerWidth <= 768; }
   let mobileLayoutActive = isMobile();
   let lastFocusedMobileTab = null;
+  let lastFocusedResizeHandleTab = null;
+
+  document.addEventListener('focusin', event => {
+    if (event.target?.id === 'sidebarResizeHandle') lastFocusedResizeHandleTab = 'settings';
+    else if (event.target?.id === 'mainResizeHandle') lastFocusedResizeHandleTab = 'preview';
+    else if (!isMobile()) lastFocusedResizeHandleTab = null;
+  });
 
   function switchTab(tab) {
     if (!isMobile()) return;
@@ -4708,10 +4715,12 @@ function setupMobileTabs() {
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
     const activeElement = document.activeElement;
+    const hiddenResizeHandleFocused = activeElement?.matches?.('#sidebarResizeHandle, #mainResizeHandle');
     const openModalContainsFocus = [...document.querySelectorAll('.map-modal.open')]
       .some(modal => modal.contains(activeElement));
     const mobileNow = isMobile();
     const layoutChanged = mobileNow !== mobileLayoutActive;
+    const focusedResizeHandleTab = layoutChanged && mobileNow ? lastFocusedResizeHandleTab : null;
     if (!mobileNow) {
       const focusedTab = activeElement?.closest?.('.tab-btn')?.dataset.tab
         || (layoutChanged ? lastFocusedMobileTab : null);
@@ -4723,14 +4732,16 @@ function setupMobileTabs() {
       const activePanel = activeElement?.closest?.('.mobile-tab-panel');
       const focusedPanelTab = tabForPanel(activePanel);
       const currentTab = document.body.getAttribute('data-mobile-tab');
-      const activeTab = focusedPanelTab || currentTab || 'preview';
+      const activeTab = focusedPanelTab || focusedResizeHandleTab || currentTab || 'preview';
       if (layoutChanged || !currentTab || (focusedPanelTab && focusedPanelTab !== currentTab)) {
         _setMobileTabState(tabBar, activeTab);
-        if (!activePanel && activeElement !== document.body && !openModalContainsFocus) {
+        if ((focusedResizeHandleTab || hiddenResizeHandleFocused || (!activePanel && activeElement !== document.body))
+          && !openModalContainsFocus) {
           tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
         }
       }
     }
+    if (layoutChanged) lastFocusedResizeHandleTab = null;
     mobileLayoutActive = mobileNow;
     updateUI();
     updateEmptyTapOverlay();

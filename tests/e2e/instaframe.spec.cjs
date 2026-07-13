@@ -580,6 +580,12 @@ test('responsive transitions keep focus in the matching workspace panel', async 
   await page.locator('#tabSettingsBtn').focus();
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.locator('#customizeBtn')).toBeFocused();
+
+  await page.locator('#sidebarResizeHandle').focus();
+  await expect(page.locator('#sidebarResizeHandle')).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#tabSettingsBtn')).toBeFocused();
 });
 
 test('mobile import moves focus to a visible preview control', async ({ page }) => {
