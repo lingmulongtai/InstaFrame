@@ -1423,6 +1423,61 @@ test('oversized source files are rejected before decoding', async ({ page }) => 
   await expect(page.locator('#toast')).toContainText(/256 MiB|256 MiB/);
 });
 
+test('aggregate source bytes reject only files beyond the 512 MiB workspace limit', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const makeSizedFile = (name, sizeMiB) => {
+      const file = new File([bytes], name, { type: 'image/jpeg' });
+      Object.defineProperty(file, 'size', { value: sizeMiB * 1024 * 1024 });
+      return file;
+    };
+    await window.addFiles([
+      makeSizedFile('first-200.jpg', 200),
+      makeSizedFile('second-200.jpg', 200),
+      makeSizedFile('rejected-113.jpg', 113),
+    ]);
+  }, jpegBase64);
+
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await expect(page.locator('#toast')).toContainText(/512 MiB/);
+  await expect(page.locator('#toast')).toContainText(/1/);
+});
+
+test('decoded photos above 60 megapixels fail before entering preview caches', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(async base64 => {
+    const NativeImage = window.Image;
+    window.exifr = { parse: () => Promise.resolve(null) };
+    window.Image = class OversizedDecodedImage {
+      constructor() {
+        this.complete = false;
+        this.naturalWidth = 10_000;
+        this.naturalHeight = 7_000;
+      }
+      set src(value) {
+        this._src = value;
+        queueMicrotask(() => {
+          this.complete = true;
+          this.onload?.();
+        });
+      }
+      get src() { return this._src || ''; }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    try {
+      await window.addFiles([new File([bytes], '70-megapixels.jpg', { type: 'image/jpeg' })]);
+    } finally {
+      window.Image = NativeImage;
+    }
+  }, jpegBase64);
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#toast')).toContainText(/pixel|memory|画素|メモリ/i);
+  await expect(page.locator('#livePreviewCanvas')).toBeHidden();
+});
+
 test('batch import only prewarms the selected photo decode', async ({ page }) => {
   await page.addInitScript(() => {
     const create = URL.createObjectURL.bind(URL);
@@ -1449,7 +1504,14 @@ test('concurrent imports share the aggregate item limit', async ({ page }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     let releaseFirstMetadata;
     const firstMetadata = new Promise(resolve => { releaseFirstMetadata = resolve; });
-    window.__importLimitStats = { parseCalls: 0 };
+    const showToast = window.showToast;
+    window.__importLimitStats = { parseCalls: 0, largeBatchWarnings: 0 };
+    window.showToast = (message, ...args) => {
+      if (/large batch|大きなバッチ/i.test(String(message))) {
+        window.__importLimitStats.largeBatchWarnings += 1;
+      }
+      return showToast(message, ...args);
+    };
     window.exifr = {
       parse: () => {
         window.__importLimitStats.parseCalls += 1;
@@ -1482,6 +1544,7 @@ test('concurrent imports share the aggregate item limit', async ({ page }) => {
 
   await expect(page.locator('.image-card')).toHaveCount(50);
   await expect(page.locator('#toast')).toContainText(/2/);
+  expect(await page.evaluate(() => window.__importLimitStats.largeBatchWarnings)).toBe(1);
 });
 
 test('overflow imports are rejected before a stalled batch can retain them', async ({ page }) => {
@@ -3282,6 +3345,25 @@ test('auto preview stays pixel-dense through 1200% zoom', async ({ page }) => {
   await page.locator('#destructiveConfirmAcceptBtn').click();
   await expect.poll(() => canvas.evaluate(element => ({ width: element.width, height: element.height })))
     .toEqual({ width: 0, height: 0 });
+});
+
+test('frame rendering rejects Canvas side and area overflow before allocation', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const captureCode = callback => {
+      try { callback(); return 'NO_ERROR'; }
+      catch (error) { return error.code || error.name; }
+    };
+    return {
+      side: captureCode(() => window.FrameEngine.renderFrame(
+        { naturalWidth: 17_000, naturalHeight: 100 },
+        {},
+        {}
+      )),
+      area: captureCode(() => window.FrameEngine.computeVideoFrameLayout(8_000, 8_000, {}, {})),
+    };
+  });
+
+  expect(result).toEqual({ side: 'MEDIA_RESOURCE_LIMIT', area: 'MEDIA_RESOURCE_LIMIT' });
 });
 
 test('blur background supports an explicit custom text color', async ({ page }) => {
