@@ -149,7 +149,7 @@ test('PNG and WebP inputs decode and export with real signatures', async ({ page
 test('consent and map dialogs support axe, keyboard selection, Escape, and focus return', async ({ page }) => {
   const localLeafletResponses = [];
   page.on('response', response => {
-    if (/\/vendor\/leaflet\/leaflet\.(?:js|css)$/.test(response.url())) {
+    if (/\/vendor\/leaflet\/leaflet\.(?:js|css)$/.test(new URL(response.url()).pathname)) {
       localLeafletResponses.push({ url: response.url(), status: response.status() });
     }
   });
