@@ -4532,6 +4532,7 @@ function _releasePageResources() {
       item.errorMsg = null;
       updateItemStatus(item);
     }
+    updateItemPreview(item);
   });
   for (const entry of _imgLoadEntries.values()) entry.controller.abort();
   _imgLoadEntries.clear();
