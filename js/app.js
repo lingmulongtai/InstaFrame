@@ -1333,6 +1333,7 @@ async function clearAllItems(skipConfirm = false) {
   if (state.items.length === 0) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
   _importGeneration += 1;
+  _activeExportController?.abort();
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
   state.items.forEach(item => {

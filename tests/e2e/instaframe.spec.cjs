@@ -2097,6 +2097,53 @@ test('ZIP cancellation pauses active packing and restores the export UI', async 
   expect(pageErrors).toEqual([]);
 });
 
+test('clearing with the keyboard aborts active ZIP packing before removing items', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await page.evaluate(async () => {
+    const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
+    window.__clearZipState = { started: false, paused: false };
+    JSZipCtor.prototype.generateInternalStream = function () {
+      const listeners = { data: [], error: [], end: [] };
+      const stream = {
+        on(event, listener) {
+          listeners[event].push(listener);
+          return stream;
+        },
+        resume() {
+          window.__clearZipState.started = true;
+          return stream;
+        },
+        pause() {
+          window.__clearZipState.paused = true;
+          return stream;
+        },
+      };
+      window.__finishClearZip = () => {
+        if (window.__clearZipState.paused) return;
+        listeners.data.forEach(listener => listener(new Uint8Array([1, 2, 3]), { percent: 100 }));
+        listeners.end.forEach(listener => listener());
+      };
+      return stream;
+    };
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__clearZipState.started)).toBe(true);
+  await page.keyboard.press('Control+Shift+Backspace');
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  expect(await page.evaluate(() => window.__clearZipState.paused)).toBe(true);
+  await page.evaluate(() => window.__finishClearZip());
+  await page.waitForTimeout(50);
+  expect(downloads).toBe(0);
+});
+
 test('single photo cancellation interrupts a pending canvas encode', async ({ page }) => {
   await uploadJpegs(page);
   await trackCancellationToasts(page);
