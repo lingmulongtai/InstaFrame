@@ -168,11 +168,17 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
+  await uploadJpegs(page);
+  await page.evaluate(() => window.showProgress('処理中…', 0));
+  await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('キャンセル');
 
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#dropZone')).toContainText('Drop photos here');
+  await uploadJpegs(page);
+  await page.evaluate(() => window.showProgress('Processing…', 0));
+  await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
 });
 
 test('empty import focus is visible and leaves the tab order after media is added', async ({ page }) => {
