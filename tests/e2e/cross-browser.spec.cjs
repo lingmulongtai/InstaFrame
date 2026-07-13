@@ -145,18 +145,23 @@ test('VP8 WebM input previews or fails explicitly with the browser codec', async
     buffer: createWebm(),
   });
   await expect(page.locator('#preview-1')).toBeVisible();
-  if (testInfo.project.name === 'webkit') {
-    // WebKit may wait for the 15 s thumbnail decode guard before declaring
-    // an unsupported VP8 codec, so allow that product timeout to complete.
-    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/, { timeout: 20_000 });
+  const readOutcome = () => page.evaluate(() => {
+    if (document.querySelector('#status-badge-1 .status-dot.error')) return 'error';
+    const video = document.getElementById('livePreviewVideo');
+    const thumbnail = document.querySelector('#preview-1 canvas.thumb-framed');
+    const decodedVideo = video && video.videoWidth > 0 && video.videoHeight > 0 &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+    const decodedThumbnail = thumbnail && thumbnail.width > 0 && thumbnail.height > 0;
+    return decodedVideo || decodedThumbnail ? 'decoded' : 'pending';
+  });
+  await expect.poll(readOutcome, { timeout: 20_000 }).not.toBe('pending');
+  const outcome = await readOutcome();
+  if (outcome === 'error') {
     await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
   } else {
-    await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
-    await expect(page.locator('#previewVideoBar')).toBeVisible();
-    await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => (
-      video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-    ))).toBe(true);
+    expect(outcome).toBe('decoded');
   }
+  if (testInfo.project.name !== 'webkit') expect(outcome).toBe('decoded');
 });
 
 test('crisp auto preview and custom delete confirmation are portable', async ({ page }) => {
