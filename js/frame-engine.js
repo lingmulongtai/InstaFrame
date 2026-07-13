@@ -1126,6 +1126,14 @@ const FrameEngine = (() => {
         cleaned = true;
         if (rafId != null) cancelAnimationFrame(rafId);
         if (stopTimer != null) clearTimeout(stopTimer);
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch (_) {}
+        }
+        if (recorder) {
+          recorder.ondataavailable = null;
+          recorder.onstop = null;
+          recorder.onerror = null;
+        }
         video.pause();
         video.removeAttribute('src');
         video.load();
@@ -1264,26 +1272,31 @@ const FrameEngine = (() => {
         };
 
         function drawLoop() {
-          if (settings.frameBackground === 'blur') {
-            drawBlurBackground(ctx, video, canvasW, canvasH, settings);
-          } else {
-            ctx.fillStyle = frameColor;
-            ctx.fillRect(0, 0, canvasW, canvasH);
-          }
-          drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
-          drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-          drawExifText(ctx, exif, settings, layout);
+          try {
+            assertNotAborted(signal);
+            if (settings.frameBackground === 'blur') {
+              drawBlurBackground(ctx, video, canvasW, canvasH, settings);
+            } else {
+              ctx.fillStyle = frameColor;
+              ctx.fillRect(0, 0, canvasW, canvasH);
+            }
+            drawImageAtY(ctx, video, sB, imageLayout.imageTop, W, H);
+            drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
+            drawExifText(ctx, exif, settings, layout);
 
-          if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
+            if (onProgress && duration > 0) onProgress(Math.min(video.currentTime / duration, 1));
 
-          if (!video.ended && !video.paused) {
-            rafId = requestAnimationFrame(drawLoop);
-          } else {
-            cancelAnimationFrame(rafId);
-            // Give recorder a moment to flush, then stop
-            stopTimer = setTimeout(() => {
-              if (recorder.state !== 'inactive') recorder.stop();
-            }, 120);
+            if (!video.ended && !video.paused) {
+              rafId = requestAnimationFrame(drawLoop);
+            } else {
+              cancelAnimationFrame(rafId);
+              // Give recorder a moment to flush, then stop
+              stopTimer = setTimeout(() => {
+                if (recorder.state !== 'inactive') recorder.stop();
+              }, 120);
+            }
+          } catch (error) {
+            fail(error);
           }
         }
 
