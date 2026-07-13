@@ -268,6 +268,35 @@ test('language switching preserves card identity, selection, and video thumbnail
   await expect(page.locator('#preview-2')).toHaveAttribute('aria-label', /selected-video\.webm/);
 });
 
+test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'settings-video.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  const thumbnail = page.locator('#item-1 canvas.thumb-framed');
+  await expect(thumbnail).toBeVisible();
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async () => new Blob(
+      [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])],
+      { type: 'video/webm' }
+    );
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(thumbnail).toBeVisible();
+
+  await page.locator('#thicknessRange').evaluate(input => {
+    input.value = '1.1';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+  await expect(thumbnail).toBeVisible();
+  await expect(page.locator('#item-1 img.thumb-orig')).toBeHidden();
+});
+
 test('share dialog supports axe, Escape, and focus return', async ({ page }) => {
   await page.locator('#shareAppBtn').focus();
   await page.locator('#shareAppBtn').press('Enter');
