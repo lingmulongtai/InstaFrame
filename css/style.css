@@ -1142,7 +1142,6 @@ input[type="range"]:focus-visible {
   width: 3px;
   height: 80px;
   background: rgba(255,255,255,0.22);
-  -webkit-appearance: slider-vertical;
   appearance: auto;
 }
 #zoomRange::-webkit-slider-thumb { background: white; box-shadow: 0 0 4px rgba(0,0,0,0.4); }
