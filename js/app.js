@@ -3304,6 +3304,7 @@ function showToast(msg, type = 'info') {
 function setupDropZone() {
   const zone  = document.getElementById('dropZone');
   const input = document.getElementById('fileInput');
+  const mobileInput = document.getElementById('mobileFileInput');
 
   // The file input is an invisible overlay (inset:0) covering the preview area
   // when no files are loaded. Clicking anywhere in the empty area opens the file
@@ -3323,9 +3324,19 @@ function setupDropZone() {
     addFiles(e.dataTransfer.files);
   });
 
-  input.addEventListener('change', () => {
-    addFiles(input.files);
-    input.value = '';
+  if (mobileInput) {
+    mobileInput.accept = input.accept;
+    mobileInput.multiple = input.multiple;
+  }
+  [input, mobileInput].filter(Boolean).forEach(fileInput => {
+    fileInput.addEventListener('change', async () => {
+      const previousCount = state.items.length;
+      await addFiles(fileInput.files);
+      fileInput.value = '';
+      if (fileInput === mobileInput && state.items.length > previousCount) {
+        _getLoadedMediaFocusTarget()?.focus();
+      }
+    });
   });
 
   // Scroll-wheel zoom (only when preview is active)
@@ -4294,14 +4305,15 @@ function setupMobileTabs() {
 
   // Mobile "Add Photos" button (in empty hint on Photos tab)
   const mobileAddBtn = document.getElementById('mobileAddBtn');
-  const fileInput    = document.getElementById('fileInput');
-  if (mobileAddBtn && fileInput) {
-    mobileAddBtn.addEventListener('click', () => fileInput.click());
+  const fileInput = document.getElementById('fileInput');
+  const mobileFileInput = document.getElementById('mobileFileInput');
+  if (mobileAddBtn && mobileFileInput) {
+    mobileAddBtn.addEventListener('click', () => mobileFileInput.click());
   }
 
   // ── Tap-to-import overlay for empty state ──────────────────────────────────
-  // A transparent overlay placed over preview-area and empty-hint that opens
-  // the file picker when tapped, but only while no files are loaded on mobile.
+  // A transparent overlay over the empty preview opens the file picker when
+  // tapped. The Photos tab keeps its visible import button unobstructed.
 
   // Create overlay element once and reuse
   const tapOverlay = document.createElement('div');
@@ -4326,7 +4338,7 @@ function setupMobileTabs() {
     const empty   = state.items.length === 0;
     const mobile  = isMobile();
     const tab     = document.body.getAttribute('data-mobile-tab');
-    const active  = empty && mobile && (tab === 'preview' || tab === 'photos');
+    const active  = empty && mobile && tab === 'preview';
     tapOverlay.style.display = active ? 'block' : 'none';
   }
 

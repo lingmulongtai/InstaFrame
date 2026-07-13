@@ -1581,6 +1581,27 @@ test('removing the final mobile Photos item focuses the visible import action', 
   await expect(page.locator('#fileInput')).toHaveAttribute('tabindex', '0');
 });
 
+test('mobile Photos empty state opens its own file picker and moves to the preview', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.locator('#tabPhotosBtn').click();
+
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.locator('#mobileAddBtn').click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: 'mobile-photos-import.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+
+  await expect(page.locator('#livePreviewCanvas')).toBeVisible();
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+  await expect(page.locator('#dropZone')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#photosPanel')).toHaveAttribute('inert', '');
+});
+
 test('photo and generated WebM can be switched in the live preview', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles([
     { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
