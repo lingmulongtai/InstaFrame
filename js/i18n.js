@@ -576,6 +576,7 @@ function toggleLang() {
 }
 
 function applyTranslations() {
+  document.documentElement.setAttribute('lang', currentLang);
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
     const attr = el.getAttribute('data-i18n-attr');
