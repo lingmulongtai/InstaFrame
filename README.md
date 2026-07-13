@@ -115,7 +115,7 @@
 npm.cmd run serve
 ```
 
-その後 `http://127.0.0.1:4173` を開きます。サイト管理者が設定する共通Mapboxトークンは本番オリジンだけで利用できます。ローカル環境でも、利用者自身の公開トークンを設定して位置情報通信へ同意すればマップオーバーレイを利用できます。
+その後 `http://127.0.0.1:4173` を開きます。`serve` はPagesと同じ許可済みファイルだけを `dist/` へ生成して配信し、リポジトリ内の設定・テスト・`.git` はHTTP公開しません。サイト管理者が設定する共通Mapboxトークンは本番オリジンだけで利用できます。ローカル環境でも、利用者自身の公開トークンを設定して位置情報通信へ同意すればマップオーバーレイを利用できます。
 
 ## 開発とテスト
 
@@ -171,7 +171,7 @@ GitHub Pagesへの公開は、構文・Lint・ユニットテストに加え、C
 - `assets/`（存在する場合）
 - ファビコンSVG
 
-IDE設定、テスト、Node.js依存関係、READMEなどは公開アーティファクトに含めません。Pull Requestと`main`へのpushでは、CIが構文・Lint・ユニット検査を1回実行し、ChromiumのフルE2Eと、Firefox・WebKit・Microsoft Edgeの写真/UI/axe/プライバシー契約をマトリクス実行します。動画エンコード、HEIC/HEIF、MP4/MOVはブラウザ・OSコーデック依存のため、対応を一律には保証しません。
+IDE設定、テスト、Node.js依存関係、READMEなどは公開アーティファクトに含めません。Pull Requestと`main`へのpushでは、CIが構文・Lint・ユニット検査を1回実行し、Pagesと同じ `dist/` を生成してから、ChromiumのフルE2EとFirefox・WebKit・Microsoft Edgeの写真/UI/axe/プライバシー契約をマトリクス実行します。各ブラウザはローカル資産のrevisionと、リポジトリ内部ファイルが配信されないことも確認します。動画エンコード、HEIC/HEIF、MP4/MOVはブラウザ・OSコーデック依存のため、対応を一律には保証しません。
 
 ## 構成
 
@@ -205,4 +205,4 @@ InstaFrame/
 
 InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom.
 
-Run `npm ci`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract. GitHub Pages deploys an allowlisted `dist/` artifact only.
+Run `npm ci`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. Browser tests build and serve the same allowlisted `dist/` boundary used by Pages, without exposing repository internals. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract.
