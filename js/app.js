@@ -89,6 +89,8 @@ const PREVIEW_IMAGE_DECODE_GUARD_MS = 20_000;
 const _vendorScriptLoads = new Map();
 const _locationFetchControllers = new Set();
 let _importQueueTail = Promise.resolve();
+let _reservedImportItems = 0;
+let _reservedImportBytes = 0;
 const APP_ASSET_VERSION = (() => {
   try {
     return new URL(document.currentScript?.src || '', document.baseURI).searchParams.get('v') || '';
@@ -1088,41 +1090,72 @@ function formatFNumber(v) {
 }
 
 // ─── Item Management ──────────────────────────────────────────────────────────
-function addFiles(files) {
-  // Snapshot FileList immediately: input values may be cleared before a queued
-  // batch starts. Serial execution also makes the aggregate count/byte limits
-  // authoritative when drag/drop and file-picker imports overlap.
-  const batch = Array.from(files || []);
-  const run = _importQueueTail.then(() => _addFiles(batch));
-  _importQueueTail = run.catch(() => {});
-  return run;
-}
-
-async function _addFiles(files) {
-  const candidates = Array.from(files).filter(f =>
-    f.type.startsWith('image/') || f.type.startsWith('video/') ||
-    /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(f.name)
+function _reserveImportFiles(files) {
+  const candidates = Array.from(files || []).filter(file =>
+    file.type.startsWith('image/') || file.type.startsWith('video/') ||
+    /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(file.name)
   );
   const accepted = [];
   let rejectedCount = 0;
-  let totalBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  let reservedBytes = 0;
+  const stateBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
   for (const file of candidates) {
     const size = file.size || 0;
     if (
-      state.items.length + accepted.length >= MAX_SOURCE_ITEMS ||
+      state.items.length + _reservedImportItems + accepted.length >= MAX_SOURCE_ITEMS ||
       size > MAX_SINGLE_SOURCE_BYTES ||
-      totalBytes + size > MAX_TOTAL_SOURCE_BYTES
+      stateBytes + _reservedImportBytes + reservedBytes + size > MAX_TOTAL_SOURCE_BYTES
     ) {
       rejectedCount += 1;
       continue;
     }
     accepted.push(file);
-    totalBytes += size;
+    reservedBytes += size;
   }
-  if (!accepted.length) {
-    if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
-    return;
+  _reservedImportItems += accepted.length;
+  _reservedImportBytes += reservedBytes;
+  return {
+    files: accepted,
+    rejectedCount,
+    remainingItems: accepted.length,
+    remainingBytes: reservedBytes,
+  };
+}
+
+function _consumeImportReservation(reservation, file) {
+  const size = file.size || 0;
+  reservation.remainingItems -= 1;
+  reservation.remainingBytes -= size;
+  _reservedImportItems -= 1;
+  _reservedImportBytes -= size;
+}
+
+function _releaseImportReservation(reservation) {
+  _reservedImportItems -= reservation.remainingItems;
+  _reservedImportBytes -= reservation.remainingBytes;
+  reservation.remainingItems = 0;
+  reservation.remainingBytes = 0;
+}
+
+function addFiles(files) {
+  // Reserve aggregate capacity before queueing so repeated drops cannot retain
+  // batches that are already known to exceed the browser-safe limits.
+  const reservation = _reserveImportFiles(files);
+  if (!reservation.files.length) {
+    if (reservation.rejectedCount) {
+      showToast(tf('msgMediaInputLimit', { count: reservation.rejectedCount }), 'error');
+    }
+    return Promise.resolve();
   }
+  const run = _importQueueTail
+    .then(() => _addFiles(reservation.files, reservation))
+    .finally(() => _releaseImportReservation(reservation));
+  _importQueueTail = run.catch(() => {});
+  return run;
+}
+
+async function _addFiles(accepted, reservation) {
+  const { rejectedCount } = reservation;
 
   const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
   const existingBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
@@ -1155,6 +1188,7 @@ async function _addFiles(files) {
       errorMsg:  null,
       isVideo:   video,
     };
+    _consumeImportReservation(reservation, file);
     state.items.push(item);
     renderItem(item);
 

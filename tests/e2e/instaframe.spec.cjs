@@ -1260,6 +1260,49 @@ test('concurrent imports share the aggregate item limit', async ({ page }) => {
   await expect(page.locator('#toast')).toContainText(/2/);
 });
 
+test('overflow imports are rejected before a stalled batch can retain them', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    let releaseMetadata;
+    const stalledMetadata = new Promise(resolve => { releaseMetadata = resolve; });
+    window.__reservedImportStats = { parseCalls: 0, overflowResolved: false };
+    window.exifr = {
+      parse: () => {
+        window.__reservedImportStats.parseCalls += 1;
+        return window.__reservedImportStats.parseCalls === 1
+          ? stalledMetadata.then(() => null)
+          : Promise.resolve(null);
+      },
+    };
+    const makeBatch = (prefix, count) => Array.from({ length: count }, (_, index) => (
+      new File([bytes], `${prefix}-${index + 1}.jpg`, { type: 'image/jpeg' })
+    ));
+    window.__makeReservedImportBatch = makeBatch;
+    window.__releaseReservedImport = releaseMetadata;
+    window.__reservedImport = window.addFiles(makeBatch('reserved', 50));
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__reservedImportStats.parseCalls)).toBe(1);
+  await page.evaluate(() => {
+    window.addFiles(window.__makeReservedImportBatch('overflow', 10)).then(() => {
+      window.__reservedImportStats.overflowResolved = true;
+    });
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__reservedImportStats)).toEqual({
+    parseCalls: 1,
+    overflowResolved: true,
+  });
+  await expect(page.locator('#toast')).toContainText(/10/);
+
+  await page.evaluate(async () => {
+    window.__releaseReservedImport();
+    await window.__reservedImport;
+  });
+  await expect(page.locator('.image-card')).toHaveCount(50);
+});
+
 test('a hung EXIF read cannot block later files in the import queue', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {
