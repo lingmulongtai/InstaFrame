@@ -2980,19 +2980,15 @@ function _stopVideoCanvasPreview() {
   _videoPreviewItemId = null;
 }
 
-function _clearLiveVideoMetadataGuard(video) {
+function _clearLiveVideoReadinessGuard(video) {
   if (!video) return;
-  clearTimeout(video._previewMetadataGuard);
-  video._previewMetadataGuard = null;
-  if (video._previewMetadataHandler) {
-    video.removeEventListener('loadedmetadata', video._previewMetadataHandler);
-    video._previewMetadataHandler = null;
-  }
+  clearTimeout(video._previewReadinessGuard);
+  video._previewReadinessGuard = null;
 }
 
 function _clearLiveVideoSourceHandlers(video) {
   if (!video) return;
-  _clearLiveVideoMetadataGuard(video);
+  _clearLiveVideoReadinessGuard(video);
   if (video._previewErrorHandler) {
     video.removeEventListener('error', video._previewErrorHandler);
     video._previewErrorHandler = null;
@@ -3056,14 +3052,9 @@ function _armLiveVideoSourceHandlers(video, item) {
   _clearLiveVideoSourceHandlers(video);
   const generation = (video._previewSourceGeneration || 0) + 1;
   video._previewSourceGeneration = generation;
-  video._previewMetadataHandler = () => {
-    if (video._previewSourceGeneration !== generation || video._srcId !== item.id) return;
-    _clearLiveVideoMetadataGuard(video);
-  };
   video._previewErrorHandler = () => _failLiveVideoPreview(item.id, generation);
-  video.addEventListener('loadedmetadata', video._previewMetadataHandler);
   video.addEventListener('error', video._previewErrorHandler);
-  video._previewMetadataGuard = setTimeout(
+  video._previewReadinessGuard = setTimeout(
     () => _failLiveVideoPreview(item.id, generation),
     LIVE_VIDEO_PREVIEW_GUARD_MS
   );
@@ -3088,8 +3079,8 @@ function _startVideoCanvasPreview(item) {
   let _lastLayout = null; // cache layout between frames to avoid redundant recalcs
 
   function drawFrame() {
-    if (!video.videoWidth || !video.videoHeight) {
-      // Video metadata not yet loaded — draw loading placeholder
+    if (!video.videoWidth || !video.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      // A decoded video frame is not ready yet — draw loading placeholder
       const areaW = Math.max(pane.clientWidth  - 40, 80);
       const areaH = Math.max(pane.clientHeight - 40, 60);
       if (canvas.style.display === 'none' || canvas.style.display === '') {
@@ -3152,6 +3143,7 @@ function _startVideoCanvasPreview(item) {
     ctx.scale(targetW / layout.canvasW, targetH / layout.canvasH);
     FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
     ctx.restore();
+    _clearLiveVideoReadinessGuard(video);
 
     applyPreviewTransform();
     _videoPreviewRAF = requestAnimationFrame(draw);
