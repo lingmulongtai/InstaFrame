@@ -3297,6 +3297,21 @@ test('removing the final mobile Photos item focuses the visible import action', 
   await expect(page.locator('#fileInput')).toHaveAttribute('tabindex', '0');
 });
 
+test('confirming removal after a mobile transition focuses visible preview controls', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await expect(page.locator('#destructiveConfirmModal')).toHaveClass(/open/);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect(page.locator('#previewQualityBtn')).toBeVisible();
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement.closest('[inert]'))).toBeNull();
+});
+
 test('mobile Photos empty state opens its own file picker and moves to the preview', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
