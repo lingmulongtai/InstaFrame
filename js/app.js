@@ -5415,6 +5415,10 @@ function setupCardSize() {
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 function _releasePageResources() {
+  // Commit the user's last debounced EXIF keystroke before freezing the page.
+  // applyLiveExifEdit schedules a preview render, which is cancelled below so
+  // released Canvas and Blob resources cannot be recreated while suspended.
+  _flushLiveExifEdit();
   clearTimeout(_livePreviewTimer);
   _livePreviewTimer = null;
   _renderSeq += 1;
