@@ -4,7 +4,8 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(import.meta.dirname, '..');
+const projectRoot = path.resolve(import.meta.dirname, '..');
+const publicRoot = path.join(projectRoot, 'dist');
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '4173', 10);
 const mimeTypes = new Map([
@@ -28,13 +29,14 @@ function send(response, status, body) {
   response.end(body);
 }
 
-export function createStaticServer({ rootDirectory = root, hostname = host, listenPort = port } = {}) {
+export function createStaticServer({ rootDirectory = publicRoot, hostname = host, listenPort = port } = {}) {
+  const resolvedRoot = path.resolve(rootDirectory);
   const server = createServer(async (request, response) => {
     try {
       const pathname = decodeURIComponent(new URL(request.url || '/', `http://${hostname}:${listenPort}`).pathname);
       const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-      let filePath = path.resolve(rootDirectory, relativePath);
-      if (filePath !== rootDirectory && !filePath.startsWith(`${rootDirectory}${path.sep}`)) {
+      let filePath = path.resolve(resolvedRoot, relativePath);
+      if (filePath !== resolvedRoot && !filePath.startsWith(`${resolvedRoot}${path.sep}`)) {
         send(response, 403, 'Forbidden');
         return;
       }
