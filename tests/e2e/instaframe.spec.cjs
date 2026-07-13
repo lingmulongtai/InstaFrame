@@ -2376,6 +2376,38 @@ test('GPS import sends no coordinates until explicit consent', async ({ page }) 
   expect(locationRequests.some(url => url.includes('nominatim'))).toBe(true);
 });
 
+test('device location stays bound to the photo that requested it', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.route('https://nominatim.openstreetmap.org/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ address: { city: 'Race City', country: 'Japan' } }),
+  }));
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = success => {
+      window.__resolveDeviceLocation = success;
+    };
+  });
+  await uploadJpegs(page, 2);
+
+  await page.locator('#getDeviceLocationBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__resolveDeviceLocation)).toBe('function');
+  await page.locator('#preview-2').click();
+  await page.evaluate(() => window.__resolveDeviceLocation({
+    coords: { latitude: 35.0116, longitude: 135.7681 },
+  }));
+
+  await expect(page.locator('#live-exif-location')).toHaveValue('');
+  await expect(page.locator('#live-exif-location')).toBeEnabled();
+  await page.locator('#preview-1').click();
+  await expect(page.locator('#live-exif-location')).toHaveValue('Race City, Japan');
+  await page.locator('#preview-2').click();
+  await expect(page.locator('#live-exif-location')).toHaveValue('');
+});
+
 test('location requests time out instead of waiting indefinitely', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
