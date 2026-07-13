@@ -693,6 +693,29 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
+test('batch generation reports failed items instead of announcing complete success', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    let calls = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error('simulated batch render failure');
+      return render(...args);
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
+  await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(1);
+  await expect(page.locator('#toast')).toContainText('Frames that could not be generated: 1');
+  await expect(page.locator('#toast')).not.toContainText('All frames generated');
+});
+
 test('video cancellation propagates an AbortSignal to the active encoder', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'cancel-me.webm',
