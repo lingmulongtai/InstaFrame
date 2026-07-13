@@ -77,18 +77,18 @@
           </div>
           <!-- Accent color presets -->
           <div class="customize-row customize-row-accent">
-            <span class="customize-row-label" data-i18n="accentLabel">Accent</span>
-            <div class="accent-swatches" id="accentSwatches">
-              <button class="accent-swatch accent-blue" data-color="#2563eb" title="Blue" aria-label="Blue accent"></button>
-              <button class="accent-swatch accent-purple" data-color="#7c3aed" title="Purple" aria-label="Purple accent"></button>
-              <button class="accent-swatch accent-pink" data-color="#db2777" title="Pink" aria-label="Pink accent"></button>
-              <button class="accent-swatch accent-green" data-color="#059669" title="Green" aria-label="Green accent"></button>
-              <button class="accent-swatch accent-amber" data-color="#d97706" title="Amber" aria-label="Amber accent"></button>
-              <button class="accent-swatch accent-cyan active" data-color="#08798f" title="Cyan" aria-label="Cyan accent"></button>
-              <label id="accentCustomBtn" class="color-option-custom" title="Custom color">
-                <input type="color" id="accentColorPicker" value="#08798f">
+            <span class="customize-row-label" id="accentSwatchesLabel" data-i18n="accentLabel">Accent</span>
+            <div class="accent-swatches" id="accentSwatches" role="group" aria-labelledby="accentSwatchesLabel">
+              <button class="accent-swatch accent-blue" data-color="#2563eb" title="Blue" aria-label="Blue accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-purple" data-color="#7c3aed" title="Purple" aria-label="Purple accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-pink" data-color="#db2777" title="Pink" aria-label="Pink accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-green" data-color="#059669" title="Green" aria-label="Green accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-amber" data-color="#d97706" title="Amber" aria-label="Amber accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-cyan active" data-color="#08798f" title="Cyan" aria-label="Cyan accent" aria-pressed="true"></button>
+              <button type="button" id="accentCustomBtn" class="color-option-custom" title="Custom color" aria-label="Custom accent" aria-pressed="false">
                 <span class="rainbow-icon"></span>
-              </label>
+              </button>
+              <input type="color" id="accentColorPicker" class="accent-color-picker-proxy" value="#08798f" tabindex="-1" aria-hidden="true">
             </div>
           </div>
         </div>
@@ -137,7 +137,7 @@
         <div class="privacy-setting-card">
           <div>
             <div class="privacy-setting-title" data-i18n="locationNetworkTitle">Online location services</div>
-            <div class="privacy-setting-status" id="locationPrivacyStatus">Off</div>
+            <div class="privacy-setting-status" id="locationPrivacyStatus" role="status" aria-live="polite" aria-atomic="true">Off</div>
             <div class="privacy-setting-status" id="mapboxUsageStatus"></div>
           </div>
           <button type="button" class="btn btn-secondary btn-sm" id="manageLocationPrivacyBtn" data-i18n="privacyManage">Manage</button>
