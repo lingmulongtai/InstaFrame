@@ -4514,12 +4514,16 @@ function setupMobileTabs() {
       _syncMobileTabPanels(tabBar, '', false);
       if (focusedTab && !openModalContainsFocus) desktopFocusTarget(focusedTab)?.focus();
     }
-    else if (layoutChanged || !document.body.getAttribute('data-mobile-tab')) {
+    else {
       const activePanel = activeElement?.closest?.('.mobile-tab-panel');
-      const activeTab = tabForPanel(activePanel) || 'preview';
-      _setMobileTabState(tabBar, activeTab);
-      if (!activePanel && activeElement !== document.body && !openModalContainsFocus) {
-        tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
+      const focusedPanelTab = tabForPanel(activePanel);
+      const currentTab = document.body.getAttribute('data-mobile-tab');
+      const activeTab = focusedPanelTab || currentTab || 'preview';
+      if (layoutChanged || !currentTab || (focusedPanelTab && focusedPanelTab !== currentTab)) {
+        _setMobileTabState(tabBar, activeTab);
+        if (!activePanel && activeElement !== document.body && !openModalContainsFocus) {
+          tabBar.querySelector(`.tab-btn[data-tab="${activeTab}"]`)?.focus();
+        }
       }
     }
     mobileLayoutActive = mobileNow;
