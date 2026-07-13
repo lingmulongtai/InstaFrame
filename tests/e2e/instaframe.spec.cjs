@@ -3549,8 +3549,16 @@ test('live video preview keeps the requested ratio and padding after seeking', a
   await expect.poll(() => canvas.evaluate(element => element.width / element.height)).toBeCloseTo(expectedRatio, 2);
 });
 
-test('paused live preview redraws the decoded frame after seeking', async ({ page }) => {
+test('paused live preview redraws after seeking a static video frame', async ({ page }) => {
   const fixture = await loadAudioVideoFixture();
+  await page.evaluate(() => {
+    const drawFrame = window.FrameEngine.drawVideoFrameSync;
+    window.__pausedSeekDraws = 0;
+    window.FrameEngine.drawVideoFrameSync = (...args) => {
+      window.__pausedSeekDraws += 1;
+      return drawFrame(...args);
+    };
+  });
   await page.locator('#fileInput').setInputFiles({
     name: 'paused-seek.webm',
     mimeType: fixture.mimeType,
@@ -3560,31 +3568,16 @@ test('paused live preview redraws the decoded frame after seeking', async ({ pag
   const canvas = page.locator('#livePreviewCanvas');
   await expect.poll(() => video.evaluate(element => element.videoWidth)).toBeGreaterThan(0);
   await video.evaluate(element => element.pause());
+  await expect(canvas).toBeVisible();
+  const beforeDraws = await page.evaluate(() => window.__pausedSeekDraws);
 
-  const frameHash = () => canvas.evaluate(element => {
-    const sample = document.createElement('canvas');
-    sample.width = 64;
-    sample.height = 64;
-    const context = sample.getContext('2d');
-    context.drawImage(element, 0, 0, sample.width, sample.height);
-    const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
-    let hash = 2166136261;
-    for (let index = 0; index < pixels.length; index += 4) {
-      hash = Math.imul(hash ^ pixels[index], 16777619);
-      hash = Math.imul(hash ^ pixels[index + 1], 16777619);
-      hash = Math.imul(hash ^ pixels[index + 2], 16777619);
-    }
-    sample.width = 0;
-    sample.height = 0;
-    return hash >>> 0;
-  });
-  const before = await frameHash();
-
-  await video.evaluate(element => new Promise(resolve => {
-    element.addEventListener('seeked', resolve, { once: true });
-    element.currentTime = Math.min(element.duration * 0.8, 0.5);
+  const targetTime = await video.evaluate(element => new Promise(resolve => {
+    const target = Math.min(element.duration * 0.8, 0.5);
+    element.addEventListener('seeked', () => resolve(target), { once: true });
+    element.currentTime = target;
   }));
-  await expect.poll(frameHash).not.toBe(before);
+  await expect.poll(() => page.evaluate(() => window.__pausedSeekDraws)).toBeGreaterThan(beforeDraws);
+  expect(await video.evaluate(element => element.currentTime)).toBeCloseTo(targetTime, 2);
 });
 
 test('paused live video preview redraws only when its frame changes', async ({ page }) => {
