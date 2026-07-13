@@ -510,6 +510,56 @@ test('video cancellation propagates an AbortSignal to the active encoder', async
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
 });
 
+test('photo cancellation aborts the active image decoder and restores pending state', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__photoAbortObserved = false;
+    window.FrameEngine.loadImage = (_file, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        window.__photoAbortObserved = true;
+        reject(new DOMException('Image load cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeVisible();
+  await page.locator('#cancelExportBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__photoAbortObserved)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+});
+
+test('aborting an image decode revokes its temporary Blob URL', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'cancel-decode.jpg', { type: 'image/jpeg' });
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const active = new Set();
+    URL.createObjectURL = value => {
+      const url = create(value);
+      active.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      active.delete(url);
+      revoke(url);
+    };
+    const controller = new AbortController();
+    const pending = window.FrameEngine.loadImage(file, { signal: controller.signal });
+    controller.abort();
+    let errorName = '';
+    try {
+      await pending;
+    } catch (error) {
+      errorName = error.name;
+    }
+    return { errorName, activeUrls: active.size };
+  }, { base64: createJpeg().toString('base64') });
+
+  expect(result).toEqual({ errorName: 'AbortError', activeUrls: 0 });
+});
+
 test('Japanese preview quality labels change raster density without moving composition', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
