@@ -115,6 +115,20 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
 
+test('empty import focus is visible and leaves the tab order after media is added', async ({ page }) => {
+  const input = page.locator('#fileInput');
+  await input.focus();
+  await expect(input).toBeFocused();
+  await expect(page.locator('.preview-empty-cta')).toHaveCSS('outline-style', 'solid');
+
+  await uploadJpegs(page);
+
+  await expect(input).toHaveAttribute('tabindex', '-1');
+  await input.focus();
+  await page.evaluate(() => window.updateUI());
+  await expect(page.locator('#preview-1')).toBeFocused();
+});
+
 test('translated dynamic controls and location icon radio state stay synchronized', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
@@ -1339,6 +1353,19 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   expect(await page.locator('#dropZone').evaluate(element => element.inert)).toBe(true);
   expect(await page.locator('#photosPanel').evaluate(element => element.inert)).toBe(true);
   expect(await page.locator('#settingsPanel').evaluate(element => element.inert)).toBe(false);
+});
+
+test('removing the final mobile Photos item focuses the visible import action', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await uploadJpegs(page);
+  await page.locator('#tabPhotosBtn').click();
+  await page.locator('#item-1 [data-action="remove"]').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+
+  await expect(page.locator('#mobileAddBtn')).toBeVisible();
+  await expect(page.locator('#mobileAddBtn')).toBeFocused();
+  await expect(page.locator('#fileInput')).toHaveAttribute('tabindex', '0');
 });
 
 test('photo and generated WebM can be switched in the live preview', async ({ page }) => {
