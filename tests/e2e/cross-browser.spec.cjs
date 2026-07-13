@@ -51,13 +51,23 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('self-hosted fonts and initial UI are accessible without Google requests', async ({ page }) => {
+  const families = [
+    'Inter', 'Montserrat', 'DM Sans', 'Lato', 'Poppins', 'Raleway', 'Nunito',
+    'Josefin Sans', 'Oswald', 'Work Sans', 'Playfair Display', 'Cormorant Garamond',
+    'EB Garamond', 'Libre Baskerville', 'Cinzel', 'Source Serif 4',
+  ];
   const externalFontRequests = [];
   page.on('request', request => {
     if (/fonts\.(?:googleapis|gstatic)\.com/.test(request.url())) externalFontRequests.push(request.url());
   });
   await page.reload();
-  await page.evaluate(() => document.fonts.load("400 16px 'Inter'"));
-  expect(await page.evaluate(() => document.fonts.check("400 16px 'Inter'"))).toBe(true);
+  const fontResults = await page.evaluate(async expectedFamilies => Promise.all(
+    expectedFamilies.map(async family => {
+      const faces = await document.fonts.load(`400 16px "${family}"`, 'InstaFrame');
+      return { family, count: faces.length, loaded: faces.every(face => face.status === 'loaded') };
+    })
+  ), families);
+  expect(fontResults).toEqual(families.map(family => ({ family, count: 1, loaded: true })));
   expect(externalFontRequests).toEqual([]);
   await assertNoAxeViolations(page);
 });
