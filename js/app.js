@@ -287,7 +287,9 @@ let   _exportProgressPreviousFocus = null;
 let   _lastProgressAnnouncement = -1;
 
 // ─── Video canvas preview loop ────────────────────────────────────────────────
-let _videoPreviewRAF    = null;   // requestAnimationFrame handle for video preview loop
+let _videoPreviewFrameHandle = null;
+let _videoPreviewFrameMode = null; // 'video', 'animation', or 'timeout'
+let _videoPreviewFrameGeneration = 0;
 let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
 let _videoPreviewBaseCanvas = null;
 
@@ -3052,6 +3054,7 @@ function scheduleLivePreview() {
     return;
   }
   clearTimeout(_livePreviewTimer);
+  if (_videoPreviewItemId !== null) _cancelVideoCanvasPreviewFrame();
   _previewRenderController?.abort();
   _previewRenderController = null;
   // Invalidate work immediately, rather than waiting for the debounced render
@@ -3194,6 +3197,10 @@ function setupVideoPreviewBar() {
   video.addEventListener('timeupdate', () => {
     if (!_seeking) seekRange.value = String(video.currentTime);
     if (currentEl) currentEl.textContent = _formatVideoTime(video.currentTime);
+    const item = getSelectedPreviewItem();
+    if (item?.isVideo && !video.paused && !video.ended && _videoPreviewFrameHandle === null) {
+      _startVideoCanvasPreview(item);
+    }
   });
 
   // Redraw after the browser has decoded the requested frame (even when paused).
@@ -3501,9 +3508,45 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
 // ─── Canvas-based Video Preview ──────────────────────────────────────────────
 
 function _cancelVideoCanvasPreviewFrame() {
-  if (_videoPreviewRAF !== null) {
-    cancelAnimationFrame(_videoPreviewRAF);
-    _videoPreviewRAF = null;
+  _videoPreviewFrameGeneration += 1;
+  if (_videoPreviewFrameHandle === null) return;
+  const handle = _videoPreviewFrameHandle;
+  const mode = _videoPreviewFrameMode;
+  _videoPreviewFrameHandle = null;
+  _videoPreviewFrameMode = null;
+  const video = document.getElementById('livePreviewVideo');
+  try {
+    if (mode === 'video' && typeof video?.cancelVideoFrameCallback === 'function') {
+      video.cancelVideoFrameCallback(handle);
+    } else if (mode === 'timeout') {
+      clearTimeout(handle);
+    } else {
+      cancelAnimationFrame(handle);
+    }
+  } catch (_) { /* best-effort cancellation; generation invalidates late callbacks */ }
+}
+
+function _scheduleVideoCanvasPreviewFrame(video, callback, waitingForData = false) {
+  const generation = ++_videoPreviewFrameGeneration;
+  const guardedCallback = (...args) => {
+    if (generation === _videoPreviewFrameGeneration) callback(...args);
+  };
+  if (!video._previewVideoFrameCallbacksUnavailable &&
+      typeof video.requestVideoFrameCallback === 'function') {
+    try {
+      _videoPreviewFrameMode = 'video';
+      _videoPreviewFrameHandle = video.requestVideoFrameCallback(guardedCallback);
+      return;
+    } catch (_) {
+      video._previewVideoFrameCallbacksUnavailable = true;
+    }
+  }
+  if (waitingForData) {
+    _videoPreviewFrameMode = 'timeout';
+    _videoPreviewFrameHandle = setTimeout(guardedCallback, 100);
+  } else {
+    _videoPreviewFrameMode = 'animation';
+    _videoPreviewFrameHandle = requestAnimationFrame(guardedCallback);
   }
 }
 
@@ -3601,12 +3644,13 @@ function _armLiveVideoSourceHandlers(video, item) {
 }
 
 /**
- * Start a requestAnimationFrame loop that continuously renders the framed video
- * (with EXIF text overlay) onto livePreviewCanvas.
+ * Render decoded video frames (with EXIF text overlay) onto livePreviewCanvas.
+ * Modern browsers schedule one draw per decoded frame; older browsers use a
+ * bounded requestAnimationFrame fallback.
  * The hidden <video> element is used purely as a data/audio source.
  */
 function _startVideoCanvasPreview(item) {
-  if (_videoPreviewItemId === item.id && _videoPreviewRAF !== null) return;
+  if (_videoPreviewItemId === item.id && _videoPreviewFrameHandle !== null) return;
   if (_videoPreviewItemId !== item.id) {
     _stopVideoCanvasPreview();
     _videoPreviewItemId = item.id;
@@ -3616,6 +3660,8 @@ function _startVideoCanvasPreview(item) {
   const canvas = document.getElementById('livePreviewCanvas');
   const pane   = document.getElementById('dropZone');
   if (!video || !canvas || !pane) return;
+  let fallbackLastMediaTime = -1;
+  let fallbackUnchangedFrames = 0;
 
   function drawFrame() {
     if (!video.videoWidth || !video.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -3641,7 +3687,7 @@ function _startVideoCanvasPreview(item) {
         ctx.textBaseline = 'middle';
         ctx.fillText(t('previewLoading'), canvas.width / 2, canvas.height / 2);
       }
-      _videoPreviewRAF = requestAnimationFrame(draw);
+      _scheduleVideoCanvasPreviewFrame(video, draw, true);
       return;
     }
 
@@ -3687,13 +3733,24 @@ function _startVideoCanvasPreview(item) {
     _clearLiveVideoReadinessGuard(video);
 
     applyPreviewTransform();
-    _videoPreviewRAF = video.paused || video.ended || document.hidden
-      ? null
-      : requestAnimationFrame(draw);
+    if (video.paused || video.ended || document.hidden) return;
+    if (video._previewVideoFrameCallbacksUnavailable ||
+        typeof video.requestVideoFrameCallback !== 'function') {
+      const mediaTime = Number(video.currentTime) || 0;
+      if (mediaTime > fallbackLastMediaTime) {
+        fallbackLastMediaTime = mediaTime;
+        fallbackUnchangedFrames = 0;
+      } else {
+        fallbackUnchangedFrames += 1;
+        if (fallbackUnchangedFrames >= 30) return;
+      }
+    }
+    _scheduleVideoCanvasPreviewFrame(video, draw);
   }
 
   function draw() {
-    _videoPreviewRAF = null;
+    _videoPreviewFrameHandle = null;
+    _videoPreviewFrameMode = null;
     if (_videoPreviewItemId !== item.id) return; // stopped or superseded
     try { drawFrame(); }
     catch { _failLiveVideoPreview(item.id, video._previewSourceGeneration); }

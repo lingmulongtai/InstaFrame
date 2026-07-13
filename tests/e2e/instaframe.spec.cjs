@@ -3539,6 +3539,44 @@ test('paused live video preview redraws only when its frame changes', async ({ p
   await page.locator('#livePreviewVideo').evaluate(video => video.pause());
 });
 
+test('live video preview draws from decoded-frame callbacks when available', async ({ page }) => {
+  const fixture = await loadAudioVideoFixture();
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    const requestFrame = video.requestVideoFrameCallback.bind(video);
+    const cancelFrame = video.cancelVideoFrameCallback.bind(video);
+    window.__decodedFrameStats = { requested: 0, delivered: 0, cancelled: 0 };
+    video.requestVideoFrameCallback = callback => {
+      window.__decodedFrameStats.requested += 1;
+      return requestFrame((now, metadata) => {
+        window.__decodedFrameStats.delivered += 1;
+        callback(now, metadata);
+      });
+    };
+    video.cancelVideoFrameCallback = handle => {
+      window.__decodedFrameStats.cancelled += 1;
+      cancelFrame(handle);
+    };
+  });
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'decoded-frame-preview.webm',
+    mimeType: fixture.mimeType,
+    buffer: fixture.buffer,
+  });
+  await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+  await page.locator('#livePreviewVideo').evaluate(video => {
+    video.loop = true;
+    return video.play();
+  });
+  await expect.poll(() => page.evaluate(() => window.__decodedFrameStats.delivered)).toBeGreaterThan(3);
+  await page.locator('#livePreviewVideo').evaluate(video => video.pause());
+
+  const stats = await page.evaluate(() => window.__decodedFrameStats);
+  expect(stats.requested).toBeGreaterThanOrEqual(stats.delivered);
+  expect(stats.cancelled).toBeGreaterThan(0);
+});
+
 test('social presets are labelled and enforce portrait composition', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
@@ -4186,7 +4224,7 @@ test('photo and generated WebM can be switched in the live preview', async ({ pa
   }))).toEqual({ hasSource: false, hasObjectUrl: false, hasSourceId: false, paused: true });
 });
 
-test('failed live video previews release source, RAF, and canvas resources', async ({ page }) => {
+test('failed live video previews release source, frame callback, and canvas resources', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles([
     { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
     { name: 'error.webm', mimeType: 'video/webm', buffer: createWebm() },
