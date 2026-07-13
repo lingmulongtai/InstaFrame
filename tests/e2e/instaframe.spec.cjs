@@ -4311,6 +4311,29 @@ test('mobile Photos empty state opens its own file picker and moves to the previ
   await expect(page.locator('#photosPanel')).toHaveAttribute('inert', '');
 });
 
+test('keyboard card selection moves mobile focus into the selected preview', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'keyboard-photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'keyboard-video.webm', mimeType: 'video/webm', buffer: createWebm() },
+  ]);
+
+  await page.locator('#tabPhotosBtn').click();
+  await page.locator('#preview-2').focus();
+  await page.locator('#preview-2').press('Enter');
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#videoPlayPauseBtn')).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement.closest('[inert]'))).toBeNull();
+
+  await page.locator('#tabPhotosBtn').click();
+  await page.locator('#preview-1').focus();
+  await page.locator('#preview-1').press('Enter');
+  await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement.closest('[inert]'))).toBeNull();
+});
+
 test('photo and generated WebM can be switched in the live preview', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles([
     { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
