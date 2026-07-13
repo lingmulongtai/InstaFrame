@@ -182,6 +182,7 @@ const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox
 const _mapImgLoadCancels = new Set(); // cancellation callbacks for active Mapbox images
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
+let   _previewRenderController = null;
 let   _exportCancelRequested = false;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
@@ -2250,8 +2251,33 @@ function setupShareAppModal() {
 
 let _livePreviewTimer = null;
 
+function _waitForPreviewResource(promise, signal) {
+  if (signal.aborted) return Promise.reject(new DOMException('Preview cancelled', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const succeed = value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const abort = () => fail(new DOMException('Preview cancelled', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(succeed, fail);
+  });
+}
+
 function scheduleLivePreview() {
   clearTimeout(_livePreviewTimer);
+  _previewRenderController?.abort();
+  _previewRenderController = null;
   // Invalidate work immediately, rather than waiting for the debounced render
   // to begin. A removed item must not be able to finish during this window and
   // reinsert a large canvas into the preview cache.
@@ -2808,22 +2834,26 @@ async function renderLivePreview() {
 
   // Kick off async render
   const seq = ++_renderSeq;
+  const controller = new AbortController();
+  const signal = controller.signal;
+  _previewRenderController = controller;
   try {
-    const img = await _loadPreviewImage(item);
+    const img = await _waitForPreviewResource(_loadPreviewImage(item), signal);
 
     // Pre-fetch map overlay image if enabled and coordinates are available
     let mapOverlayImg = null;
     if (state.settings.showMapOverlay && state.settings.showLocation &&
         item.exif && item.exif.latitude != null && item.exif.longitude != null) {
-      mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude);
+      mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
     }
 
     const rendered = await FrameEngine.renderFrameWhenReady(
-      img, item.exif, state.settings, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg });
+      img, item.exif, state.settings,
+      { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg, signal });
 
     rendered.dataset.previewSourceLimit = String(PREVIEW_LAYOUT_LONG_EDGE);
 
-    if (seq !== _renderSeq) {
+    if (signal.aborted || seq !== _renderSeq) {
       rendered.width = 0;
       rendered.height = 0;
       return;
@@ -2850,6 +2880,8 @@ async function renderLivePreview() {
     applyPreviewTransform();
   } catch (_e) {
     // Non-critical — silently ignore preview failures
+  } finally {
+    if (_previewRenderController === controller) _previewRenderController = null;
   }
 }
 
@@ -4352,6 +4384,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('imageSection').style.display = 'none';
   window.addEventListener('pagehide', () => {
     _activeExportController?.abort();
+    _previewRenderController?.abort();
+    _previewRenderController = null;
     _disposeLiveVideoSource();
     document.querySelectorAll('.image-card').forEach(_releaseCardThumbnailUrl);
     state.items.forEach(_releaseItemOutput);
