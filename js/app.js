@@ -2731,9 +2731,27 @@ function setupVideoPreviewBar() {
     });
   }
 
-  video.addEventListener('play',   syncPlayPauseIcon);
-  video.addEventListener('pause',  syncPlayPauseIcon);
-  video.addEventListener('ended',  syncPlayPauseIcon);
+  video.addEventListener('play', () => {
+    syncPlayPauseIcon();
+    const item = getSelectedPreviewItem();
+    if (item?.isVideo) _startVideoCanvasPreview(item);
+  });
+  video.addEventListener('pause', () => {
+    syncPlayPauseIcon();
+    _cancelVideoCanvasPreviewFrame();
+  });
+  video.addEventListener('ended', () => {
+    syncPlayPauseIcon();
+    _cancelVideoCanvasPreviewFrame();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      _cancelVideoCanvasPreviewFrame();
+      return;
+    }
+    const item = getSelectedPreviewItem();
+    if (item?.isVideo && !video.paused && !video.ended) _startVideoCanvasPreview(item);
+  });
   video.addEventListener('volumechange', syncMuteIcon);
 
   video.addEventListener('loadedmetadata', () => {
@@ -3047,11 +3065,15 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
 
 // ─── Canvas-based Video Preview ──────────────────────────────────────────────
 
-function _stopVideoCanvasPreview() {
-  if (_videoPreviewRAF) {
+function _cancelVideoCanvasPreviewFrame() {
+  if (_videoPreviewRAF !== null) {
     cancelAnimationFrame(_videoPreviewRAF);
     _videoPreviewRAF = null;
   }
+}
+
+function _stopVideoCanvasPreview() {
+  _cancelVideoCanvasPreviewFrame();
   if (_videoPreviewBaseCanvas) {
     _videoPreviewBaseCanvas.width = 0;
     _videoPreviewBaseCanvas.height = 0;
@@ -3150,9 +3172,11 @@ function _armLiveVideoSourceHandlers(video, item) {
  * The hidden <video> element is used purely as a data/audio source.
  */
 function _startVideoCanvasPreview(item) {
-  if (_videoPreviewItemId === item.id) return; // already running for this item
-  _stopVideoCanvasPreview();
-  _videoPreviewItemId = item.id;
+  if (_videoPreviewItemId === item.id && _videoPreviewRAF !== null) return;
+  if (_videoPreviewItemId !== item.id) {
+    _stopVideoCanvasPreview();
+    _videoPreviewItemId = item.id;
+  }
 
   const video  = document.getElementById('livePreviewVideo');
   const canvas = document.getElementById('livePreviewCanvas');
@@ -3229,10 +3253,13 @@ function _startVideoCanvasPreview(item) {
     _clearLiveVideoReadinessGuard(video);
 
     applyPreviewTransform();
-    _videoPreviewRAF = requestAnimationFrame(draw);
+    _videoPreviewRAF = video.paused || video.ended || document.hidden
+      ? null
+      : requestAnimationFrame(draw);
   }
 
   function draw() {
+    _videoPreviewRAF = null;
     if (_videoPreviewItemId !== item.id) return; // stopped or superseded
     try { drawFrame(); }
     catch { _failLiveVideoPreview(item.id, video._previewSourceGeneration); }
