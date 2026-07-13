@@ -456,6 +456,23 @@ test('an unsupported video thumbnail is decoded only once before reporting an er
   expect(await page.evaluate(() => window.__thumbnailDecodeAttempts)).toBe(1);
 });
 
+test('a hung browser video decoder exits pending state through the app-level guard', async ({ page }) => {
+  await page.evaluate(() => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 15_000 ? 25 : delay, ...args)
+    );
+    window.FrameEngine.captureVideoFrame = () => new Promise(() => {});
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'hung-decoder.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
