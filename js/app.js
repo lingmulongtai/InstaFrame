@@ -1254,6 +1254,7 @@ async function generateAll() {
 async function regenerateItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item || item.status === 'processing' || item.exportController || _globalExportBusy) return;
+  _exportCancelRequested = false;
   setGlobalBusy(true);
   item.status    = 'pending';
   _releaseItemOutput(item);
@@ -1261,9 +1262,12 @@ async function regenerateItem(id) {
   _activeExportController = controller;
   showProgress(`${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
   await generateItem(item, p => showProgress(`${item.file.name}  ${item.isVideo ? Math.round(p*100)+'%' : ''}`, p), controller.signal);
+  const cancelled = _exportCancelRequested || controller.signal.aborted;
   setGlobalBusy(false);
   hideProgress();
   if (_activeExportController === controller) _activeExportController = null;
+  _exportCancelRequested = false;
+  if (cancelled) showToast(t('msgExportCancelled'), 'warn');
 }
 
 // Apply frame (if needed) then download — used by per-item Download button
@@ -1299,6 +1303,7 @@ async function applyAndDownloadSingle(id) {
   } catch (error) {
     if (error?.name !== 'AbortError') showToast(t('msgExportFailed'), 'error');
   } finally {
+    const cancelled = _exportCancelRequested || controller.signal.aborted;
     if (item.exportRunToken === downloadRunToken) {
       item.exportController = null;
       item.exportRunToken = null;
@@ -1307,6 +1312,7 @@ async function applyAndDownloadSingle(id) {
     hideProgress();
     if (_activeExportController === controller) _activeExportController = null;
     _exportCancelRequested = false;
+    if (cancelled) showToast(t('msgExportCancelled'), 'warn');
   }
 }
 
@@ -4827,7 +4833,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
     _exportCancelRequested = true;
     _activeExportController?.abort();
-    showToast(t('msgExportCancelled'), 'warn');
   });
   document.getElementById('clearAllBtn')?.addEventListener('click', () => clearAllItems());
 

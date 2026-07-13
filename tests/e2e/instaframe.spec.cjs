@@ -15,6 +15,17 @@ async function uploadJpegs(page, count = 1, gps = false) {
   await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
 }
 
+async function trackCancellationToasts(page) {
+  await page.evaluate(() => {
+    const nativeShowToast = window.showToast;
+    window.__cancellationToastCalls = 0;
+    window.showToast = (message, ...args) => {
+      if (/cancel|キャンセル/i.test(String(message))) window.__cancellationToastCalls += 1;
+      return nativeShowToast(message, ...args);
+    };
+  });
+}
+
 async function createBrowserRaster(page, mimeType, width = 96, height = 64) {
   const result = await page.evaluate(({ type, width: rasterWidth, height: rasterHeight }) => {
     const canvas = document.createElement('canvas');
@@ -1161,6 +1172,7 @@ test('duplicate photo exports are coalesced and removal discards stale output', 
 
 test('batch generation can be cancelled while keeping pending items', async ({ page }) => {
   await uploadJpegs(page, 2);
+  await trackCancellationToasts(page);
   await page.evaluate(() => {
     const render = window.FrameEngine.renderFrameWhenReady;
     window.FrameEngine.renderFrameWhenReady = async (...args) => {
@@ -1173,6 +1185,7 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await page.locator('#cancelExportBtn').click();
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
 test('changing frame settings aborts active work and invalidates the whole batch', async ({ page }) => {
@@ -1202,6 +1215,7 @@ test('changing frame settings aborts active work and invalidates the whole batch
 
 test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
   await uploadJpegs(page);
+  await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__photoEncodeStarted = false;
     window.__pendingPhotoEncodeCallback = null;
@@ -1228,10 +1242,12 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
   });
   await page.waitForTimeout(50);
   expect(downloads).toBe(0);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
 test('single photo cancellation interrupts a pending canvas encode', async ({ page }) => {
   await uploadJpegs(page);
+  await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__singlePhotoEncodeStarted = false;
     window.__pendingSinglePhotoEncodeCallback = null;
@@ -1259,6 +1275,7 @@ test('single photo cancellation interrupts a pending canvas encode', async ({ pa
   });
   await page.waitForTimeout(50);
   expect(downloads).toBe(0);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
 test('removing a photo during its final encode discards the stale download', async ({ page }) => {
