@@ -2205,7 +2205,12 @@ function closeMapPicker() {
 
 async function confirmMapLocation() {
   if (_mapPickerLat == null || _mapPickerLon == null) {
-    showToast(t('msgMapSelectLocation'), 'warn');
+    const coords = document.getElementById('mapPickerCoords');
+    if (coords) {
+      coords.textContent = '';
+      void coords.offsetWidth;
+      coords.textContent = t('msgMapSelectLocation');
+    }
     return;
   }
   const lat = _mapPickerLat, lon = _mapPickerLon;
@@ -2254,6 +2259,8 @@ function openShareAppModal() {
   const modal = document.getElementById('shareAppModal');
   if (!modal) return;
   _refreshShareLinks();
+  const status = document.getElementById('shareModalStatus');
+  if (status) status.textContent = '';
   modal.classList.add('open');
   modal._previousFocus = document.activeElement;
   document.getElementById('shareAppCloseBtn')?.focus();
@@ -2281,6 +2288,7 @@ function setupShareAppModal() {
   });
   document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
     const input = document.getElementById('shareUrlInput');
+    const status = document.getElementById('shareModalStatus');
     const url = input?.value || window.location.href;
     try {
       if (navigator.clipboard?.writeText) {
@@ -2295,9 +2303,21 @@ function setupShareAppModal() {
         document.execCommand('copy');
         document.body.removeChild(tmp);
       }
-      showToast(t('msgLinkCopied'), 'ok');
+      const message = t('msgLinkCopied');
+      if (status) {
+        status.textContent = '';
+        void status.offsetWidth;
+        status.textContent = message;
+      }
+      showToast(message, 'ok', { announce: false });
     } catch (_) {
-      showToast(t('msgCopyFailed'), 'warn');
+      const message = t('msgCopyFailed');
+      if (status) {
+        status.textContent = '';
+        void status.offsetWidth;
+        status.textContent = message;
+      }
+      showToast(message, 'warn', { announce: false });
     }
   });
 }
@@ -3276,7 +3296,7 @@ function onVideoExportSettingChange() {
 }
 
 // ─── Toast Notifications ──────────────────────────────────────────────────────
-function showToast(msg, type = 'info') {
+function showToast(msg, type = 'info', { announce = true } = {}) {
   let toast = document.getElementById('toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -3287,8 +3307,10 @@ function showToast(msg, type = 'info') {
   toast.removeAttribute('aria-live');
   toast.textContent = '';
   void toast.offsetWidth;
-  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  if (announce) {
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  }
   toast.textContent = msg;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toast._timer);

@@ -304,6 +304,26 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
   await expect(page.locator('#shareAppCloseBtn')).toBeFocused();
   const results = await new AxeBuilder({ page }).include('#shareAppModal').analyze();
   expect(results.violations.filter(violation => ['critical', 'serious'].includes(violation.impact))).toEqual([]);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => {} },
+    });
+  });
+  await page.locator('#copyShareUrlBtn').click();
+  const status = page.locator('#shareModalStatus');
+  await expect(status).toContainText(/copied|コピー/i);
+  expect(await status.evaluate(element => element.closest('[aria-modal="true"]')?.id)).toBe('shareAppModal');
+  await expect(page.locator('#toast')).not.toHaveAttribute('role', /.+/);
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('denied'); } },
+    });
+  });
+  await page.locator('#copyShareUrlBtn').click();
+  await expect(status).toContainText(/could not|できません/i);
   await page.keyboard.press('Escape');
   await expect(page.locator('#shareAppModal')).not.toHaveClass(/open/);
   await expect(page.locator('#shareAppBtn')).toBeFocused();
@@ -1523,6 +1543,10 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
   await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
   await page.keyboard.press('Shift+Tab');
   await expect(page.locator('[data-i18n="mapConfirm"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  const mapStatus = page.locator('#mapPickerCoords');
+  await expect(mapStatus).toContainText(/click on the map|地図をクリック/i);
+  expect(await mapStatus.evaluate(element => element.closest('[aria-modal="true"]')?.id)).toBe('mapPickerModal');
   await page.keyboard.press('Tab');
   await expect(page.locator('#mapPickerCloseBtn')).toBeFocused();
 });
