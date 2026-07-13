@@ -7,6 +7,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_DIMENSION = 16_384;
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
+  const FONT_LOAD_GUARD_MS = 5_000;
 
   function resourceLimitError() {
     const error = new Error('Media exceeds safe in-browser resource limits');
@@ -53,7 +54,8 @@ const FrameEngine = (() => {
     'Source Serif 4':     "'Source Serif 4', Georgia, serif",
   };
 
-  async function loadFrameFonts(settings) {
+  async function loadFrameFonts(settings, signal = null) {
+    assertNotAborted(signal);
     if (!document.fonts) return;
     const family = settings.fontFamily || 'Inter';
     const fam = `'${family}'`;
@@ -65,7 +67,30 @@ const FrameEngine = (() => {
       `${cameraStyle}400 16px ${fam}`,
       `${exifStyle}300 16px ${fam}`,
     ]);
-    await Promise.all([...specs].map(spec => document.fonts.load(spec).catch(() => {})));
+    const loads = [...specs].map(spec => {
+      try { return document.fonts.load(spec); }
+      catch { return Promise.resolve(); }
+    });
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      let timeoutId = null;
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', abort);
+      };
+      const finish = callback => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const abort = () => finish(() => reject(new DOMException('Export cancelled', 'AbortError')));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
+      timeoutId = setTimeout(() => finish(resolve), FONT_LOAD_GUARD_MS);
+      Promise.all(loads).then(() => finish(resolve), () => finish(resolve));
+    });
+    assertNotAborted(signal);
   }
 
   /**
@@ -168,7 +193,7 @@ const FrameEngine = (() => {
    */
   async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null, signal = null } = {}) {
     assertNotAborted(signal);
-    await loadFrameFonts(settings);
+    await loadFrameFonts(settings, signal);
     assertNotAborted(signal);
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx, signal) : img;
@@ -845,7 +870,7 @@ const FrameEngine = (() => {
     signal,
   } = {}) {
     assertNotAborted(signal);
-    await loadFrameFonts(settings);
+    await loadFrameFonts(settings, signal);
     assertNotAborted(signal);
 
     return new Promise((resolve, reject) => {
@@ -1140,7 +1165,7 @@ const FrameEngine = (() => {
 
     // ── MediaRecorder fallback (includes audio) ────────────────────────────────
     // Pre-load fonts (same as photo path)
-    await loadFrameFonts(settings);
+    await loadFrameFonts(settings, signal);
 
     const sourceHasAudio = await _fileHasAudioTrackHint(file, signal);
 

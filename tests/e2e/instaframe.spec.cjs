@@ -1387,6 +1387,53 @@ test('aborting an image decode revokes its temporary Blob URL', async ({ page })
   expect(result).toEqual({ errorName: 'AbortError', activeUrls: 0 });
 });
 
+test('font loading respects cancellation and falls back after its guard', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeFontLoad = document.fonts.load.bind(document.fonts);
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    document.fonts.load = () => new Promise(() => {});
+    const source = document.createElement('canvas');
+    source.width = 32;
+    source.height = 24;
+    source.getContext('2d').fillRect(0, 0, source.width, source.height);
+    const settings = {
+      fontFamily: 'Inter',
+      frameColor: '#f0f0f0',
+      frameBackground: 'color',
+      showShotOn: false,
+      showExifInfo: false,
+      thicknessScale: 1,
+    };
+
+    const controller = new AbortController();
+    const cancelled = window.FrameEngine.renderFrameWhenReady(
+      source, {}, settings, { signal: controller.signal }
+    );
+    controller.abort();
+    let cancelledError = '';
+    try { await cancelled; }
+    catch (error) { cancelledError = error.name; }
+
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 5_000 ? 25 : delay, ...args)
+    );
+    try {
+      const rendered = await window.FrameEngine.renderFrameWhenReady(source, {}, settings);
+      const dimensions = { width: rendered.width, height: rendered.height };
+      rendered.width = 0;
+      rendered.height = 0;
+      return { cancelledError, dimensions };
+    } finally {
+      document.fonts.load = nativeFontLoad;
+      window.setTimeout = nativeSetTimeout;
+    }
+  });
+
+  expect(result.cancelledError).toBe('AbortError');
+  expect(result.dimensions.width).toBeGreaterThan(0);
+  expect(result.dimensions.height).toBeGreaterThan(0);
+});
+
 test('Japanese preview quality labels change raster density without moving composition', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
