@@ -189,6 +189,43 @@ test('empty import focus is visible and leaves the tab order after media is adde
   await expect(page.locator('#preview-1')).toBeFocused();
 });
 
+test('preview controls leave the tab order until their media state is visible', async ({ page }) => {
+  const inactiveGroups = ['previewHistoryWrap', 'previewQualityWrap', 'previewExifWrap', 'previewZoomBar', 'previewResetViewBtn', 'previewVideoBar'];
+  for (const id of inactiveGroups) {
+    await expect(page.locator(`#${id}`)).toHaveAttribute('inert', '');
+    await expect(page.locator(`#${id}`)).toHaveAttribute('aria-hidden', 'true');
+  }
+  await page.locator('#fileInput').focus();
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(ids => ids.some(id => document.getElementById(id)?.contains(document.activeElement)), inactiveGroups)).toBe(false);
+
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'video.webm', mimeType: 'video/webm', buffer: createWebm() },
+  ]);
+  await expect(page.locator('#preview-2')).toBeVisible();
+  await expect(page.locator('#dropZone')).toHaveClass(/has-preview/);
+  for (const id of ['previewHistoryWrap', 'previewQualityWrap', 'previewExifWrap', 'previewZoomBar']) {
+    await expect(page.locator(`#${id}`)).not.toHaveAttribute('inert', '');
+    await expect(page.locator(`#${id}`)).toHaveAttribute('aria-hidden', 'false');
+  }
+  await expect(page.locator('#previewResetViewBtn')).toHaveAttribute('inert', '');
+  await expect(page.locator('#previewVideoBar')).toHaveAttribute('inert', '');
+
+  await page.locator('#previewQualityBtn').focus();
+  await page.evaluate(() => window.selectItem(2));
+  await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+  await expect(page.locator('#previewQualityWrap')).toHaveAttribute('inert', '');
+  await expect(page.locator('#previewVideoBar')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#videoPlayPauseBtn')).toBeFocused();
+
+  await page.evaluate(() => window.selectItem(1));
+  await expect(page.locator('#dropZone')).not.toHaveClass(/has-video/);
+  await expect(page.locator('#previewVideoBar')).toHaveAttribute('inert', '');
+  await expect(page.locator('#previewQualityWrap')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#previewQualityBtn')).toBeFocused();
+});
+
 test('workspace resize separators support keyboard control and expose their values', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
