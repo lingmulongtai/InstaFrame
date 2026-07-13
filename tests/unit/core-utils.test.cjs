@@ -32,6 +32,19 @@ test('preview backing density preserves normal zoom detail and caps extreme canv
   assert.ok(core.getBudgetedPreviewBackingScale(12, 700, 500, 24_000_000) < 12);
 });
 
+test('preview zoom slider gives equal travel an equal visual scale ratio', () => {
+  const positions = [50, 337.5, 625, 912.5, 1200];
+  const zooms = positions.map(core.getPreviewZoomForSliderValue);
+  const ratios = zooms.slice(1).map((zoom, index) => zoom / zooms[index]);
+  assert.equal(zooms[0], 0.5);
+  assert.equal(zooms.at(-1), 12);
+  ratios.forEach(ratio => assert.ok(Math.abs(ratio - ratios[0]) < 1e-12));
+  for (const zoom of [0.5, 1, 2, 4, 8, 12]) {
+    const roundTrip = core.getPreviewZoomForSliderValue(core.getPreviewSliderValueForZoom(zoom));
+    assert.ok(Math.abs(roundTrip - zoom) < 1e-12);
+  }
+});
+
 test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and entry overhead', () => {
   const mib = 1024 * 1024;
   assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 380 * mib + 4096);

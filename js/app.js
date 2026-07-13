@@ -3011,13 +3011,24 @@ function applyPreviewTransform() {
   }
 }
 
-function setPreviewZoom(zoom) {
-  previewZoom = Math.min(Math.max(zoom, 0.5), InstaFrameCore.MAX_PREVIEW_ZOOM || 12);
-  applyPreviewTransform();
+function _syncPreviewZoomControl() {
+  const percent = Math.round(previewZoom * 100);
   const range = document.getElementById('zoomRange');
-  if (range) range.value = Math.round(previewZoom * 100);
+  if (range) {
+    range.value = Math.round(InstaFrameCore.getPreviewSliderValueForZoom(previewZoom));
+    range.setAttribute('aria-valuetext', `${percent}%`);
+  }
   const label = document.getElementById('zoomLabel');
-  if (label) label.textContent = Math.round(previewZoom * 100) + '%';
+  if (label) label.textContent = `${percent}%`;
+}
+
+function setPreviewZoom(zoom) {
+  previewZoom = Math.min(
+    Math.max(zoom, InstaFrameCore.MIN_PREVIEW_ZOOM || 0.5),
+    InstaFrameCore.MAX_PREVIEW_ZOOM || 12
+  );
+  applyPreviewTransform();
+  _syncPreviewZoomControl();
   updatePreviewViewModifiedState();
   // Every quality mode derives its backing density from zoom. Re-rendering is
   // required here; otherwise High/Max merely stretch their old bitmap in CSS.
@@ -4027,20 +4038,24 @@ function setupDropZone() {
   // Scroll-wheel zoom (only when preview is active)
   zone.addEventListener('wheel', e => {
     if (!zone.classList.contains('has-preview')) return;
+    if (e.deltaY === 0) return;
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.1 : -0.1;
-    setPreviewZoom(previewZoom + delta);
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setPreviewZoom(previewZoom * factor);
   }, { passive: false });
 
   // Zoom slider
   const zoomRange = document.getElementById('zoomRange');
   if (zoomRange) {
-    zoomRange.addEventListener('input', () => setPreviewZoom(parseInt(zoomRange.value, 10) / 100));
+    _syncPreviewZoomControl();
+    zoomRange.addEventListener('input', () => {
+      setPreviewZoom(InstaFrameCore.getPreviewZoomForSliderValue(zoomRange.value));
+    });
   }
 
   // Zoom ± buttons
-  document.getElementById('zoomOutBtn')?.addEventListener('click', () => setPreviewZoom(previewZoom - 0.1));
-  document.getElementById('zoomInBtn')?.addEventListener('click',  () => setPreviewZoom(previewZoom + 0.1));
+  document.getElementById('zoomOutBtn')?.addEventListener('click', () => setPreviewZoom(previewZoom / 1.2));
+  document.getElementById('zoomInBtn')?.addEventListener('click',  () => setPreviewZoom(previewZoom * 1.2));
 
   // Click zoom label to reset to 100% and reset pan
   document.getElementById('zoomLabel')?.addEventListener('click', () => {
