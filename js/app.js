@@ -3016,8 +3016,9 @@ function updateItemPreview(item) {
   if (item.status === 'done' && (item.canvas || item.videoBlob)) {
     if (item.isVideo) {
       // Video done: thumbnail stays, add a "ready" overlay on badge; enable download
+      const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
       const origThumb = previewDiv.querySelector('img.thumb-orig');
-      if (origThumb) origThumb.style.display = '';
+      if (origThumb) origThumb.style.display = framedCanvas ? 'none' : '';
     } else {
       // Photo done: replace thumbnail with framed canvas preview
       let existing = previewDiv.querySelector('canvas.thumb-framed');
@@ -3038,9 +3039,13 @@ function updateItemPreview(item) {
     if (dlBtn) dlBtn.disabled = false;
   } else {
     const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
-    if (framedCanvas) framedCanvas.remove();
     const origThumb = previewDiv.querySelector('img.thumb-orig');
-    if (origThumb) origThumb.style.display = '';
+    if (item.isVideo && framedCanvas) {
+      if (origThumb) origThumb.style.display = 'none';
+    } else {
+      if (framedCanvas) framedCanvas.remove();
+      if (origThumb) origThumb.style.display = '';
+    }
     // Download button stays enabled — clicking it will auto-generate then download
     if (dlBtn) dlBtn.disabled = (item.status === 'processing');
   }
