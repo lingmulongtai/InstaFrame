@@ -1166,10 +1166,8 @@ async function removeItem(id, options = {}) {
   }
   updateUI();
   scheduleLivePreview();
-  const focusTarget = state.items.length
-    ? document.querySelector('.image-card.selected-preview .card-preview, .image-card .card-preview')
-    : _getEmptyImportFocusTarget();
-  focusTarget?.focus();
+  if (state.items.length) _requestLoadedMediaFocus();
+  else _getEmptyImportFocusTarget()?.focus();
   return true;
 }
 
