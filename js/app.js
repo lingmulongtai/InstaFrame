@@ -1774,6 +1774,17 @@ function saveSettings() {
   } catch (e) {}
 }
 
+function _syncPhotoQualityAvailability(format) {
+  const qualityRow = document.getElementById('photoQualityRow');
+  if (!qualityRow) return;
+  const hidden = format === 'png';
+  qualityRow.classList.toggle('row-hidden', hidden);
+  qualityRow.hidden = hidden;
+  qualityRow.querySelectorAll('input, select, button').forEach(control => {
+    control.disabled = hidden;
+  });
+}
+
 function restoreSettings() {
   let saved;
   try {
@@ -1931,14 +1942,7 @@ function restoreSettings() {
     const r = document.querySelector(`input[name="exportPhotoFormat"][value="${saved.exportPhotoFormat}"]`);
     if (r) {
       r.checked = true;
-      // Show/hide quality row
-      const qRow = document.getElementById('photoQualityRow');
-      if (qRow) {
-        const hidden = saved.exportPhotoFormat === 'png';
-        qRow.classList.toggle('row-hidden', hidden);
-        qRow.hidden = hidden;
-        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
-      }
+      _syncPhotoQualityAvailability(saved.exportPhotoFormat);
     }
   }
   // Photo quality
@@ -2149,8 +2153,7 @@ function _syncDomWithStateSettings() {
   const bitrate = document.querySelector(`input[name="exportVideoBitrate"][value="${s.exportVideoBitrate}"]`);
   if (bitrate) bitrate.checked = true;
 
-  const qRow = document.getElementById('photoQualityRow');
-  if (qRow) qRow.classList.toggle('row-hidden', s.exportPhotoFormat === 'png');
+  _syncPhotoQualityAvailability(s.exportPhotoFormat);
 
   const setText = (id, text) => {
     const el = document.getElementById(id);
@@ -4404,13 +4407,7 @@ function setupSettingsListeners() {
   // ── Export: photo format + quality ───────────────────────────────────────
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
-      const qRow = document.getElementById('photoQualityRow');
-      if (qRow) {
-        const hidden = r.value === 'png';
-        qRow.classList.toggle('row-hidden', hidden);
-        qRow.hidden = hidden;
-        qRow.querySelectorAll('input, select, button').forEach(control => { control.disabled = hidden; });
-      }
+      _syncPhotoQualityAvailability(r.value);
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
