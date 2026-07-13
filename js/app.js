@@ -5038,10 +5038,11 @@ function setupPreviewQuality() {
   setPreviewQuality(saved, { schedule: false });
 
   const options = [...popup.querySelectorAll('.pq-option')];
-  const closePopup = ({ restoreFocus = false } = {}) => {
+  const closePopup = ({ restoreFocus = false, allowFocusToLeave = false } = {}) => {
+    const focusedInside = popup.contains(document.activeElement);
     popup.classList.remove('open');
     btn.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) btn.focus();
+    if (restoreFocus || (focusedInside && !allowFocusToLeave)) btn.focus();
   };
   const openPopup = () => {
     popup.classList.add('open');
@@ -5078,7 +5079,10 @@ function setupPreviewQuality() {
         chooseOption(opt);
       } else if (event.key === 'Escape' || event.key === 'Tab') {
         if (event.key === 'Escape') event.preventDefault();
-        closePopup({ restoreFocus: event.key === 'Escape' });
+        closePopup({
+          restoreFocus: event.key === 'Escape',
+          allowFocusToLeave: event.key === 'Tab',
+        });
       }
     });
   });
