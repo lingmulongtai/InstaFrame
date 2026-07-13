@@ -439,6 +439,23 @@ test('video thumbnail decoding is limited to two active jobs', async ({ page }) 
   }))).toEqual({ peak: 2, completed: 6 });
 });
 
+test('an unsupported video thumbnail is decoded only once before reporting an error', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__thumbnailDecodeAttempts = 0;
+    window.FrameEngine.captureVideoFrame = async () => {
+      window.__thumbnailDecodeAttempts += 1;
+      throw new Error('simulated unsupported codec');
+    };
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'unsupported-once.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  expect(await page.evaluate(() => window.__thumbnailDecodeAttempts)).toBe(1);
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {

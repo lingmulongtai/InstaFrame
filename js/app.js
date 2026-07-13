@@ -833,42 +833,41 @@ async function addFiles(files) {
     // Generate framed thumbnail for video cards asynchronously
     if (video) {
       _queueVideoThumbnail(item, async () => {
+        const thumbnailSignal = item.thumbnailController.signal;
+        const img = await FrameEngine.captureVideoFrame(file, 0, { signal: thumbnailSignal });
+        let framed = null;
+        let thumbnailSource = img;
         try {
-          const img = await FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal });
           // Render a framed preview at thumbnail resolution
-          const framed = await FrameEngine.renderFrameWhenReady(
-            img, item.exif, state.settings, { maxPreviewPx: 400 });
-          const previewDiv = document.getElementById(`preview-${item.id}`);
-          if (!previewDiv) {
-            framed.width = 0;
-            framed.height = 0;
-            return;
-          }
-          // Create a small canvas thumbnail (same pattern as photo items)
-          const maxW = 200, maxH = 200;
-          const scale = Math.min(maxW / framed.width, maxH / framed.height);
-          let tc = previewDiv.querySelector('canvas.thumb-framed');
-          if (!tc) {
-            tc = document.createElement('canvas');
-            tc.className = 'thumb-framed';
-            previewDiv.insertBefore(tc, previewDiv.firstChild);
-          }
-          tc.width  = Math.round(framed.width  * scale);
-          tc.height = Math.round(framed.height * scale);
-          tc.getContext('2d').drawImage(framed, 0, 0, tc.width, tc.height);
-          framed.width = 0;
-          framed.height = 0;
-          const origThumb = previewDiv.querySelector('img.thumb-orig');
-          if (origThumb) origThumb.style.display = 'none';
+          framed = await FrameEngine.renderFrameWhenReady(
+            img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
+          thumbnailSource = framed;
         } catch (error) {
-          if (error?.name === 'AbortError') return;
-          // Fallback: show raw captured frame
-          const img = await FrameEngine.captureVideoFrame(file, 0, { signal: item.thumbnailController.signal });
-          const previewDiv = document.getElementById(`preview-${item.id}`);
-          if (!previewDiv) return;
-          const thumb = previewDiv.querySelector('img.thumb-orig');
-          if (thumb && img) thumb.src = img.src;
+          if (error?.name === 'AbortError') throw error;
+          // The video decoded successfully; only framing failed. Draw the
+          // already-decoded image instead of starting the same decode again.
         }
+        const previewDiv = document.getElementById(`preview-${item.id}`);
+        if (!previewDiv) {
+          if (framed) { framed.width = 0; framed.height = 0; }
+          return;
+        }
+        const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
+        const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
+        const maxW = 200, maxH = 200;
+        const scale = Math.min(maxW / sourceW, maxH / sourceH);
+        let tc = previewDiv.querySelector('canvas.thumb-framed');
+        if (!tc) {
+          tc = document.createElement('canvas');
+          tc.className = 'thumb-framed';
+          previewDiv.insertBefore(tc, previewDiv.firstChild);
+        }
+        tc.width  = Math.round(sourceW * scale);
+        tc.height = Math.round(sourceH * scale);
+        tc.getContext('2d').drawImage(thumbnailSource, 0, 0, tc.width, tc.height);
+        if (framed) { framed.width = 0; framed.height = 0; }
+        const origThumb = previewDiv.querySelector('img.thumb-orig');
+        if (origThumb) origThumb.style.display = 'none';
       })
         .catch(error => {
           if (error?.name === 'AbortError') return;
