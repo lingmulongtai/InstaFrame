@@ -2209,17 +2209,11 @@ function toggleLiveExifPanel() {
 }
 
 let _liveExifApplyTimer = null;
-function scheduleLiveExifEditApply() {
-  clearTimeout(_liveExifApplyTimer);
-  _liveExifApplyTimer = setTimeout(applyLiveExifEdit, 100);
-}
+let _liveExifPendingEdit = null;
 
-function applyLiveExifEdit() {
-  const item = getSelectedPreviewItem();
-  if (!item) return;
+function _readLiveExifEdit() {
   const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-
-  const nextExif = {
+  return {
     make:         getVal('live-exif-make'),
     model:        getVal('live-exif-model'),
     lensModel:    getVal('live-exif-lens'),
@@ -2229,7 +2223,28 @@ function applyLiveExifEdit() {
     iso:          getVal('live-exif-iso'),
     location:     getVal('live-exif-location'),
   };
+}
 
+function _flushLiveExifEdit() {
+  clearTimeout(_liveExifApplyTimer);
+  _liveExifApplyTimer = null;
+  const pending = _liveExifPendingEdit;
+  _liveExifPendingEdit = null;
+  if (pending && state.items.includes(pending.item)) {
+    applyLiveExifEdit(pending.item, pending.nextExif);
+  }
+}
+
+function scheduleLiveExifEditApply() {
+  const item = getSelectedPreviewItem();
+  if (!item) return;
+  if (_liveExifPendingEdit?.item !== item) _flushLiveExifEdit();
+  clearTimeout(_liveExifApplyTimer);
+  _liveExifPendingEdit = { item, nextExif: _readLiveExifEdit() };
+  _liveExifApplyTimer = setTimeout(_flushLiveExifEdit, 100);
+}
+
+function applyLiveExifEdit(item, nextExif) {
   const prevExif = item.exif || {};
   const changed =
     prevExif.make !== nextExif.make ||
@@ -2938,6 +2953,7 @@ function resetPreviewView() {
 
 // ─── Item Selection for Preview ───────────────────────────────────────────────
 function selectItem(id) {
+  _flushLiveExifEdit();
   state.selectedItemId = id;
   document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected-preview'));
   document.querySelectorAll('.card-preview').forEach(preview => preview.setAttribute('aria-pressed', 'false'));

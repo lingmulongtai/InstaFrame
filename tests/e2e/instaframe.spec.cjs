@@ -712,6 +712,22 @@ test('EXIF edits remain item-specific and visual settings persist', async ({ pag
   await expect(page.locator('#mapboxTokenInput')).toHaveValue('pk.test.signature');
 });
 
+test('switching photos cannot discard a pending live EXIF edit', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const input = document.getElementById('live-exif-make');
+    input.value = 'Edited A';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    window.selectItem(2);
+  });
+  await page.waitForTimeout(150);
+
+  await page.locator('#preview-1').click();
+  await expect(page.locator('#live-exif-make')).toHaveValue('Edited A');
+  await page.locator('#preview-2').click();
+  await expect(page.locator('#live-exif-make')).toHaveValue('FUJIFILM');
+});
+
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await uploadJpegs(page, 2);
   const downloadPromise = page.waitForEvent('download');
