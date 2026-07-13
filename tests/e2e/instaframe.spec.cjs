@@ -2,6 +2,7 @@ const { test, expect } = require('@playwright/test');
 const { AxeBuilder } = require('@axe-core/playwright');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const JSZip = require('jszip');
 const { createJpeg, createWebm } = require('./fixtures.cjs');
 
 async function uploadJpegs(page, count = 1, gps = false) {
@@ -1185,6 +1186,26 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   expect(filePath).toBeTruthy();
   const bytes = await fs.readFile(filePath);
   expect([...bytes.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('batch export keeps case-insensitive duplicate filenames as separate ZIP entries', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'same.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'SAME.JPG', mimeType: 'image/jpeg', buffer: createJpeg({ colorShift: 35 }) },
+  ]);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const download = await downloadPromise;
+  const filePath = await download.path();
+  const archive = await JSZip.loadAsync(await fs.readFile(filePath));
+  const names = Object.values(archive.files).filter(entry => !entry.dir).map(entry => entry.name);
+
+  expect(names).toHaveLength(2);
+  expect(new Set(names.map(name => name.toLowerCase())).size).toBe(2);
+  expect(names.map(name => name.toLowerCase()).sort()).toEqual([
+    'same_frame (2).jpg',
+    'same_frame.jpg',
+  ]);
 });
 
 test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
