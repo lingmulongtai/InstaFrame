@@ -30,6 +30,9 @@ test('preview backing density preserves normal zoom detail and caps extreme canv
   assert.equal(core.getBudgetedPreviewBackingScale(8, 500, 400, 24_000_000), 8);
   assert.equal(core.getBudgetedPreviewBackingScale(12, 430, 330, 24_000_000), 12);
   assert.ok(core.getBudgetedPreviewBackingScale(12, 700, 500, 24_000_000) < 12);
+  const panorama = core.getBudgetedPreviewBackingScale(12, 1_860, 145, 24_000_000);
+  assert.ok(Math.round(1_860 * panorama) <= core.MAX_SAFE_CANVAS_SIDE);
+  assert.ok(Math.round(145 * panorama) <= core.MAX_SAFE_CANVAS_SIDE);
 });
 
 test('preview zoom slider gives equal travel an equal visual scale ratio', () => {
