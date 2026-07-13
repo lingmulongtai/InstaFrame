@@ -7,7 +7,7 @@
   if (root) root.InstaFrameCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   const PREVIEW_QUALITIES = Object.freeze(['auto', 'draft', 'normal', 'high', 'max']);
-  const MAX_PREVIEW_ZOOM = 8;
+  const MAX_PREVIEW_ZOOM = 12;
 
   function normalizePreviewQuality(value) {
     return PREVIEW_QUALITIES.includes(value) ? value : 'auto';
@@ -25,7 +25,9 @@
     if (q === 'draft') return Math.min(2.5, Math.max(1, zoomDetail));
     if (q === 'normal') return Math.min(4, Math.max(1.5, Math.min(2, dpr)) * zoomDetail);
     if (q === 'high') return Math.min(6, Math.max(2, Math.min(3, dpr * 1.5)) * zoomDetail);
-    if (q === 'max') return Math.min(MAX_PREVIEW_ZOOM, Math.max(3, Math.min(4, dpr * 2)) * zoomDetail);
+    if (q === 'max') {
+      return Math.min(MAX_PREVIEW_ZOOM, Math.max(safeZoom, Math.max(3, Math.min(4, dpr * 2)) * zoomDetail));
+    }
     // Auto should still look crisp on 1× desktop displays. Increase density
     // gradually while zooming instead of stretching the same backing bitmap.
     return Math.min(MAX_PREVIEW_ZOOM, Math.max(2, dpr * safeZoom));

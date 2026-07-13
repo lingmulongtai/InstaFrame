@@ -1144,8 +1144,8 @@ test('video cancellation interrupts a pending audio-track sample read', async ({
   await expect.poll(() => page.evaluate(() => window.__audioSniffResult)).toEqual({ state: 'rejected', name: 'AbortError' });
 });
 
-test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
-  const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 4096, 2731);
+test('auto preview stays pixel-dense through 1200% zoom', async ({ page }) => {
+  const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 6400, 4267);
   await page.locator('#fileInput').setInputFiles({
     name: 'large-preview.jpg',
     mimeType: 'image/jpeg',
@@ -1154,15 +1154,15 @@ test('auto preview stays pixel-dense through 800% zoom', async ({ page }) => {
   const canvas = page.locator('#livePreviewCanvas');
   await expect(canvas).toBeVisible();
   await expect.poll(() => canvas.evaluate(element => element.width / element.getBoundingClientRect().width)).toBeGreaterThanOrEqual(1.95);
-  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.compositionWidth))).toBeGreaterThan(4000);
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.compositionWidth))).toBeGreaterThan(6000);
 
   await page.locator('#zoomRange').evaluate(element => {
-    element.value = '800';
+    element.value = '1200';
     element.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await expect(page.locator('#zoomLabel')).toHaveText('800%');
-  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewSourceLimit))).toBe(5120);
-  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(7.9);
+  await expect(page.locator('#zoomLabel')).toHaveText('1200%');
+  await expect.poll(() => canvas.evaluate(element => Number(element.dataset.previewSourceLimit))).toBe(6144);
+  await expect.poll(() => canvas.evaluate(element => element.width / parseFloat(element.style.width))).toBeGreaterThanOrEqual(11.9);
   const backing = await canvas.evaluate(element => ({
     pixels: element.width * element.height,
     budget: Number(element.dataset.previewPixelBudget),
