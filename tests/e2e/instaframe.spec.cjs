@@ -833,6 +833,56 @@ test('GPS import sends no coordinates until explicit consent', async ({ page }) 
   expect(locationRequests.some(url => url.includes('nominatim'))).toBe(true);
 });
 
+test('revoking location consent cancels an in-flight Mapbox image load', async ({ page }) => {
+  let releaseMapRequest;
+  await page.route('https://api.mapbox.com/**', async route => {
+    await new Promise(resolve => { releaseMapRequest = resolve; });
+    await route.abort().catch(() => {});
+  });
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: descriptor.configurable,
+      enumerable: descriptor.enumerable,
+      get: descriptor.get,
+      set(value) {
+        if (String(value).startsWith('https://api.mapbox.com/')) {
+          this.dataset.mapboxRequest = 'true';
+          window.__activeMapboxImage = this;
+        }
+        return descriptor.set.call(this, value);
+      },
+    });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.test',
+    }));
+  });
+  await page.reload();
+
+  try {
+    const mapRequest = page.waitForRequest(request => request.url().startsWith('https://api.mapbox.com/'));
+    await page.locator('#fileInput').setInputFiles({
+      name: 'map-cancel.jpg',
+      mimeType: 'image/jpeg',
+      buffer: createJpeg({ gps: true }),
+    });
+    await page.locator('label:has(#showLocation)').click();
+    await page.locator('label:has(#showMapOverlay)').click();
+    await mapRequest;
+    await expect.poll(() => page.evaluate(() => window.__activeMapboxImage?.hasAttribute('src'))).toBe(true);
+
+    await page.locator('#customizeBtn').click();
+    await page.locator('#manageLocationPrivacyBtn').click();
+    await page.locator('#locationPrivacyRevokeBtn').click();
+    await expect.poll(() => page.evaluate(() => window.__activeMapboxImage?.hasAttribute('src'))).toBe(false);
+  } finally {
+    releaseMapRequest?.();
+  }
+});
+
 test('map picker loads its UI library locally after consent', async ({ page }) => {
   const requests = [];
   page.on('request', request => {

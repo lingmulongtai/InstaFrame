@@ -179,6 +179,7 @@ const _imgLoadEntries = new Map(); // item.id → { promise, controller }
 const _transientPreviewImages = new Map(); // one-shot decoded images too large for the LRU
 const _frameCache    = new Map(); // "${item.id}|${hash}" → HTMLCanvasElement
 const _mapImgCache   = new Map(); // "lat,lon,zoom" → HTMLImageElement (Mapbox static tiles)
+const _mapImgLoadCancels = new Set(); // cancellation callbacks for active Mapbox images
 const _imgFailed     = new Set(); // item IDs that failed image load — skip retry
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _exportCancelRequested = false;
@@ -359,6 +360,7 @@ function _finishLocationConsent(allowed, persist = false) {
     const mapToggle = document.getElementById('showMapOverlay');
     if (mapToggle) mapToggle.checked = false;
     state.settings.showMapOverlay = false;
+    _cancelMapImageLoads();
     _mapImgCache.clear();
     saveSettings();
     scheduleLivePreview();
@@ -432,6 +434,7 @@ function setupLocationPrivacy() {
     }
     savePrefs(prefs);
     _mapboxUnavailableNotified = false;
+    _cancelMapImageLoads();
     _mapImgCache.clear();
     updateLocationPrivacyStatus();
     showToast(t(value ? 'msgMapboxTokenSaved' : 'msgMapboxTokenCleared'), 'success');
@@ -496,6 +499,11 @@ function getMapboxToken() {
   return hasUserToken ? userToken.trim() : siteToken;
 }
 
+function _cancelMapImageLoads() {
+  for (const cancel of [..._mapImgLoadCancels]) cancel();
+  _mapImgLoadCancels.clear();
+}
+
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
 async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
   if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -515,6 +523,7 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
     let settled = false;
     const cleanup = () => {
       signal?.removeEventListener('abort', abort);
+      _mapImgLoadCancels.delete(abort);
       img.onload = null;
       img.onerror = null;
     };
@@ -531,6 +540,7 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
       cleanup();
       reject(new DOMException('Export cancelled', 'AbortError'));
     };
+    _mapImgLoadCancels.add(abort);
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) { abort(); return; }
     img.crossOrigin = 'anonymous';
@@ -4354,6 +4364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     _imgCache.clear();
     for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
     _frameCache.clear();
+    _cancelMapImageLoads();
     _mapImgCache.clear();
   }, { once: true });
 });
