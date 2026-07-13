@@ -628,7 +628,7 @@ test('card progress remains described without competing with the export live reg
   await expect(preview).toHaveAttribute('aria-describedby', 'status-badge-1');
   await expect(badge).not.toHaveAttribute('role');
   await expect(badge).not.toHaveAttribute('aria-live');
-  await expect(badge).toContainText(/pending|待機中/i);
+  await expect(badge).toContainText(/pending|未適用/i);
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('role', 'status');
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('aria-live', 'polite');
 });
