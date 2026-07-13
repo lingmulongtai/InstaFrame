@@ -345,9 +345,12 @@ function setupModalAccessibility() {
     if (!modal) return;
     const focusable = [...modal.querySelectorAll(
       'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )].filter(element => element.getClientRects().length > 0);
+    )].filter(element => (
+      element.getClientRects().length > 0 && !element.inert && !element.closest('[inert]')
+    ));
     if (!focusable.length) {
       event.preventDefault();
+      modal.tabIndex = -1;
       modal.focus();
       return;
     }
