@@ -3866,16 +3866,21 @@ test('closing the map picker aborts its IP fallback and releases the map', async
   expect(await page.locator('#mapPickerContainer').evaluate(element => element._leaflet_id)).toBeUndefined();
 });
 
-test('unsupported browser codecs fail visibly instead of silently', async ({ page }) => {
-  await page.locator('#fileInput').setInputFiles({
-    name: 'unsupported.heic',
-    mimeType: 'image/heic',
-    buffer: Buffer.from('not-a-decodable-heic-file'),
+for (const { extension, mimeType } of [
+  { extension: 'heic', mimeType: 'image/heic' },
+  { extension: 'heif', mimeType: 'image/heif' },
+]) {
+  test(`unsupported ${extension.toUpperCase()} fails visibly instead of silently`, async ({ page }) => {
+    await page.locator('#fileInput').setInputFiles({
+      name: `unsupported.${extension}`,
+      mimeType,
+      buffer: Buffer.from(`not-a-decodable-${extension}-file`),
+    });
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+    await expect(page.locator('#toast')).toContainText(/decode|デコード/i);
+    await expect(page.locator('.preview-empty-format-note')).toContainText(/HEIC/i);
   });
-  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
-  await expect(page.locator('#toast')).toContainText(/decode|デコード/i);
-  await expect(page.locator('.preview-empty-format-note')).toContainText(/HEIC/i);
-});
+}
 
 test('mobile layout exposes import, settings, and a readable EXIF editor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
