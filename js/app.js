@@ -2897,6 +2897,9 @@ async function confirmMapLocation() {
 }
 
 // ─── Share Modal ───────────────────────────────────────────────────────────────
+let _shareModalGeneration = 0;
+let _shareCopyRequestId = 0;
+
 function _buildSharePayload() {
   const url = window.location.href;
   const text = `InstaFrame — ${t('appSubtitle')}`;
@@ -2924,6 +2927,7 @@ function _refreshShareLinks() {
 function openShareAppModal() {
   const modal = document.getElementById('shareAppModal');
   if (!modal) return;
+  _shareModalGeneration += 1;
   _refreshShareLinks();
   const status = document.getElementById('shareModalStatus');
   if (status) status.textContent = '';
@@ -2935,6 +2939,7 @@ function openShareAppModal() {
 function closeShareAppModal() {
   const modal = document.getElementById('shareAppModal');
   if (modal) {
+    _shareModalGeneration += 1;
     _setModalOpen(modal, false);
     const previousFocus = modal._previousFocus;
     modal._previousFocus = null;
@@ -2954,9 +2959,15 @@ function setupShareAppModal() {
     closeShareAppModal();
   });
   document.getElementById('copyShareUrlBtn')?.addEventListener('click', async () => {
+    const modal = document.getElementById('shareAppModal');
     const input = document.getElementById('shareUrlInput');
     const status = document.getElementById('shareModalStatus');
     const url = input?.value || window.location.href;
+    const generation = _shareModalGeneration;
+    const requestId = ++_shareCopyRequestId;
+    const ownsResult = () => modal?.classList.contains('open')
+      && generation === _shareModalGeneration
+      && requestId === _shareCopyRequestId;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
@@ -2970,6 +2981,7 @@ function setupShareAppModal() {
         document.execCommand('copy');
         document.body.removeChild(tmp);
       }
+      if (!ownsResult()) return;
       const message = t('msgLinkCopied');
       if (status) {
         status.textContent = '';
@@ -2978,6 +2990,7 @@ function setupShareAppModal() {
       }
       showToast(message, 'ok', { announce: false });
     } catch (_) {
+      if (!ownsResult()) return;
       const message = t('msgCopyFailed');
       if (status) {
         status.textContent = '';
