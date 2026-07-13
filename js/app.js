@@ -77,6 +77,7 @@ const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
+const LIVE_VIDEO_PREVIEW_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
 const VENDOR_SCRIPT_GUARD_MS = 12_000;
 const LOCATION_FETCH_GUARD_MS = 10_000;
@@ -2979,16 +2980,94 @@ function _stopVideoCanvasPreview() {
   _videoPreviewItemId = null;
 }
 
+function _clearLiveVideoMetadataGuard(video) {
+  if (!video) return;
+  clearTimeout(video._previewMetadataGuard);
+  video._previewMetadataGuard = null;
+  if (video._previewMetadataHandler) {
+    video.removeEventListener('loadedmetadata', video._previewMetadataHandler);
+    video._previewMetadataHandler = null;
+  }
+}
+
+function _clearLiveVideoSourceHandlers(video) {
+  if (!video) return;
+  _clearLiveVideoMetadataGuard(video);
+  if (video._previewErrorHandler) {
+    video.removeEventListener('error', video._previewErrorHandler);
+    video._previewErrorHandler = null;
+  }
+}
+
+function _setLivePreviewError(message = '') {
+  const error = document.getElementById('livePreviewError');
+  if (!error) return;
+  if (message) {
+    error.hidden = false;
+    error.textContent = message;
+    return;
+  }
+  error.hidden = true;
+  error.textContent = '';
+}
+
 function _disposeLiveVideoSource() {
   _stopVideoCanvasPreview();
   const video = document.getElementById('livePreviewVideo');
   if (!video) return;
-  video.pause();
-  video.removeAttribute('src');
-  video.load();
-  if (video._objUrl) URL.revokeObjectURL(video._objUrl);
+  _clearLiveVideoSourceHandlers(video);
+  video._previewSourceGeneration = (video._previewSourceGeneration || 0) + 1;
+  const objUrl = video._objUrl;
   video._objUrl = null;
   video._srcId = null;
+  try { video.pause(); } catch (_) { /* best-effort media teardown */ }
+  try { video.removeAttribute('src'); } catch (_) { /* best-effort media teardown */ }
+  try { video.load(); } catch (_) { /* best-effort media teardown */ }
+  if (objUrl) URL.revokeObjectURL(objUrl);
+}
+
+function _failLiveVideoPreview(itemId, generation) {
+  const video = document.getElementById('livePreviewVideo');
+  if (!video || video._srcId !== itemId || video._previewSourceGeneration !== generation) return;
+  const item = state.items.find(candidate => candidate.id === itemId);
+  _disposeLiveVideoSource();
+
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (canvas) {
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.style.width = '';
+    canvas.style.height = '';
+    canvas.style.display = 'none';
+    canvas.style.opacity = '';
+    canvas.style.transform = '';
+  }
+  document.getElementById('dropZone')?.classList.remove('has-video');
+
+  if (!item) return;
+  const message = tf('msgUnsupportedMedia', { name: item.file.name });
+  item.status = 'error';
+  item.errorMsg = message;
+  updateItemStatus(item);
+  _setLivePreviewError(message);
+}
+
+function _armLiveVideoSourceHandlers(video, item) {
+  _clearLiveVideoSourceHandlers(video);
+  const generation = (video._previewSourceGeneration || 0) + 1;
+  video._previewSourceGeneration = generation;
+  video._previewMetadataHandler = () => {
+    if (video._previewSourceGeneration !== generation || video._srcId !== item.id) return;
+    _clearLiveVideoMetadataGuard(video);
+  };
+  video._previewErrorHandler = () => _failLiveVideoPreview(item.id, generation);
+  video.addEventListener('loadedmetadata', video._previewMetadataHandler);
+  video.addEventListener('error', video._previewErrorHandler);
+  video._previewMetadataGuard = setTimeout(
+    () => _failLiveVideoPreview(item.id, generation),
+    LIVE_VIDEO_PREVIEW_GUARD_MS
+  );
+  return generation;
 }
 
 /**
@@ -3008,9 +3087,7 @@ function _startVideoCanvasPreview(item) {
 
   let _lastLayout = null; // cache layout between frames to avoid redundant recalcs
 
-  function draw() {
-    if (_videoPreviewItemId !== item.id) return; // stopped or superseded
-
+  function drawFrame() {
     if (!video.videoWidth || !video.videoHeight) {
       // Video metadata not yet loaded — draw loading placeholder
       const areaW = Math.max(pane.clientWidth  - 40, 80);
@@ -3080,6 +3157,12 @@ function _startVideoCanvasPreview(item) {
     _videoPreviewRAF = requestAnimationFrame(draw);
   }
 
+  function draw() {
+    if (_videoPreviewItemId !== item.id) return; // stopped or superseded
+    try { drawFrame(); }
+    catch { _failLiveVideoPreview(item.id, video._previewSourceGeneration); }
+  }
+
   draw();
 }
 
@@ -3088,6 +3171,7 @@ async function renderLivePreview() {
   const canvas  = document.getElementById('livePreviewCanvas');
   const emptyEl = document.getElementById('previewEmpty');
   if (!pane || !canvas) return;
+  _setLivePreviewError();
 
   // ── Empty state ────────────────────────────────────────────────────────────
   if (state.items.length === 0) {
@@ -3113,8 +3197,14 @@ async function renderLivePreview() {
       _disposeLiveVideoSource();
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
-      liveVideo.src     = liveVideo._objUrl;
-      liveVideo.load();
+      const generation = _armLiveVideoSourceHandlers(liveVideo, item);
+      try {
+        liveVideo.src = liveVideo._objUrl;
+        liveVideo.load();
+      } catch {
+        _failLiveVideoPreview(item.id, generation);
+        return;
+      }
     }
     // Video element stays hidden; canvas shows the framed video
     liveVideo.style.display = 'none';
