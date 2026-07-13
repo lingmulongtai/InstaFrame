@@ -170,8 +170,7 @@ InstaFrame/
 ├── playwright.config.cjs
 ├── eslint.config.mjs
 └── .github/workflows/
-    ├── ci.yml
-    └── pages.yml
+    └── ci.yml  # 品質ゲートとGitHub Pagesデプロイ
 ```
 
 ## License
