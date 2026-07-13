@@ -9,6 +9,7 @@ const FrameEngine = (() => {
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
+  let textBackgroundSampler = null;
 
   function resourceLimitError() {
     const error = new Error('Media exceeds safe in-browser resource limits');
@@ -490,13 +491,19 @@ const FrameEngine = (() => {
   function detectTextBackgroundDark(ctx, layout, settings) {
     if (settings.frameBackground !== 'blur') return isColorDark(layout.frameColor || '#F0F0F0');
     try {
-      const sample = document.createElement('canvas');
-      sample.width = 8;
-      sample.height = 4;
-      const sampleCtx = sample.getContext('2d', { willReadFrequently: true });
+      if (!textBackgroundSampler) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 8;
+        canvas.height = 4;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) throw new Error('Canvas sampling is unavailable');
+        textBackgroundSampler = { canvas, context };
+      }
+      const { canvas: sample, context: sampleCtx } = textBackgroundSampler;
       const coordinateScale = layout.canvasW ? ctx.canvas.width / layout.canvasW : 1;
       const sy = Math.max(0, Math.round(layout.imageBottom * coordinateScale));
       const sh = Math.max(1, Math.min(ctx.canvas.height - sy, Math.round(layout.bottomAreaHeight * coordinateScale)));
+      sampleCtx.clearRect(0, 0, sample.width, sample.height);
       sampleCtx.drawImage(ctx.canvas, 0, sy, ctx.canvas.width, sh, 0, 0, sample.width, sample.height);
       const pixels = sampleCtx.getImageData(0, 0, sample.width, sample.height).data;
       let luminance = 0;

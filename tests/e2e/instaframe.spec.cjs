@@ -2217,6 +2217,54 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
   expect(result.draw.corner[3]).toBeGreaterThan(0);
 });
 
+test('blur video frames reuse one automatic-contrast sampler', async ({ page }) => {
+  const sampleCanvasCount = await page.evaluate(() => {
+    const nativeCreateElement = document.createElement;
+    const canvases = [];
+    document.createElement = function trackedCreateElement(tagName, options) {
+      const element = nativeCreateElement.call(this, tagName, options);
+      if (String(tagName).toLowerCase() === 'canvas') canvases.push(element);
+      return element;
+    };
+
+    try {
+      const settings = {
+        thicknessScale: 1,
+        frameColor: '#f0f0f0',
+        frameBackground: 'blur',
+        blurBrightness: 80,
+        textColorMode: 'auto',
+        aspectRatio: 'original',
+        aspectOrientation: 'auto',
+        outerPadding: 0,
+        showShotOn: false,
+        showExifInfo: false,
+        showLocation: false,
+      };
+      const source = document.createElement('canvas');
+      source.width = 160;
+      source.height = 90;
+      const sourceContext = source.getContext('2d');
+      sourceContext.fillStyle = '#203050';
+      sourceContext.fillRect(0, 0, source.width, source.height);
+      const layout = window.FrameEngine.computeVideoFrameLayout(source.width, source.height, settings);
+      const output = document.createElement('canvas');
+      output.width = layout.canvasW;
+      output.height = layout.canvasH;
+      const outputContext = output.getContext('2d');
+
+      for (let frame = 0; frame < 6; frame += 1) {
+        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+      }
+      return canvases.filter(canvas => canvas.width === 8 && canvas.height === 4).length;
+    } finally {
+      document.createElement = nativeCreateElement;
+    }
+  });
+
+  expect(sampleCanvasCount).toBeLessThanOrEqual(1);
+});
+
 test('live video preview keeps the requested ratio and padding after seeking', async ({ page }) => {
   const fixture = await loadAudioVideoFixture();
   await page.locator('#fileInput').setInputFiles({
