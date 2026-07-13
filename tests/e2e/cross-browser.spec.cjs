@@ -34,6 +34,18 @@ async function createBrowserImage(page, mimeType) {
   }, mimeType);
 }
 
+function readVideoPreviewOutcome(page) {
+  return page.evaluate(() => {
+    if (document.querySelector('#status-badge-1 .status-dot.error')) return 'error';
+    const video = document.getElementById('livePreviewVideo');
+    const thumbnail = document.querySelector('#preview-1 canvas.thumb-framed');
+    const decodedVideo = video && video.videoWidth > 0 && video.videoHeight > 0 &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+    const decodedThumbnail = thumbnail && thumbnail.width > 0 && thumbnail.height > 0;
+    return decodedVideo || decodedThumbnail ? 'decoded' : 'pending';
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
@@ -145,15 +157,7 @@ test('VP8 WebM input previews or fails explicitly with the browser codec', async
     buffer: createWebm(),
   });
   await expect(page.locator('#preview-1')).toBeVisible();
-  const readOutcome = () => page.evaluate(() => {
-    if (document.querySelector('#status-badge-1 .status-dot.error')) return 'error';
-    const video = document.getElementById('livePreviewVideo');
-    const thumbnail = document.querySelector('#preview-1 canvas.thumb-framed');
-    const decodedVideo = video && video.videoWidth > 0 && video.videoHeight > 0 &&
-      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
-    const decodedThumbnail = thumbnail && thumbnail.width > 0 && thumbnail.height > 0;
-    return decodedVideo || decodedThumbnail ? 'decoded' : 'pending';
-  });
+  const readOutcome = () => readVideoPreviewOutcome(page);
   await expect.poll(readOutcome, { timeout: 20_000 }).not.toBe('pending');
   const outcome = await readOutcome();
   if (outcome === 'error') {
