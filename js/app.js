@@ -4254,7 +4254,7 @@ function setupMobileTabs() {
       _syncMobileTabPanels(tabBar, '', false);
       if (focusedTab) desktopFocusTarget(focusedTab)?.focus();
     }
-    else if (!document.body.getAttribute('data-mobile-tab')) {
+    else if (layoutChanged || !document.body.getAttribute('data-mobile-tab')) {
       const activePanel = activeElement?.closest?.('.mobile-tab-panel');
       const activeTab = tabForPanel(activePanel) || 'preview';
       _setMobileTabState(tabBar, activeTab);
