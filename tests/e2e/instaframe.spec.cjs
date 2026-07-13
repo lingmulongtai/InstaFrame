@@ -1203,6 +1203,80 @@ test('MediaRecorder setup exceptions reject and revoke their source URL', async 
   expect(result.activeUrls).toBe(0);
 });
 
+test('MediaRecorder cancellation ignores late metadata without reallocating resources', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'late-metadata.webm', { type: 'video/webm' });
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+
+    let lateMetadata = null;
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        videoWidth: 320,
+        videoHeight: 180,
+        duration: 1,
+        pause() {},
+        removeAttribute() {},
+        load() {},
+        set onloadedmetadata(handler) {
+          this._onloadedmetadata = handler;
+          if (handler) lateMetadata = handler;
+        },
+        get onloadedmetadata() { return this._onloadedmetadata; },
+        set onerror(handler) { this._onerror = handler; },
+        get onerror() { return this._onerror; },
+      };
+    };
+
+    let captureStreamCalls = 0;
+    const nativeCaptureStream = HTMLCanvasElement.prototype.captureStream;
+    HTMLCanvasElement.prototype.captureStream = () => {
+      captureStreamCalls += 1;
+      return { addTrack() {}, getTracks() { return []; } };
+    };
+    let recorderConstructions = 0;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { recorderConstructions += 1; }
+    };
+
+    const controller = new AbortController();
+    const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+      preserveAudio: true,
+      signal: controller.signal,
+    }).catch(error => error.name);
+    while (!lateMetadata) await new Promise(resolve => setTimeout(resolve, 0));
+    controller.abort();
+    const outcome = await pending;
+    lateMetadata();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    document.createElement = nativeCreateElement;
+    HTMLCanvasElement.prototype.captureStream = nativeCaptureStream;
+    return { outcome, captureStreamCalls, recorderConstructions, activeUrls: activeUrls.size };
+  }, { base64: createWebm().toString('base64') });
+
+  expect(result).toEqual({
+    outcome: 'AbortError',
+    captureStreamCalls: 0,
+    recorderConstructions: 0,
+    activeUrls: 0,
+  });
+});
+
 test('MediaRecorder drawing failures reject and stop active output resources', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));

@@ -1147,6 +1147,8 @@ const FrameEngine = (() => {
       const cleanup = () => {
         if (cleaned) return;
         cleaned = true;
+        video.onloadedmetadata = null;
+        video.onerror = null;
         if (rafId != null) cancelAnimationFrame(rafId);
         if (stopTimer != null) clearTimeout(stopTimer);
         if (recorder && recorder.state !== 'inactive') {
@@ -1184,7 +1186,9 @@ const FrameEngine = (() => {
       if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
+        if (settled || signal?.aborted) return;
         try {
+          assertNotAborted(signal);
           const W = video.videoWidth;
           const H = video.videoHeight;
           if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
@@ -1325,7 +1329,10 @@ const FrameEngine = (() => {
 
           recorder.start(200);
           video.play()
-            .then(() => { rafId = requestAnimationFrame(drawLoop); })
+            .then(() => {
+              if (settled || signal?.aborted) return;
+              rafId = requestAnimationFrame(drawLoop);
+            })
             .catch(err => {
               if (recorder.state !== 'inactive') recorder.stop();
               fail(err);
