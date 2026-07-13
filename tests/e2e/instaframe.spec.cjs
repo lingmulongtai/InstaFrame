@@ -337,6 +337,19 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
   await expect(page.locator('#item-1 img.thumb-orig')).toBeHidden();
 });
 
+test('card progress remains described without competing with the export live region', async ({ page }) => {
+  await uploadJpegs(page);
+  const preview = page.locator('#preview-1');
+  const badge = page.locator('#status-badge-1');
+
+  await expect(preview).toHaveAttribute('aria-describedby', 'status-badge-1');
+  await expect(badge).not.toHaveAttribute('role');
+  await expect(badge).not.toHaveAttribute('aria-live');
+  await expect(badge).toContainText(/pending|待機中/i);
+  await expect(page.locator('#exportProgressStatus')).toHaveAttribute('role', 'status');
+  await expect(page.locator('#exportProgressStatus')).toHaveAttribute('aria-live', 'polite');
+});
+
 test('share dialog supports axe, Escape, and focus return', async ({ page }) => {
   await page.locator('#shareAppBtn').focus();
   await page.locator('#shareAppBtn').press('Enter');
