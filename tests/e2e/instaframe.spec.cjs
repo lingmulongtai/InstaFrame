@@ -282,6 +282,22 @@ test('workspace resize separators support keyboard control and expose their valu
   await expect(mainHandle).toHaveAccessibleName('プレビューパネルの高さを変更');
 });
 
+test('desktop preview height stays within the viewport after a vertical resize', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 1000 });
+  await page.reload();
+  await uploadJpegs(page);
+
+  const preview = page.locator('#dropZone');
+  const mainHandle = page.locator('#mainResizeHandle');
+  await expect(preview).toHaveCSS('height', '520px');
+
+  await page.setViewportSize({ width: 1200, height: 500 });
+
+  await expect(mainHandle).toHaveAttribute('aria-valuemax', '340');
+  await expect(preview).toHaveCSS('height', '340px');
+  await expect(page.locator('.photos-panel')).toBeInViewport();
+});
+
 test('photo cards replace full-resolution image decodes with bounded canvases', async ({ page }) => {
   const largeJpeg = await createBrowserRaster(page, 'image/jpeg', 1600, 1200);
   await page.locator('#fileInput').setInputFiles({
