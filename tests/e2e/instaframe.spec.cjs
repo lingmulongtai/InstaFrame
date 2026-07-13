@@ -1412,6 +1412,27 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
   expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
+test('ZIP cancellation interrupts a pending lazy dependency load', async ({ page }) => {
+  await uploadJpegs(page);
+  await trackCancellationToasts(page);
+  await page.evaluate(() => {
+    window.__zipDependencyLoadStarted = false;
+    window.loadVendorScript = () => {
+      window.__zipDependencyLoadStarted = true;
+      return new Promise(() => {});
+    };
+  });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__zipDependencyLoadStarted)).toBe(true);
+  await page.locator('#cancelExportBtn').click();
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
+});
+
 test('ZIP cancellation pauses active packing and restores the export UI', async ({ page }) => {
   await uploadJpegs(page);
   await trackCancellationToasts(page);

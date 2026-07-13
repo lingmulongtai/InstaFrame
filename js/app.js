@@ -167,6 +167,30 @@ function loadVendorScript(src, globalName) {
   return pending;
 }
 
+function _waitForAbortablePromise(promise, signal, message = 'Operation cancelled') {
+  if (!signal) return Promise.resolve(promise);
+  if (signal.aborted) return Promise.reject(new DOMException(message, 'AbortError'));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const succeed = value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const abort = () => fail(new DOMException(message, 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(succeed, fail);
+  });
+}
+
 function _createSettingsSnapshot() {
   return {
     settings: { ...state.settings },
@@ -1579,12 +1603,18 @@ async function downloadAll() {
 
   let JSZipCtor;
   try {
-    JSZipCtor = await loadVendorScript('vendor/jszip.min.js', 'JSZip');
-  } catch {
+    JSZipCtor = await _waitForAbortablePromise(
+      loadVendorScript('vendor/jszip.min.js', 'JSZip'),
+      controller.signal,
+      'Export cancelled'
+    );
+  } catch (error) {
+    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
     setGlobalBusy(false);
     hideProgress();
+    _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
-    showToast(t('msgDependencyLoadFailed'), 'error');
+    showToast(t(cancelled ? 'msgExportCancelled' : 'msgDependencyLoadFailed'), cancelled ? 'warn' : 'error');
     return;
   }
 
