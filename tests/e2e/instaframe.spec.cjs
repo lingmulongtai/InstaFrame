@@ -1882,6 +1882,115 @@ test('MediaRecorder drawing failures reject and stop active output resources', a
   });
 });
 
+test('MediaRecorder finalizes when playback ends without another animation frame', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'ended-without-frame.webm', { type: 'video/webm' });
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const nativeCaptureStream = HTMLCanvasElement.prototype.captureStream;
+    const NativeMediaRecorder = window.MediaRecorder;
+    const nativeRequestAnimationFrame = window.requestAnimationFrame;
+    const nativeCancelAnimationFrame = window.cancelAnimationFrame;
+    const activeUrls = new Set();
+    const outputTrack = { stopped: false, stop() { this.stopped = true; } };
+    let recorderStopCalls = 0;
+
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        videoWidth: 320,
+        videoHeight: 180,
+        duration: 1,
+        currentTime: 0,
+        ended: false,
+        paused: true,
+        src: '',
+        captureStream() { return { getAudioTracks() { return []; }, getTracks() { return []; } }; },
+        play() {
+          this.paused = false;
+          setTimeout(() => {
+            this.currentTime = this.duration;
+            this.ended = true;
+            this.paused = true;
+            this.onended?.();
+          }, 0);
+          return Promise.resolve();
+        },
+        pause() { this.paused = true; },
+        removeAttribute(name) { if (name === 'src') this.src = ''; },
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({
+      addTrack() {},
+      getTracks() { return [outputTrack]; },
+    });
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        recorderStopCalls += 1;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['recorded'], { type: 'video/webm' }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    };
+    window.requestAnimationFrame = () => 777;
+    window.cancelAnimationFrame = () => {};
+
+    const controller = new AbortController();
+    const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+      preserveAudio: true,
+      signal: controller.signal,
+    });
+    try {
+      const outcome = await Promise.race([
+        pending.then(blob => ({ status: 'resolved', blobSize: blob.size })),
+        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 500)),
+      ]);
+      if (outcome.status === 'timeout') {
+        controller.abort();
+        await pending.catch(() => {});
+      }
+      return {
+        ...outcome,
+        recorderStopCalls,
+        outputTrackStopped: outputTrack.stopped,
+        activeUrls: activeUrls.size,
+      };
+    } finally {
+      document.createElement = nativeCreateElement;
+      HTMLCanvasElement.prototype.captureStream = nativeCaptureStream;
+      window.MediaRecorder = NativeMediaRecorder;
+      window.requestAnimationFrame = nativeRequestAnimationFrame;
+      window.cancelAnimationFrame = nativeCancelAnimationFrame;
+      URL.createObjectURL = nativeCreateUrl;
+      URL.revokeObjectURL = nativeRevokeUrl;
+    }
+  }, { base64: createWebm().toString('base64') });
+
+  expect(result).toEqual({
+    status: 'resolved',
+    blobSize: 8,
+    recorderStopCalls: 1,
+    outputTrackStopped: true,
+    activeUrls: 0,
+  });
+});
+
 test('WebCodecs video success closes its encoder and releases temporary media', async ({ page }) => {
   await installFakeWebCodecs(page);
   const fixture = await loadAudioVideoFixture();

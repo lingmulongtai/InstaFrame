@@ -1191,6 +1191,7 @@ const FrameEngine = (() => {
         if (cleaned) return;
         cleaned = true;
         video.onloadedmetadata = null;
+        video.onended = null;
         video.onerror = null;
         if (rafId != null) cancelAnimationFrame(rafId);
         if (stopTimer != null) clearTimeout(stopTimer);
@@ -1228,6 +1229,19 @@ const FrameEngine = (() => {
       };
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) { abort(); return; }
+
+      const stopRecorderAfterFlush = () => {
+        if (settled || stopTimer != null) return;
+        if (rafId != null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        stopTimer = setTimeout(() => {
+          stopTimer = null;
+          if (settled || !recorder || recorder.state === 'inactive') return;
+          try { recorder.stop(); } catch (error) { fail(error); }
+        }, 120);
+      };
 
       video.onloadedmetadata = () => {
         if (settled || signal?.aborted) return;
@@ -1321,9 +1335,11 @@ const FrameEngine = (() => {
         recorder.onerror = event => {
           fail(event.error || new Error('Video recording failed'));
         };
+        video.onended = stopRecorderAfterFlush;
 
         function drawLoop() {
           try {
+            rafId = null;
             assertNotAborted(signal);
             baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
 
@@ -1332,11 +1348,7 @@ const FrameEngine = (() => {
             if (!video.ended && !video.paused) {
               rafId = requestAnimationFrame(drawLoop);
             } else {
-              cancelAnimationFrame(rafId);
-              // Give recorder a moment to flush, then stop
-              stopTimer = setTimeout(() => {
-                if (recorder.state !== 'inactive') recorder.stop();
-              }, 120);
+              stopRecorderAfterFlush();
             }
           } catch (error) {
             fail(error);
