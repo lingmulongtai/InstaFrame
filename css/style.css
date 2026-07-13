@@ -1962,6 +1962,14 @@ input[type="range"]:focus-visible {
 }
 .card-preview canvas { object-fit: contain; background: #f0f0f0; }
 .card-preview canvas.thumb-source { object-fit: cover; background: var(--surface-2); }
+.card-preview.thumbnail-unavailable::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('../photo-camera-svgrepo-com.svg') center / 38px 38px no-repeat;
+  filter: grayscale(1);
+  opacity: 0.2;
+}
 
 /* Video badge overlay */
 .video-badge {
