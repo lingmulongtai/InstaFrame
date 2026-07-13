@@ -3207,33 +3207,11 @@ function setupVideoPreviewBar() {
   video.addEventListener('seeked', () => {
     const item = getSelectedPreviewItem();
     if (item && item.isVideo && _videoPreviewItemId === item.id) {
-      const redrawDecodedFrame = () => {
-        if (_videoPreviewItemId !== item.id) return;
-        const canvas  = document.getElementById('livePreviewCanvas');
-        const pane    = document.getElementById('dropZone');
-        if (canvas && pane && video.videoWidth) {
-          const layout  = FrameEngine.computeVideoFrameLayout(
-            video.videoWidth, video.videoHeight, state.settings, item.exif || {}
-          );
-          const scaleX  = canvas.width  / layout.canvasW;
-          const scaleY  = canvas.height / layout.canvasH;
-          const ctx     = canvas.getContext('2d');
-          ctx.save();
-          ctx.scale(scaleX, scaleY);
-          _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
-            ctx, video, item.exif || {}, state.settings, layout,
-            _videoPreviewBaseCanvas, Math.min(scaleX, scaleY)
-          );
-          ctx.restore();
-        }
-        if (!video.paused && !video.ended) _startVideoCanvasPreview(item);
-      };
-
       _cancelVideoCanvasPreviewFrame();
       // Cancel a callback queued for the pre-seek frame before drawing the
       // newly selected current frame. A paused video may not emit another
       // decoded-frame callback until playback resumes.
-      redrawDecodedFrame();
+      _startVideoCanvasPreview(item);
     }
   });
 
