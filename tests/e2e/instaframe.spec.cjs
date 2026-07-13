@@ -718,6 +718,10 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await page.locator('#downloadAllBtn').click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/instaframe.*\.zip$/i);
+  const filePath = await download.path();
+  expect(filePath).toBeTruthy();
+  const bytes = await fs.readFile(filePath);
+  expect([...bytes.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
 });
 
 test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
@@ -729,8 +733,8 @@ test('ZIP creation stops before aggregate browser memory exceeds its safe peak',
   await page.evaluate(async () => {
     const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
     window.__zipGenerateCalled = false;
-    const originalGenerate = JSZipCtor.prototype.generateAsync;
-    JSZipCtor.prototype.generateAsync = function (...args) {
+    const originalGenerate = JSZipCtor.prototype.generateInternalStream;
+    JSZipCtor.prototype.generateInternalStream = function (...args) {
       window.__zipGenerateCalled = true;
       return originalGenerate.apply(this, args);
     };
@@ -1300,6 +1304,62 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
   await page.waitForTimeout(50);
   expect(downloads).toBe(0);
   expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
+});
+
+test('ZIP cancellation pauses active packing and restores the export UI', async ({ page }) => {
+  await uploadJpegs(page);
+  await trackCancellationToasts(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+
+  await page.evaluate(async () => {
+    const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
+    window.__zipPackingState = { started: false, paused: false };
+    JSZipCtor.prototype.generateInternalStream = function () {
+      const listeners = { data: [], error: [], end: [] };
+      let timer = null;
+      let percent = 0;
+      const stream = {
+        on(event, listener) {
+          listeners[event].push(listener);
+          return stream;
+        },
+        resume() {
+          window.__zipPackingState.started = true;
+          const pump = () => {
+            if (window.__zipPackingState.paused) return;
+            percent = Math.min(percent + 5, 95);
+            listeners.data.forEach(listener => listener(new Uint8Array(16 * 1024), { percent }));
+            timer = setTimeout(pump, 5);
+          };
+          timer = setTimeout(pump, 0);
+          return stream;
+        },
+        pause() {
+          window.__zipPackingState.paused = true;
+          clearTimeout(timer);
+          return stream;
+        },
+      };
+      return stream;
+    };
+  });
+
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__zipPackingState.started)).toBe(true);
+  await page.locator('#cancelExportBtn').click();
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__zipPackingState.paused)).toBe(true);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
+  expect(downloads).toBe(0);
+  expect(pageErrors).toEqual([]);
 });
 
 test('single photo cancellation interrupts a pending canvas encode', async ({ page }) => {

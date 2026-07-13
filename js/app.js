@@ -1430,6 +1430,65 @@ async function downloadSingle(id, { signal = null, runToken = null } = {}) {
   }
 }
 
+function _generateZipBlob(zip, signal, onUpdate) {
+  return new Promise((resolve, reject) => {
+    let chunks = [];
+    let settled = false;
+    const stream = zip.generateInternalStream({
+      type: 'uint8array',
+      compression: 'STORE',
+      streamFiles: true,
+    });
+
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      chunks = [];
+      try { stream.pause(); } catch (_) { /* best-effort JSZip stream teardown */ }
+      cleanup();
+      reject(error);
+    };
+    const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+
+    stream
+      .on('data', (data, meta) => {
+        if (settled) return;
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
+        chunks.push(data);
+        try { onUpdate?.(meta); }
+        catch (error) { fail(error); }
+      })
+      .on('error', fail)
+      .on('end', () => {
+        if (settled) return;
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
+        try {
+          const blob = new Blob(chunks, { type: 'application/zip' });
+          chunks = [];
+          settled = true;
+          cleanup();
+          resolve(blob);
+        } catch (error) {
+          fail(error);
+        }
+      });
+
+    if (signal?.aborted) abort();
+    else {
+      signal?.addEventListener('abort', abort, { once: true });
+      try { stream.resume(); }
+      catch (error) { fail(error); }
+    }
+  });
+}
+
 async function downloadAll() {
   if (_globalExportBusy) return;
   if (!state.items.length) {
@@ -1555,13 +1614,9 @@ async function downloadAll() {
 
   let zipBlob;
   try {
-    zipBlob = await zip.generateAsync(
-      { type: 'blob', compression: 'STORE', streamFiles: true },
-      meta => {
-        if (_exportCancelRequested) throw new Error('EXPORT_CANCELLED');
-        showProgress(t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
-      }
-    );
+    zipBlob = await _generateZipBlob(zip, controller.signal, meta => {
+      showProgress(t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
+    });
     const actualPeak = InstaFrameCore.estimateZipPeakBytes(
       retainedBytes,
       encodedPhotoBytes,
@@ -1572,7 +1627,7 @@ async function downloadAll() {
   } catch (error) {
     setGlobalBusy(false);
     hideProgress();
-    const cancelled = _exportCancelRequested || error?.message === 'EXPORT_CANCELLED';
+    const cancelled = _exportCancelRequested || error?.name === 'AbortError';
     _exportCancelRequested = false;
     if (_activeExportController === controller) _activeExportController = null;
     const messageKey = cancelled
