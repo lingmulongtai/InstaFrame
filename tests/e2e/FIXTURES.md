@@ -9,3 +9,11 @@ ffmpeg -f lavfi -i "testsrc2=size=96x64:rate=10" -f lavfi -i "sine=frequency=440
 ```
 
 SHA-256: `bafb62332a0b45612eb8697cdd229e4ba46baf39bd04e6a916c20cc5e8382e08`
+
+`codec-fixture.mov` contains the same synthetic tracks in a QuickTime MOV container. It was remuxed without re-encoding:
+
+```text
+ffmpeg -i codec-fixture.mp4 -map 0 -c copy -f mov -movflags +faststart codec-fixture.mov
+```
+
+SHA-256: `54ae77851ba75bb017bbca24fbb946c79f7b091868b5687583481f304e78cd85`
