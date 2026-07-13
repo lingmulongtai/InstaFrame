@@ -89,6 +89,7 @@ const PREVIEW_IMAGE_DECODE_GUARD_MS = 20_000;
 const _vendorScriptLoads = new Map();
 const _locationFetchControllers = new Set();
 let _importQueueTail = Promise.resolve();
+let _importGeneration = 0;
 let _reservedImportItems = 0;
 let _reservedImportBytes = 0;
 let _pageResourcesReleased = false;
@@ -1155,6 +1156,7 @@ function _reserveImportFiles(files) {
   return {
     files: accepted,
     rejectedCount,
+    generation: _importGeneration,
     remainingItems: accepted.length,
     remainingBytes: reservedBytes,
   };
@@ -1200,6 +1202,7 @@ function addFiles(files) {
 
 async function _addFiles(accepted, reservation) {
   const { rejectedCount } = reservation;
+  const isCurrentImport = () => reservation.generation === _importGeneration;
 
   const incomingBytes = accepted.reduce((sum, file) => sum + (file.size || 0), 0);
   const existingBytes = state.items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
@@ -1211,12 +1214,14 @@ async function _addFiles(accepted, reservation) {
   if (rejectedCount) showToast(tf('msgMediaInputLimit', { count: rejectedCount }), 'error');
 
   for (const file of accepted) {
+    if (!isCurrentImport()) break;
     const video = isVideoFile(file);
     const exif  = video ? await readVideoMetadata(file) : await readExif(file);
     // Metadata decoders are not uniformly abortable. If they finish after
     // pagehide, retain the queued File but do not create DOM, Blob URLs, or
     // Canvas resources until pageshow restores the workspace.
     await _waitForPageResourcesRestore();
+    if (!isCurrentImport()) break;
     const item  = {
       id: ++itemIdCounter,
       file,
@@ -1241,6 +1246,9 @@ async function _addFiles(accepted, reservation) {
     _consumeImportReservation(reservation, file);
     state.items.push(item);
     renderItem(item);
+    // Keep completed entries actionable while a later metadata decoder in the
+    // same batch is still pending, so Clear All can cancel the pending batch.
+    updateUI();
 
     // Only the selected first photo benefits from pre-warming. Decoding every
     // batch item eagerly can retain many full-resolution browser decoders.
@@ -1248,6 +1256,8 @@ async function _addFiles(accepted, reservation) {
       try {
         await _loadPreviewImage(item, { retainUncached: true });
       } catch (error) {
+        if (!isCurrentImport()) break;
+        if (!state.items.includes(item)) continue;
         if (error?.name === 'AbortError' && _pageResourcesReleased) {
           item.status = 'pending';
           _clearItemError(item);
@@ -1264,6 +1274,8 @@ async function _addFiles(accepted, reservation) {
         }
       }
     }
+    if (!isCurrentImport()) break;
+    if (!state.items.includes(item)) continue;
 
     // Auto-select first item added for live preview
     if (state.items.length === 1) selectItem(item.id);
@@ -1320,6 +1332,7 @@ function _syncLocationIconPicker(value, { focus = false } = {}) {
 async function clearAllItems(skipConfirm = false) {
   if (state.items.length === 0) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
+  _importGeneration += 1;
   const ids = state.items.map(i => i.id);
   ids.forEach(id => _invalidateItemCache(id));
   state.items.forEach(item => {
