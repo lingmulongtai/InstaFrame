@@ -47,6 +47,28 @@ const FrameEngine = (() => {
     if (signal?.aborted) throw new DOMException(message, 'AbortError');
   }
 
+  function runBestEffortCleanup(action) {
+    try { return action(); }
+    catch (_) { return undefined; }
+  }
+
+  function releaseCanvasBackingStore(canvas) {
+    if (!canvas) return;
+    runBestEffortCleanup(() => { canvas.width = 0; });
+    runBestEffortCleanup(() => { canvas.height = 0; });
+  }
+
+  function releaseMediaElementSource(media) {
+    if (!media) return;
+    runBestEffortCleanup(() => media.pause());
+    runBestEffortCleanup(() => media.removeAttribute('src'));
+    runBestEffortCleanup(() => media.load());
+  }
+
+  function revokeObjectUrl(url) {
+    if (url) runBestEffortCleanup(() => URL.revokeObjectURL(url));
+  }
+
   function assertSafeCanvasSize(width, height) {
     if (
       !Number.isFinite(width) || !Number.isFinite(height) ||
@@ -870,24 +892,21 @@ const FrameEngine = (() => {
         clearTimeout(timeout);
         signal?.removeEventListener('abort', abort);
         if (thumbnailCanvas) {
-          thumbnailCanvas.width = 0;
-          thumbnailCanvas.height = 0;
+          releaseCanvasBackingStore(thumbnailCanvas);
           thumbnailCanvas = null;
         }
         if (thumbnailImage) {
           thumbnailImage.onload = null;
           thumbnailImage.onerror = null;
-          if (!thumbnailLoaded) thumbnailImage.removeAttribute('src');
+          if (!thumbnailLoaded) runBestEffortCleanup(() => thumbnailImage.removeAttribute('src'));
         }
-        if (thumbnailUrl) URL.revokeObjectURL(thumbnailUrl);
+        revokeObjectUrl(thumbnailUrl);
         thumbnailUrl = null;
         video.onloadedmetadata = null;
         video.onseeked = null;
         video.onerror = null;
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        URL.revokeObjectURL(url);
+        releaseMediaElementSource(video);
+        revokeObjectUrl(url);
       };
       const fail = error => {
         if (settled) return;
@@ -996,7 +1015,7 @@ const FrameEngine = (() => {
       const cleanup = () => {
         signal?.removeEventListener('abort', abort);
         if (frameCallbackId != null && typeof video.cancelVideoFrameCallback === 'function') {
-          video.cancelVideoFrameCallback(frameCallbackId);
+          runBestEffortCleanup(() => video.cancelVideoFrameCallback(frameCallbackId));
         }
         frameCallbackId = null;
         if (metadataTimer != null) clearTimeout(metadataTimer);
@@ -1006,15 +1025,13 @@ const FrameEngine = (() => {
         video.onloadedmetadata = null;
         video.onended = null;
         video.onerror = null;
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        URL.revokeObjectURL(url);
-        if (encoder && encoder.state !== 'closed') {
-          try { encoder.close(); } catch (_) {}
-        }
-        if (canvas) { canvas.width = 0; canvas.height = 0; }
-        if (baseCanvas) { baseCanvas.width = 0; baseCanvas.height = 0; }
+        releaseMediaElementSource(video);
+        revokeObjectUrl(url);
+        runBestEffortCleanup(() => {
+          if (encoder && encoder.state !== 'closed') encoder.close();
+        });
+        releaseCanvasBackingStore(canvas);
+        releaseCanvasBackingStore(baseCanvas);
       };
       const succeed = blob => {
         if (settled) return;
@@ -1335,10 +1352,8 @@ const FrameEngine = (() => {
           recorder.onstop = null;
           recorder.onerror = null;
         }
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        URL.revokeObjectURL(url);
+        releaseMediaElementSource(video);
+        revokeObjectUrl(url);
         const mediaTracks = new Set();
         try { outputStream?.getTracks().forEach(track => mediaTracks.add(track)); } catch (_) {}
         try { sourceStream?.getTracks().forEach(track => mediaTracks.add(track)); } catch (_) {}
@@ -1346,9 +1361,13 @@ const FrameEngine = (() => {
         for (const track of mediaTracks) {
           try { track.stop(); } catch (_) {}
         }
-        if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
-        if (canvas) { canvas.width = 0; canvas.height = 0; }
-        if (baseCanvas) { baseCanvas.width = 0; baseCanvas.height = 0; }
+        runBestEffortCleanup(() => {
+          if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close()?.catch?.(() => {});
+          }
+        });
+        releaseCanvasBackingStore(canvas);
+        releaseCanvasBackingStore(baseCanvas);
         signal?.removeEventListener('abort', abort);
       };
 
