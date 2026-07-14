@@ -3020,15 +3020,33 @@ function _ensureLeafletStylesheet() {
 function _loadLeafletScript(src) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = _versionedAssetUrl(src);
-    script.async = true;
-    const timeout = setTimeout(() => {
-      script.remove();
-      reject(new Error('Leaflet script load timed out'));
-    }, 8_000);
-    script.onload = () => { clearTimeout(timeout); resolve(true); };
-    script.onerror = () => { clearTimeout(timeout); reject(new Error('Leaflet script load failed')); };
-    document.head.appendChild(script);
+    let timeout = null;
+    let settled = false;
+    const cleanup = removeScript => {
+      clearTimeout(timeout);
+      script.onload = null;
+      script.onerror = null;
+      if (removeScript) script.remove();
+    };
+    const finish = (callback, value, removeScript = false) => {
+      if (settled) return;
+      settled = true;
+      cleanup(removeScript);
+      callback(value);
+    };
+    script.onload = () => finish(resolve, true);
+    script.onerror = () => finish(reject, new Error('Leaflet script load failed'), true);
+    try {
+      script.src = _versionedAssetUrl(src);
+      script.async = true;
+      timeout = setTimeout(
+        () => finish(reject, new Error('Leaflet script load timed out'), true),
+        8_000
+      );
+      document.head.appendChild(script);
+    } catch (error) {
+      finish(reject, error, true);
+    }
   });
 }
 

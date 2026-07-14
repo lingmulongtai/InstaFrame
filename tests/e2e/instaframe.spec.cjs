@@ -7037,6 +7037,42 @@ test('map picker loads its UI library locally after consent', async ({ page }) =
     .not.toBe(mapPosition);
 });
 
+test('failed Leaflet script loads remove retry nodes and event handlers', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeAppend = document.head.appendChild.bind(document.head);
+    const scripts = [];
+    document.head.appendChild = node => {
+      const appended = nativeAppend(node);
+      if (node instanceof HTMLScriptElement && node.src.includes('/vendor/leaflet/leaflet.js')) {
+        scripts.push(node);
+        queueMicrotask(() => node.dispatchEvent(new Event('error')));
+      }
+      return appended;
+    };
+    try {
+      const errors = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        errors.push(await window._loadLeafletScript('vendor/leaflet/leaflet.js')
+          .then(() => 'resolved', error => error.message));
+      }
+      return {
+        errors,
+        remainingScripts: document.querySelectorAll('script[src*="vendor/leaflet/leaflet.js"]').length,
+        handlersCleared: scripts.every(script => script.onload === null && script.onerror === null),
+      };
+    } finally {
+      document.head.appendChild = nativeAppend;
+      scripts.forEach(script => script.remove());
+    }
+  });
+
+  expect(result).toEqual({
+    errors: ['Leaflet script load failed', 'Leaflet script load failed'],
+    remainingScripts: 0,
+    handlersCleared: true,
+  });
+});
+
 test('map picker exposes accessible busy states and coalesces place-name lookup', async ({ page }) => {
   let releaseLeaflet;
   let markLeafletRequested;
