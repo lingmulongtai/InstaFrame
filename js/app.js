@@ -639,6 +639,19 @@ function _isValidMapboxPublicToken(token) {
   return /^pk\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(String(token || '').trim());
 }
 
+function _getConfiguredMapboxToken() {
+  const config = window.INSTAFRAME_CONFIG?.mapbox;
+  const userToken = loadPrefs().mapboxPublicToken;
+  if (_isValidMapboxPublicToken(userToken)) {
+    return { token: userToken.trim(), source: 'user' };
+  }
+  const siteToken = config?.publicToken;
+  if (!_isValidMapboxPublicToken(siteToken)) return null;
+  const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
+  if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
+  return { token: siteToken.trim(), source: 'site' };
+}
+
 function _getMapboxUsage() {
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
@@ -669,17 +682,11 @@ function _trackMapboxRequest() {
 function getMapboxToken() {
   if (!hasLocationNetworkConsent()) return null;
   const config = window.INSTAFRAME_CONFIG?.mapbox;
-  const userToken = loadPrefs().mapboxPublicToken;
-  const hasUserToken = _isValidMapboxPublicToken(userToken);
-  const siteToken = config?.publicToken;
-  if (!hasUserToken && !_isValidMapboxPublicToken(siteToken)) return null;
-  if (!hasUserToken) {
-    const origin = window.location.protocol === 'file:' ? 'file://' : window.location.origin;
-    if (!InstaFrameCore.isAllowedOrigin(origin, config.allowedOrigins)) return null;
-  }
+  const configured = _getConfiguredMapboxToken();
+  if (!configured) return null;
   const usage = _getMapboxUsage();
   if (usage.dayCount >= config.dailyRequestLimitPerDevice || usage.monthCount >= config.monthlyRequestLimitPerDevice) return null;
-  return hasUserToken ? userToken.trim() : siteToken;
+  return configured.token;
 }
 
 function _cancelMapImageLoads() {
@@ -2293,6 +2300,10 @@ function restoreSettings() {
   const textPicker = document.getElementById('textColorPicker');
   if (textPicker) textPicker.disabled = (saved.textColorMode || 'auto') !== 'custom';
 
+  const restoredMapOverlay = Boolean(
+    saved.showMapOverlay && hasLocationNetworkConsent() && _getConfiguredMapboxToken()
+  );
+
   // Checkboxes
   [
     ['cameraNameBold',   saved.cameraNameBold],
@@ -2301,7 +2312,7 @@ function restoreSettings() {
     ['showShotOn',       saved.showShotOn],
     ['showExifInfo',     saved.showExifInfo],
     ['showLocation',     saved.showLocation],
-    ['showMapOverlay',   saved.showMapOverlay && hasLocationNetworkConsent()],
+    ['showMapOverlay',   restoredMapOverlay],
   ].forEach(([id, val]) => {
     if (val == null) return;
     const el = document.getElementById(id);
@@ -2323,9 +2334,9 @@ function restoreSettings() {
   const mapOvRow    = document.getElementById('mapOverlayRow');
   if (mapOvRow) mapOvRow.classList.toggle('is-hidden', !saved.showLocation);
   const mapOvOpRow  = document.getElementById('mapOverlayOpacityRow');
-  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
+  if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(saved.showLocation && restoredMapOverlay));
   const mapOvPosRow = document.getElementById('mapOverlayPositionRow');
-  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(saved.showLocation && saved.showMapOverlay));
+  if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(saved.showLocation && restoredMapOverlay));
   const locIconRow  = document.getElementById('locationIconRow');
   if (locIconRow) locIconRow.classList.toggle('is-hidden', !saved.showLocation);
 
