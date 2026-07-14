@@ -94,9 +94,11 @@
 
 1. Mapboxでデフォルトトークンではない専用の公開トークンを作成します。
 2. Static Images APIに必要な公開 `styles:tiles` スコープだけを付与します。秘密スコープは付与しません。
-3. MapboxのAccess Tokens画面でAllowed URLを `https://lingmulongtai.github.io/InstaFrame/` に制限します。
+3. MapboxのAccess Tokens画面でAllowed URLを `https://lingmulongtai.github.io` に制限します。`/InstaFrame/`は付けません。
 4. [js/config.js](js/config.js) の空の `publicToken` を、制限確認済みの専用トークンへ置き換えます。
 5. MapboxのStatistics画面と請求書を定期的に監視します。Statisticsの反映には最大24時間かかる場合があります。
+
+公開ページは`strict-origin-when-cross-origin`を明示し、Mapboxへのcross-origin要求ではRefererを`https://lingmulongtai.github.io/`までに制限します。このため、MapboxのAllowed URLへ`/InstaFrame/`を含めるとRefererに一致せず403になる可能性があります。パス単位では分離できないため、InstaFrame専用トークンを使い、他プロジェクトと共有しないでください。
 
 共通トークンにはアプリ側でも同じオリジンだけを許可し、共通・利用者トークンの両方に端末ごと1日100回・1か月1000回のソフト上限を設けています。成功、失敗、タイムアウトを問わず、ブラウザが開始したStatic Images要求を1回として数えます。ただし、クライアント側の上限は改変できるため、Mapbox側のURL制限やアカウント監視の代替にはなりません。Mapboxは設定可能な支出アラートや月額上限を現在提供していません。free tierを初めて超えた際の通知はありますが、確実な遮断が必要ならStatistics・請求書を監視し、専用トークンを削除またはローテーションしてください。URL制限はMapboxの[公式トークン管理ガイド](https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions)、課金上限の制約は[公式請求ガイド](https://docs.mapbox.com/accounts/guides/invoices/#feature-requests)を確認してください。
 
