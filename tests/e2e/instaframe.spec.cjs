@@ -4490,6 +4490,19 @@ test('mobile high zoom sharpens only the visible preview crop', async ({ page })
   await page.mouse.move(panStart.x + 60, panStart.y + 40);
   await expect.poll(() => canvas.evaluate(element => element.style.transform)).toBe(transformAtBlur);
   await page.mouse.up();
+
+  const detailWidthBeforeResize = (await detail.boundingBox()).width;
+  await page.setViewportSize({ width: 480, height: 740 });
+  await expect.poll(async () => (await detail.boundingBox())?.width || 0)
+    .toBeGreaterThan(detailWidthBeforeResize + 50);
+  expect(await page.evaluate(() => {
+    const paneRect = document.getElementById('dropZone').getBoundingClientRect();
+    const detailRect = document.getElementById('livePreviewDetailCanvas').getBoundingClientRect();
+    return detailRect.left >= paneRect.left - 0.5 &&
+      detailRect.top >= paneRect.top - 0.5 &&
+      detailRect.right <= paneRect.right + 0.5 &&
+      detailRect.bottom <= paneRect.bottom + 0.5;
+  })).toBe(true);
 });
 
 test('frame rendering rejects Canvas side and area overflow before allocation', async ({ page }) => {
