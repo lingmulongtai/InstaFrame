@@ -4771,6 +4771,115 @@ test('MediaRecorder finalizes when playback ends without another animation frame
   });
 });
 
+test('MediaRecorder pauses source and recording while the page is hidden', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const file = new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], 'visibility.webm', {
+      type: 'video/webm',
+    });
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCaptureStream = HTMLCanvasElement.prototype.captureStream;
+    const NativeMediaRecorder = window.MediaRecorder;
+    const nativeRequestAnimationFrame = window.requestAnimationFrame;
+    const nativeCancelAnimationFrame = window.cancelAnimationFrame;
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden');
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    let hidden = false;
+    let video;
+    let recorder;
+    let rafCancels = 0;
+    const stats = { videoPlays: 0, videoPauses: 0, recorderPauses: 0, recorderResumes: 0 };
+
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => hidden,
+    });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => hidden ? 'hidden' : 'visible',
+    });
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      video = {
+        videoWidth: 320,
+        videoHeight: 180,
+        duration: 1,
+        currentTime: 0,
+        ended: false,
+        paused: true,
+        src: '',
+        captureStream() { return { getAudioTracks() { return []; }, getTracks() { return []; } }; },
+        play() {
+          stats.videoPlays += 1;
+          this.paused = false;
+          return Promise.resolve();
+        },
+        pause() {
+          stats.videoPauses += 1;
+          this.paused = true;
+        },
+        removeAttribute(name) { if (name === 'src') this.src = ''; },
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+      };
+      return video;
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; recorder = this; }
+      start() { this.state = 'recording'; }
+      pause() { stats.recorderPauses += 1; this.state = 'paused'; }
+      resume() { stats.recorderResumes += 1; this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['recorded'], { type: 'video/webm' }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    };
+    window.requestAnimationFrame = () => 777;
+    window.cancelAnimationFrame = () => { rafCancels += 1; };
+
+    try {
+      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+      while (!recorder || stats.videoPlays === 0) await new Promise(resolve => setTimeout(resolve, 0));
+      hidden = true;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      const hiddenState = { videoPaused: video.paused, recorderState: recorder.state };
+
+      hidden = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      while (stats.videoPlays < 2) await new Promise(resolve => setTimeout(resolve, 0));
+      video.currentTime = video.duration;
+      video.ended = true;
+      video.paused = true;
+      video.onended();
+      const blob = await pending;
+      return { ...stats, hiddenState, rafCancels, blobSize: blob.size };
+    } finally {
+      document.createElement = nativeCreateElement;
+      HTMLCanvasElement.prototype.captureStream = nativeCaptureStream;
+      window.MediaRecorder = NativeMediaRecorder;
+      window.requestAnimationFrame = nativeRequestAnimationFrame;
+      window.cancelAnimationFrame = nativeCancelAnimationFrame;
+      if (hiddenDescriptor) Object.defineProperty(document, 'hidden', hiddenDescriptor);
+      else delete document.hidden;
+      if (visibilityDescriptor) Object.defineProperty(document, 'visibilityState', visibilityDescriptor);
+      else delete document.visibilityState;
+    }
+  });
+
+  expect(result).toEqual({
+    videoPlays: 2,
+    videoPauses: 2,
+    recorderPauses: 1,
+    recorderResumes: 1,
+    hiddenState: { videoPaused: true, recorderState: 'paused' },
+    rafCancels: 2,
+    blobSize: 8,
+  });
+});
+
 test('video metadata watchdog releases stalled sources in both export pipelines', async ({ page }) => {
   await installFakeWebCodecs(page);
   const result = await page.evaluate(async () => {
