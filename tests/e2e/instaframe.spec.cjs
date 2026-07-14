@@ -5504,6 +5504,48 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   expect(await page.locator('#settingsPanel').evaluate(element => element.inert)).toBe(false);
 });
 
+test('mobile controls stay inside simulated top and side safe areas', async ({ page }) => {
+  await page.setViewportSize({ width: 667, height: 360 });
+  await page.reload();
+  await page.evaluate(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--safe-area-top', '24px');
+    root.setProperty('--safe-area-right', '20px');
+    root.setProperty('--safe-area-bottom', '18px');
+    root.setProperty('--safe-area-left', '36px');
+  });
+  await uploadJpegs(page);
+
+  const layout = await page.evaluate(() => {
+    const rect = selector => {
+      const bounds = document.querySelector(selector).getBoundingClientRect();
+      return { top: bounds.top, right: bounds.right, bottom: bounds.bottom, left: bounds.left };
+    };
+    return {
+      preview: rect('#dropZone'),
+      drawer: rect('#previewExifDrawer'),
+      history: rect('#previewHistoryWrap'),
+      firstTab: rect('#tabPreviewBtn'),
+      lastTab: rect('#tabSettingsBtn'),
+      sidebar: rect('.sidebar'),
+    };
+  });
+
+  expect(layout.preview.top).toBeGreaterThanOrEqual(24);
+  expect(layout.preview.left).toBeGreaterThanOrEqual(36);
+  expect(layout.preview.right).toBeLessThanOrEqual(667 - 20);
+  expect(layout.drawer.top).toBeGreaterThanOrEqual(layout.preview.top + 8);
+  expect(layout.drawer.left).toBeGreaterThanOrEqual(layout.preview.left + 8);
+  expect(layout.drawer.right).toBeLessThanOrEqual(layout.preview.right - 8);
+  expect(layout.history.top).toBeGreaterThanOrEqual(layout.drawer.top);
+  expect(layout.history.right).toBeLessThanOrEqual(layout.drawer.right - 8);
+  expect(layout.firstTab.left).toBeGreaterThanOrEqual(36);
+  expect(layout.lastTab.right).toBeLessThanOrEqual(667 - 20);
+  expect(layout.sidebar.top).toBeGreaterThanOrEqual(24);
+  expect(layout.sidebar.left).toBeGreaterThanOrEqual(36);
+  expect(layout.sidebar.right).toBeLessThanOrEqual(667 - 20);
+});
+
 test('short mobile Photos view keeps its empty import action visible and scrollable', async ({ page }) => {
   await page.setViewportSize({ width: 667, height: 240 });
   await page.reload();
