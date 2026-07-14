@@ -1721,6 +1721,40 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   await expect(page.locator('#vbr-8')).toBeChecked();
 });
 
+test('redo cannot restore a map overlay after location access is revoked', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.history',
+    }));
+  });
+  await page.reload();
+  await uploadJpegs(page);
+
+  await page.locator('label:has(#showLocation)').click();
+  await page.locator('label:has(#showMapOverlay)').click();
+  await expect(page.locator('#showMapOverlay')).toBeChecked();
+  await page.locator('label[for="bg-blur"]').click();
+  await page.locator('#undoEditBtn').click();
+  await expect(page.locator('#redoEditBtn')).toBeEnabled();
+
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await page.locator('#locationPrivacyRevokeBtn').click();
+  await expect(page.locator('#locationPrivacyStatus')).toContainText(/off|オフ/i);
+  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
+
+  await page.locator('#redoEditBtn').click();
+  await expect(page.locator('#bg-blur')).toBeChecked();
+  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
+  await expect(page.locator('#mapOverlayPositionRow')).toHaveClass(/is-hidden/);
+  expect(await page.evaluate(() => ({
+    consent: window.hasLocationNetworkConsent(),
+    savedOverlay: JSON.parse(localStorage.getItem('instaframe_settings')).showMapOverlay,
+  }))).toEqual({ consent: false, savedOverlay: false });
+});
+
 test('photo quality starts at the advertised 92 percent', async ({ page }) => {
   await expect(page.locator('#photoQualityRange')).toHaveValue('92');
   await expect(page.locator('#photoQualityRangeVal')).toHaveText('92%');

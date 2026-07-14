@@ -2676,7 +2676,12 @@ function _syncDomWithStateSettings() {
 function applySettingsSnapshot(snapshot) {
   if (!snapshot) return;
   _historyLocked = true;
-  state.settings = { ...snapshot.settings };
+  const nextSettings = { ...snapshot.settings };
+  if (nextSettings.showMapOverlay &&
+      (!hasLocationNetworkConsent() || !_getConfiguredMapboxToken())) {
+    nextSettings.showMapOverlay = false;
+  }
+  state.settings = nextSettings;
   state.isCustomColor = !!snapshot.isCustomColor;
   state.customColorValue = snapshot.customColorValue || state.customColorValue;
   _syncDomWithStateSettings();
