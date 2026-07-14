@@ -777,7 +777,7 @@
       <div class="preview-zoom-bar" id="previewZoomBar" inert aria-hidden="true">
         <button type="button" class="zoom-label" id="zoomLabel" data-i18n="resetZoom" data-i18n-attr="title,aria-label" title="Reset zoom to 100%">100%</button>
         <button class="zoom-btn" id="zoomInBtn" data-i18n="zoomIn" data-i18n-attr="title,aria-label" title="Zoom in">+</button>
-        <input type="range" id="zoomRange" min="50" max="1200" step="25" value="100" orient="vertical" aria-valuetext="100%" data-i18n="previewZoom" data-i18n-attr="aria-label">
+        <div id="zoomRange" role="slider" tabindex="0" aria-orientation="vertical" aria-valuemin="50" aria-valuemax="1200" aria-valuenow="100" aria-valuetext="100%" data-i18n="previewZoom" data-i18n-attr="aria-label"></div>
         <button class="zoom-btn" id="zoomOutBtn" data-i18n="zoomOut" data-i18n-attr="title,aria-label" title="Zoom out">−</button>
       </div>
       <button class="preview-reset-view-btn" id="previewResetViewBtn" data-i18n="resetView" inert aria-hidden="true">Reset view</button>

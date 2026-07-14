@@ -3317,7 +3317,27 @@ test('zoom controls keep the same visual rate at low and high magnification', as
     element.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await expect(page.locator('#zoomLabel')).toHaveText('245%');
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuenow', '245');
   await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuetext', '245%');
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-orientation', 'vertical');
+
+  await page.locator('#zoomRange').focus();
+  await page.keyboard.press('Home');
+  await expect(page.locator('#zoomLabel')).toHaveText('50%');
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuenow', '50');
+  await page.keyboard.press('End');
+  await expect(page.locator('#zoomLabel')).toHaveText('1200%');
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuenow', '1200');
+  const zoomBounds = await page.locator('#zoomRange').boundingBox();
+  await page.mouse.click(
+    zoomBounds.x + zoomBounds.width / 2,
+    zoomBounds.y + zoomBounds.height / 2
+  );
+  await expect.poll(async () => Number((await page.locator('#zoomLabel').textContent()).replace('%', '')))
+    .toBeGreaterThanOrEqual(240);
+  const pointerPercent = Number((await page.locator('#zoomLabel').textContent()).replace('%', ''));
+  expect(pointerPercent).toBeLessThanOrEqual(255);
+  await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuenow', String(pointerPercent));
 
   await page.evaluate(() => window.setPreviewZoom(12));
   await expect(page.locator('#zoomInBtn')).toBeDisabled();
@@ -4842,7 +4862,7 @@ test('preview canvas failures release backing stores without unhandled errors', 
     const detail = document.getElementById('livePreviewDetailCanvas');
     detail.getContext = () => null;
     const zoom = document.getElementById('zoomRange');
-    zoom.value = zoom.max;
+    zoom.value = '1200';
     zoom.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await expect.poll(() => page.locator('#livePreviewDetailCanvas').evaluate(canvas => ({

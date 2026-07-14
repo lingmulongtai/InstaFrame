@@ -1152,16 +1152,45 @@ input[type="range"]:focus-visible {
 .zoom-btn:disabled:hover { background: rgba(255,255,255,0.14); }
 
 #zoomRange {
-  /* Vertical slider */
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 3px;
+  --zoom-slider-progress: 21.81%;
+  position: relative;
+  width: 24px;
   height: 80px;
-  background: rgba(255,255,255,0.22);
-  appearance: auto;
+  flex-shrink: 0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
-#zoomRange::-webkit-slider-thumb { background: white; box-shadow: 0 0 4px rgba(0,0,0,0.4); }
-#zoomRange::-moz-range-thumb { background: white; border: none; }
+#zoomRange::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.28);
+  transform: translateX(-50%);
+}
+#zoomRange::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: var(--zoom-slider-progress);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.45);
+  transform: translate(-50%, 50%);
+}
+#zoomRange:hover::after { box-shadow: 0 1px 7px rgba(0,0,0,0.6); }
+#zoomRange:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 3px;
+  border-radius: 999px;
+}
 
 .zoom-label {
   border: 0;
@@ -2568,7 +2597,6 @@ input[type="range"]:focus-visible {
   #zoomRange {
     width: 24px;
     height: clamp(112px, 20vh, 160px);
-    background: transparent;
   }
   .zoom-btn  { width: 32px; height: 32px; font-size: 19px; }
   .zoom-label { min-width: 44px; padding: 4px 6px; font-size: 11px; }
