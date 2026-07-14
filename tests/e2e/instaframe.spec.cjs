@@ -2636,6 +2636,19 @@ test('zoom controls keep the same visual rate at low and high magnification', as
   });
   await expect(page.locator('#zoomLabel')).toHaveText('245%');
   await expect(page.locator('#zoomRange')).toHaveAttribute('aria-valuetext', '245%');
+
+  await page.evaluate(() => window.setPreviewZoom(12));
+  await expect(page.locator('#zoomInBtn')).toBeDisabled();
+  await expect(page.locator('#zoomOutBtn')).toBeEnabled();
+  await expect(page.locator('#zoomLabel')).toHaveAccessibleName('ズームを100%に戻す');
+  await page.locator('#zoomLabel').click();
+  await expect(page.locator('#zoomLabel')).toHaveText('100%');
+  await expect(page.locator('#zoomInBtn')).toBeEnabled();
+  await expect(page.locator('#zoomOutBtn')).toBeEnabled();
+
+  await page.evaluate(() => window.setPreviewZoom(0.5));
+  await expect(page.locator('#zoomOutBtn')).toBeDisabled();
+  await expect(page.locator('#zoomInBtn')).toBeEnabled();
 });
 
 test('large preview downscaling stays lossless and avoids a JPEG round-trip', async ({ page }) => {
