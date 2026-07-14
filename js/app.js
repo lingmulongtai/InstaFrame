@@ -5488,8 +5488,15 @@ function _syncMobileTabPanels(tabBar, tab, mobile) {
     const selected = btn.dataset.tab === tab;
     panel.hidden = mobile && !selected;
     panel.inert = mobile && !selected;
-    if (mobile) panel.setAttribute('aria-hidden', String(!selected));
-    else panel.removeAttribute('aria-hidden');
+    if (mobile) {
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', btn.id);
+      panel.setAttribute('aria-hidden', String(!selected));
+    } else {
+      panel.removeAttribute('role');
+      panel.removeAttribute('aria-labelledby');
+      panel.removeAttribute('aria-hidden');
+    }
   });
 }
 

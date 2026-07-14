@@ -1286,10 +1286,21 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('プレビュー画質');
   await page.keyboard.press('Escape');
 
+  for (const panel of ['#dropZone', '#photosPanel', '#settingsPanel']) {
+    await expect(page.locator(panel)).not.toHaveAttribute('role');
+    await expect(page.locator(panel)).not.toHaveAttribute('aria-labelledby');
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-controls', 'dropZone');
   await expect(page.locator('#tabPhotosBtn')).toHaveAttribute('aria-controls', 'photosPanel');
   await expect(page.locator('#tabSettingsBtn')).toHaveAttribute('aria-controls', 'settingsPanel');
+  await expect(page.locator('#dropZone')).toHaveAttribute('role', 'tabpanel');
+  await expect(page.locator('#dropZone')).toHaveAttribute('aria-labelledby', 'tabPreviewBtn');
+  await expect(page.locator('#photosPanel')).toHaveAttribute('role', 'tabpanel');
+  await expect(page.locator('#photosPanel')).toHaveAttribute('aria-labelledby', 'tabPhotosBtn');
+  await expect(page.locator('#settingsPanel')).toHaveAttribute('role', 'tabpanel');
+  await expect(page.locator('#settingsPanel')).toHaveAttribute('aria-labelledby', 'tabSettingsBtn');
   expect(await page.locator('#dropZone').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: false, inert: false });
   expect(await page.locator('#photosPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
   expect(await page.locator('#settingsPanel').evaluate(element => ({ hidden: element.hidden, inert: element.inert }))).toEqual({ hidden: true, inert: true });
