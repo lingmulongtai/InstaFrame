@@ -2464,16 +2464,21 @@ input[type="range"]:focus-visible {
   /* Preview controls */
   .preview-quality-wrap { bottom: 8px; left: 8px; }
   .preview-history-wrap {
-    right: 8px;
-    top: 8px;
-    width: 48px;
-    flex-direction: column;
+    right: 16px;
+    top: 14px;
+    width: auto;
+    flex-direction: row;
     align-items: stretch;
+    gap: 4px;
+    z-index: 11;
   }
   .preview-history-btn {
-    width: 100%;
-    min-height: 36px;
-    padding: 5px 4px;
+    min-width: 48px;
+    min-height: 32px;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.09);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .preview-zoom-bar { right: 8px; }
   .preview-reset-view-btn { right: 8px; bottom: 8px; }
@@ -2497,12 +2502,18 @@ input[type="range"]:focus-visible {
     left: 8px;
     top: 8px;
     bottom: 62px;
-    right: 68px;
-    max-width: calc(100% - 76px);
+    right: 8px;
+    max-width: none;
   }
   .preview-exif-drawer {
-    width: min(var(--exif-editor-w), calc(100vw - 76px));
+    width: 100%;
     max-height: 100%;
+  }
+  .preview-exif-drawer-header {
+    justify-content: flex-start;
+    gap: 8px;
+    min-height: 44px;
+    padding-right: 120px;
   }
   .preview-exif-content { max-height: min(42vh, var(--exif-editor-content-h)); }
   .preview-exif-grid {

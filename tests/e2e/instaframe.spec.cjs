@@ -5085,23 +5085,30 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
   await expect(drawer).toBeVisible();
-  const [box, historyBox] = await Promise.all([
+  const [box, historyBox, headerTitleBox] = await Promise.all([
     drawer.boundingBox(),
     page.locator('#previewHistoryWrap').boundingBox(),
+    page.locator('.preview-exif-drawer-title').boundingBox(),
   ]);
   expect(box.width).toBeGreaterThan(250);
   expect(box.width).toBeLessThanOrEqual(382);
-  expect(box.x + box.width).toBeLessThanOrEqual(historyBox.x - 8);
+  expect(historyBox.x).toBeGreaterThanOrEqual(headerTitleBox.x + headerTitleBox.width + 8);
+  expect(historyBox.x + historyBox.width).toBeLessThanOrEqual(box.x + box.width - 8);
+  expect(historyBox.y).toBeGreaterThanOrEqual(box.y);
+  expect(historyBox.y + historyBox.height).toBeLessThanOrEqual(box.y + 44);
   await page.evaluate(() => document.documentElement.setAttribute('data-editor-size', 'large'));
   const largeBox = await drawer.boundingBox();
-  expect(largeBox.x + largeBox.width).toBeLessThanOrEqual(historyBox.x - 8);
+  expect(largeBox.x).toBeGreaterThanOrEqual(8);
+  expect(largeBox.x + largeBox.width).toBeLessThanOrEqual(382);
   await page.setViewportSize({ width: 320, height: 640 });
-  const [narrowBox, narrowHistoryBox] = await Promise.all([
+  const [narrowBox, narrowHistoryBox, narrowHeaderTitleBox] = await Promise.all([
     drawer.boundingBox(),
     page.locator('#previewHistoryWrap').boundingBox(),
+    page.locator('.preview-exif-drawer-title').boundingBox(),
   ]);
   expect(narrowBox.x).toBeGreaterThanOrEqual(8);
-  expect(narrowBox.x + narrowBox.width).toBeLessThanOrEqual(narrowHistoryBox.x - 8);
+  expect(narrowHistoryBox.x).toBeGreaterThanOrEqual(narrowHeaderTitleBox.x + narrowHeaderTitleBox.width + 8);
+  expect(narrowHistoryBox.x + narrowHistoryBox.width).toBeLessThanOrEqual(narrowBox.x + narrowBox.width - 8);
   expect(narrowHistoryBox.x + narrowHistoryBox.width).toBeLessThanOrEqual(312);
   await page.locator('#tabPhotosBtn').click();
   await expect(page.locator('#photosPanel')).toBeVisible();
