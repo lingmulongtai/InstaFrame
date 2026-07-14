@@ -693,6 +693,36 @@ test('pagehide commits a pending live EXIF edit before releasing preview resourc
   await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
 });
 
+test('BFCache suspension closes the map picker before releasing its map', async ({ page }) => {
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = () => {};
+  });
+  await uploadJpegs(page);
+  await page.locator('#openMapPickerBtn').click();
+  const modal = page.locator('#mapPickerModal');
+  await expect(modal).toHaveClass(/open/);
+  await expect.poll(() => page.locator('#mapPickerContainer').evaluate(
+    element => typeof element._leaflet_id
+  )).toBe('number');
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect(modal).not.toHaveClass(/open/);
+  await expect(modal).toBeHidden();
+  expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(false);
+  expect(await page.locator('#mapPickerContainer').evaluate(element => element._leaflet_id)).toBeUndefined();
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await page.locator('#openMapPickerBtn').click();
+  await expect(modal).toHaveClass(/open/);
+  await expect(page.locator('#selectMapCenterBtn')).toBeEnabled();
+  await page.locator('#mapPickerCloseBtn').click();
+});
+
 test('page suspension pauses an import after metadata until the page is restored', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {
