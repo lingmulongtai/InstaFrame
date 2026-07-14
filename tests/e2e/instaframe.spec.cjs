@@ -216,6 +216,21 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
 });
 
+test('card actions identify their target file in both languages', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page, 2);
+
+  await expect(page.locator('#item-1 [data-action="download"]')).toHaveAccessibleName('Download photo-1.jpg');
+  await expect(page.locator('#item-2 [data-action="download"]')).toHaveAccessibleName('Download photo-2.jpg');
+  await expect(page.locator('#item-1 [data-action="remove"]')).toHaveAccessibleName('Remove photo-1.jpg');
+  await expect(page.locator('#item-2 [data-action="remove"]')).toHaveAccessibleName('Remove photo-2.jpg');
+
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('#item-1 [data-action="download"]')).toHaveAccessibleName('「photo-1.jpg」をダウンロード');
+  await expect(page.locator('#item-2 [data-action="remove"]')).toHaveAccessibleName('「photo-2.jpg」を削除');
+});
+
 test('the editor remains usable when browser storage is unavailable', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));

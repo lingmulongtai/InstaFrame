@@ -4160,10 +4160,10 @@ function renderItem(item) {
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download">
+        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
         </button>
-        <button class="btn btn-sm btn-danger" data-action="remove">
+        <button class="btn btn-sm btn-danger" data-action="remove" aria-label="${escHtml(tf('removeNamed', { name: item.file.name }))}">
           <span data-i18n="remove">${t('remove')}</span>
         </button>
       </div>
@@ -5272,6 +5272,14 @@ function rerenderCards() {
     const card = document.getElementById(`item-${item.id}`);
     const preview = card?.querySelector('.card-preview');
     preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
+    card?.querySelector('[data-action="download"]')?.setAttribute(
+      'aria-label',
+      tf('downloadSingleNamed', { name: item.file.name })
+    );
+    card?.querySelector('[data-action="remove"]')?.setAttribute(
+      'aria-label',
+      tf('removeNamed', { name: item.file.name })
+    );
     updateItemStatus(item);
     if (item.status === 'done') updateItemPreview(item);
   });
