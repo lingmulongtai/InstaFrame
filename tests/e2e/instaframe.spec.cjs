@@ -1167,6 +1167,26 @@ test('core photo processing works when external network is blocked', async ({ pa
   expect(download.suggestedFilename()).toMatch(/photo-1_frame\.(jpg|jpeg)$/i);
 });
 
+test('a local SVG image cannot load remote subresources before consent', async ({ page }) => {
+  const remoteRequests = [];
+  await page.route('https://a.tile.openstreetmap.org/**', route => {
+    remoteRequests.push(route.request().url());
+    return route.abort();
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'remote-reference.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from([
+      '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">',
+      '<image href="https://a.tile.openstreetmap.org/0/0/0.png" width="32" height="32"/>',
+      '</svg>',
+    ].join('')),
+  });
+
+  await page.waitForTimeout(500);
+  expect(remoteRequests).toEqual([]);
+});
+
 test('PNG and WebP inputs decode into switchable previews', async ({ page }) => {
   const [png, webp] = await Promise.all([
     createBrowserRaster(page, 'image/png'),
