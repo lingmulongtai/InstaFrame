@@ -2236,6 +2236,39 @@ test('clear cancels a stalled import before its first item is created', async ({
   await expect(page.locator('.image-card')).toHaveCount(0);
 });
 
+test('clear stops waiting for a shared metadata decoder activation', async ({ page }) => {
+  await page.evaluate(() => {
+    let releaseActivation;
+    const stalledActivation = new Promise(resolve => { releaseActivation = resolve; });
+    delete window.exifr;
+    window.__metadataActivationStats = { loads: 0, finished: false };
+    window.loadVendorScript = () => {
+      window.__metadataActivationStats.loads += 1;
+      return stalledActivation;
+    };
+    window.__releaseMetadataActivation = () => {
+      window.exifr = { parse: () => Promise.resolve(null) };
+      releaseActivation(window.exifr);
+    };
+    window.__metadataActivationImport = window.addFiles([
+      new File(['metadata'], 'waiting-for-decoder.jpg', { type: 'image/jpeg' }),
+    ]).then(() => { window.__metadataActivationStats.finished = true; });
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__metadataActivationStats.loads)).toBe(1);
+  await page.locator('#clearAllBtn').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__metadataActivationStats.finished)).toBe(true);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    window.__releaseMetadataActivation();
+    await window.__metadataActivationImport;
+  });
+  expect(await page.evaluate(() => window.__metadataActivationStats.loads)).toBe(1);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+});
+
 test('clearing an import aborts the active metadata FileReader', async ({ page }) => {
   await page.evaluate(() => {
     window.__metadataReaderStats = { reads: 0, aborts: 0, finished: false };

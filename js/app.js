@@ -966,7 +966,11 @@ function isVideoFile(file) {
 async function readVideoMetadata(file, signal = null) {
   // exifr can read some QuickTime/XMP metadata from MP4/MOV
   try {
-    const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
+    const exifrApi = await _waitForAbortablePromise(
+      loadVendorScript('vendor/exifr.js', 'exifr'),
+      signal,
+      'Metadata read cancelled'
+    );
     const raw = await _readMetadataWithGuard(() => exifrApi.parse(file, {
       pick: ['Make', 'Model', 'Software', 'Author'],
     }), signal);
@@ -988,7 +992,11 @@ async function readVideoMetadata(file, signal = null) {
 
 async function readExif(file, signal = null) {
   try {
-    const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
+    const exifrApi = await _waitForAbortablePromise(
+      loadVendorScript('vendor/exifr.js', 'exifr'),
+      signal,
+      'Metadata read cancelled'
+    );
     const raw = await _readMetadataWithGuard(() => exifrApi.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
              'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings',
