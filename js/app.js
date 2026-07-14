@@ -5239,7 +5239,7 @@ function capitalize(s) {
 // ─── Preferences (theme / layout) ────────────────────────────────────────────
 const PREFS_KEY = 'instaframe_prefs';
 function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
-function savePrefs(p)  { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }
+function savePrefs(p)  { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch {} }
 
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme || 'light');
