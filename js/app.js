@@ -871,13 +871,87 @@ function buildFontSelect() {
 }
 
 // ─── EXIF / Metadata Reading ──────────────────────────────────────────────────
-function _withMetadataReadGuard(promise) {
-  let timeoutId = null;
-  const timeout = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error('Metadata read timed out')), METADATA_READ_GUARD_MS);
+function _withMetadataReadGuard(promise, { signal = null, cancel = null } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId = null;
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abort);
+    };
+    const finish = (callback, value, cancelPending = false) => {
+      if (settled) return;
+      settled = true;
+      if (cancelPending) {
+        try { cancel?.(); }
+        catch (_) { /* best-effort cancellation */ }
+      }
+      cleanup();
+      callback(value);
+    };
+    const abort = () => finish(
+      reject,
+      new DOMException('Metadata read cancelled', 'AbortError'),
+      true
+    );
+    timeoutId = setTimeout(() => finish(
+      reject,
+      new Error('Metadata read timed out'),
+      true
+    ), METADATA_READ_GUARD_MS);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(
+      value => finish(resolve, value),
+      error => finish(reject, error)
+    );
   });
-  return Promise.race([Promise.resolve(promise), timeout])
-    .finally(() => clearTimeout(timeoutId));
+}
+
+function _readMetadataWithGuard(parse, signal = null) {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Metadata read cancelled', 'AbortError'));
+  }
+  const NativeFileReader = window.FileReader;
+  if (typeof NativeFileReader !== 'function') {
+    return _withMetadataReadGuard(parse(), { signal });
+  }
+
+  const activeReaders = new Set();
+  class TrackedFileReader extends NativeFileReader {
+    constructor(...args) {
+      super(...args);
+      activeReaders.add(this);
+      this.addEventListener('loadend', () => activeReaders.delete(this), { once: true });
+    }
+  }
+
+  let trackingInstalled = false;
+  try {
+    window.FileReader = TrackedFileReader;
+    trackingInstalled = window.FileReader === TrackedFileReader;
+  } catch (_) { /* fall back to the metadata timeout without reader ownership */ }
+
+  const restore = () => {
+    if (trackingInstalled && window.FileReader === TrackedFileReader) window.FileReader = NativeFileReader;
+  };
+  const cancel = () => {
+    for (const reader of activeReaders) {
+      try {
+        if (reader.readyState === 1) reader.abort();
+      } catch (_) { /* best-effort cancellation */ }
+    }
+    activeReaders.clear();
+  };
+
+  let parsePromise;
+  try {
+    parsePromise = parse();
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return _withMetadataReadGuard(parsePromise, { signal, cancel }).finally(restore);
 }
 
 function isVideoFile(file) {
@@ -887,13 +961,13 @@ function isVideoFile(file) {
   return /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(String(file?.name || ''));
 }
 
-async function readVideoMetadata(file) {
+async function readVideoMetadata(file, signal = null) {
   // exifr can read some QuickTime/XMP metadata from MP4/MOV
   try {
     const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
-    const raw = await _withMetadataReadGuard(exifrApi.parse(file, {
+    const raw = await _readMetadataWithGuard(() => exifrApi.parse(file, {
       pick: ['Make', 'Model', 'Software', 'Author'],
-    }));
+    }), signal);
     if (raw) {
       return {
         make:         cleanStr(raw.Make     || raw.Author   || ''),
@@ -910,14 +984,14 @@ async function readVideoMetadata(file) {
   return emptyExif();
 }
 
-async function readExif(file) {
+async function readExif(file, signal = null) {
   try {
     const exifrApi = await loadVendorScript('vendor/exifr.js', 'exifr');
-    const raw = await _withMetadataReadGuard(exifrApi.parse(file, {
+    const raw = await _readMetadataWithGuard(() => exifrApi.parse(file, {
       pick: ['Make', 'Model', 'LensModel', 'FocalLength',
              'FNumber', 'ExposureTime', 'ISO', 'ISOSpeedRatings',
              'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef'],
-    }));
+    }), signal);
     if (!raw) return emptyExif();
 
     // Parse GPS coordinates if present
@@ -1223,6 +1297,7 @@ function _reserveImportFiles(files) {
     generation: _importGeneration,
     remainingItems: accepted.length,
     remainingBytes: reservedBytes,
+    controller: new AbortController(),
     released: false,
   };
   if (accepted.length) _activeImportReservations.add(reservation);
@@ -1240,6 +1315,7 @@ function _consumeImportReservation(reservation, file) {
 
 function _releaseImportReservation(reservation) {
   if (reservation.released) return;
+  reservation.controller.abort();
   _reservedImportItems -= reservation.remainingItems;
   _reservedImportBytes -= reservation.remainingBytes;
   reservation.remainingItems = 0;
@@ -1297,7 +1373,9 @@ async function _addFiles(accepted, reservation) {
   for (const file of accepted) {
     if (!isCurrentImport()) break;
     const video = isVideoFile(file);
-    const exif  = video ? await readVideoMetadata(file) : await readExif(file);
+    const exif  = video
+      ? await readVideoMetadata(file, reservation.controller.signal)
+      : await readExif(file, reservation.controller.signal);
     // Metadata decoders are not uniformly abortable. If they finish after
     // pagehide, retain the queued File but do not create DOM, Blob URLs, or
     // Canvas resources until pageshow restores the workspace.
