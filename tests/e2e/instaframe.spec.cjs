@@ -1640,6 +1640,60 @@ test('JPEG, PNG, and WebP exports have the requested file signatures', async ({ 
   }
 });
 
+test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const callbacks = [];
+    canvas.toBlob = callback => { callbacks.push(callback); };
+    const controller = new AbortController();
+    const first = window.FrameEngine.canvasToBlob(canvas, { signal: controller.signal })
+      .then(() => 'resolved', error => error.name);
+    await Promise.resolve();
+    controller.abort();
+    const firstOutcome = await first;
+
+    let secondSettled = false;
+    const second = window.FrameEngine.canvasToBlob(canvas).then(blob => {
+      secondSettled = true;
+      return blob.type;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const callsBeforeRelease = callbacks.length;
+
+    callbacks[0](new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+    await Promise.resolve();
+    await Promise.resolve();
+    const callsAfterRelease = callbacks.length;
+    const settledBeforeSecondCallback = secondSettled;
+    callbacks[1](new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+
+    return {
+      firstOutcome,
+      callsBeforeRelease,
+      callsAfterRelease,
+      settledBeforeSecondCallback,
+      secondType: await second,
+    };
+  });
+
+  expect(result).toEqual({
+    firstOutcome: 'AbortError',
+    callsBeforeRelease: 1,
+    callsAfterRelease: 2,
+    settledBeforeSecondCallback: false,
+    secondType: 'image/jpeg',
+  });
+});
+
 test('EXIF edits remain item-specific and visual settings persist', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.locator('#live-exif-model').fill('Edited Camera');
