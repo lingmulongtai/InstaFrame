@@ -4455,12 +4455,22 @@ test('keyboard card selection moves mobile focus into the selected preview', asy
     { name: 'keyboard-photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
     { name: 'keyboard-video.webm', mimeType: 'video/webm', buffer: createWebm() },
   ]);
+  await page.evaluate(() => {
+    const target = document.getElementById('videoPlayPauseBtn');
+    const nativeGetClientRects = target.getClientRects.bind(target);
+    window.__videoFocusRectChecks = 0;
+    target.getClientRects = () => {
+      window.__videoFocusRectChecks += 1;
+      return window.__videoFocusRectChecks === 1 ? [] : nativeGetClientRects();
+    };
+  });
 
   await page.locator('#tabPhotosBtn').click();
   await page.locator('#preview-2').focus();
   await page.locator('#preview-2').press('Enter');
   await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#videoPlayPauseBtn')).toBeFocused();
+  expect(await page.evaluate(() => window.__videoFocusRectChecks)).toBeGreaterThanOrEqual(2);
   expect(await page.evaluate(() => document.activeElement.closest('[inert]'))).toBeNull();
 
   await page.locator('#tabPhotosBtn').click();
