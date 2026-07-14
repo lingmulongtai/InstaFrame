@@ -1388,8 +1388,11 @@ input[type="range"]:focus-visible {
 }
 .preview-area.has-preview .preview-exif-wrap {
   opacity: 1;
-  pointer-events: all;
+  pointer-events: none;
 }
+
+.preview-area.has-preview .preview-exif-toggle,
+.preview-area.has-preview .preview-exif-drawer { pointer-events: auto; }
 
 .preview-exif-toggle {
   background: rgba(0,0,0,0.55);
@@ -1848,6 +1851,12 @@ input[type="range"]:focus-visible {
 }
 #livePreviewCanvas.frame-dark {
   box-shadow: 0 6px 30px rgba(0,0,0,0.55), 0 0 0 1.5px rgba(255,255,255,0.2);
+}
+.live-preview-detail {
+  display: none;
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
 }
 /* Whole preview area gets grab cursor when a preview is active */
 .preview-area.has-preview { cursor: grab; }

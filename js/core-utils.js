@@ -101,6 +101,81 @@
     return Math.min(requested, pixelBudgetScale, sideBudgetScale);
   }
 
+  /**
+   * Plan a source crop that restores visible detail when the full preview hits
+   * its backing-store budget. The returned overlay is viewport-sized, so its
+   * memory use does not grow with zoom or with the off-screen frame area.
+   */
+  function getVisiblePreviewDetailPlan({
+    sourceWidth,
+    sourceHeight,
+    canvasRect,
+    viewportRect,
+    baseBackingWidth,
+    baseBackingHeight,
+    devicePixelRatio = 1,
+    maxPixels,
+  }) {
+    const sourceW = Number(sourceWidth) || 0;
+    const sourceH = Number(sourceHeight) || 0;
+    const canvas = canvasRect || {};
+    const viewport = viewportRect || {};
+    const canvasW = Number(canvas.width) || 0;
+    const canvasH = Number(canvas.height) || 0;
+    const viewportW = Number(viewport.width) || 0;
+    const viewportH = Number(viewport.height) || 0;
+    if (sourceW <= 0 || sourceH <= 0 || canvasW <= 0 || canvasH <= 0 ||
+        viewportW <= 0 || viewportH <= 0) return null;
+
+    const canvasLeft = Number(canvas.left) || 0;
+    const canvasTop = Number(canvas.top) || 0;
+    const viewportLeft = Number(viewport.left) || 0;
+    const viewportTop = Number(viewport.top) || 0;
+    const left = Math.max(canvasLeft, viewportLeft);
+    const top = Math.max(canvasTop, viewportTop);
+    const right = Math.min(canvasLeft + canvasW, viewportLeft + viewportW);
+    const bottom = Math.min(canvasTop + canvasH, viewportTop + viewportH);
+    const width = right - left;
+    const height = bottom - top;
+    if (width < 1 || height < 1) return null;
+
+    const baseDensity = Math.min(
+      (Number(baseBackingWidth) || 0) / canvasW,
+      (Number(baseBackingHeight) || 0) / canvasH
+    );
+    const sourceDensity = Math.min(sourceW / canvasW, sourceH / canvasH);
+    const requestedDensity = Math.min(
+      Math.max(1, Number(devicePixelRatio) || 1),
+      sourceDensity
+    );
+    const density = getBudgetedPreviewBackingScale(
+      requestedDensity,
+      width,
+      height,
+      maxPixels
+    );
+    if (!Number.isFinite(baseDensity) || density <= baseDensity * 1.05) return null;
+
+    const sourceX = (left - canvasLeft) / canvasW * sourceW;
+    const sourceY = (top - canvasTop) / canvasH * sourceH;
+    const sourceCropWidth = width / canvasW * sourceW;
+    const sourceCropHeight = height / canvasH * sourceH;
+    return {
+      left,
+      top,
+      width,
+      height,
+      sourceX,
+      sourceY,
+      sourceWidth: sourceCropWidth,
+      sourceHeight: sourceCropHeight,
+      density,
+      pixelWidth: Math.max(1, Math.floor(width * density)),
+      pixelHeight: Math.max(1, Math.floor(height * density)),
+      baseDensity,
+    };
+  }
+
   /** Conservative ZIP peak: retained outputs + photo entry blobs + archive blob. */
   function estimateZipPeakBytes(retainedBytes, encodedPhotoBytes, archiveInputBytes, entryCount = 0) {
     const safe = value => Math.max(0, Number(value) || 0);
@@ -147,6 +222,7 @@
     getPreviewPanForZoomFocus,
     getPreviewBackingScale,
     getBudgetedPreviewBackingScale,
+    getVisiblePreviewDetailPlan,
     estimateZipPeakBytes,
     formatCoordinateLabel,
     normalizeHexColor,

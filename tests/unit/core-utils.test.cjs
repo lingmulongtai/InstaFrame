@@ -35,6 +35,27 @@ test('preview backing density preserves normal zoom detail and caps extreme canv
   assert.ok(Math.round(145 * panorama) <= core.MAX_SAFE_CANVAS_SIDE);
 });
 
+test('visible preview detail restores a budget-limited crop without scaling off-screen pixels', () => {
+  const plan = core.getVisiblePreviewDetailPlan({
+    sourceWidth: 4096,
+    sourceHeight: 6144,
+    canvasRect: { left: -1800, top: -2500, width: 4200, height: 6300 },
+    viewportRect: { left: 0, top: 0, width: 390, height: 700 },
+    baseBackingWidth: 3000,
+    baseBackingHeight: 4500,
+    devicePixelRatio: 3,
+    maxPixels: 8_000_000,
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.width, 390);
+  assert.equal(plan.height, 700);
+  assert.ok(plan.density > plan.baseDensity);
+  assert.ok(plan.pixelWidth * plan.pixelHeight <= 8_000_000);
+  assert.ok(plan.sourceX > 0);
+  assert.ok(plan.sourceY > 0);
+});
+
 test('preview zoom slider gives equal travel an equal visual scale ratio', () => {
   const positions = [50, 337.5, 625, 912.5, 1200];
   const zooms = positions.map(core.getPreviewZoomForSliderValue);

@@ -4418,6 +4418,68 @@ test('auto preview stays pixel-dense through 1200% zoom', async ({ page }) => {
     .toEqual({ width: 0, height: 0 });
 });
 
+test('mobile high zoom sharpens only the visible preview crop', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const portraitJpeg = await createBrowserRaster(page, 'image/jpeg', 4267, 6400);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'portrait-detail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: portraitJpeg,
+  });
+
+  const canvas = page.locator('#livePreviewCanvas');
+  const detail = page.locator('#livePreviewDetailCanvas');
+  await expect(canvas).toBeVisible();
+  await page.locator('#zoomRange').evaluate(element => {
+    element.value = '1200';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  await expect(detail).toBeVisible();
+  const result = await page.evaluate(() => {
+    const canvas = document.getElementById('livePreviewCanvas');
+    const detail = document.getElementById('livePreviewDetailCanvas');
+    const pane = document.getElementById('dropZone');
+    const canvasRect = canvas.getBoundingClientRect();
+    const detailRect = detail.getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    return {
+      baseDensity: canvas.width / canvasRect.width,
+      detailDensity: detail.width / detailRect.width,
+      detailPixels: detail.width * detail.height,
+      recordedPixels: Number(canvas.dataset.previewDetailPixels),
+      insidePane: detailRect.left >= paneRect.left - 0.5 &&
+        detailRect.top >= paneRect.top - 0.5 &&
+        detailRect.right <= paneRect.right + 0.5 &&
+        detailRect.bottom <= paneRect.bottom + 0.5,
+    };
+  });
+  expect(result.detailDensity).toBeGreaterThan(result.baseDensity * 1.05);
+  expect(result.detailPixels).toBe(result.recordedPixels);
+  expect(result.detailPixels).toBeLessThanOrEqual(8_000_000);
+  expect(result.insidePane).toBe(true);
+
+  const paneBox = await page.locator('#dropZone').boundingBox();
+  const panStart = {
+    x: paneBox.x + paneBox.width / 2,
+    y: paneBox.y + paneBox.height * 0.7,
+  };
+  expect(await page.evaluate(({ x, y }) => {
+    const target = document.elementFromPoint(x, y);
+    return {
+      id: target?.id || '',
+      className: typeof target?.className === 'string' ? target.className : '',
+      excluded: Boolean(target?.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')),
+    };
+  }, panStart)).toEqual({ id: 'livePreviewCanvas', className: '', excluded: false });
+  await page.mouse.move(panStart.x, panStart.y);
+  await page.mouse.down();
+  await page.mouse.move(panStart.x + 36, panStart.y + 24);
+  await expect(detail).toBeHidden();
+  await page.mouse.up();
+  await expect(detail).toBeVisible();
+});
+
 test('frame rendering rejects Canvas side and area overflow before allocation', async ({ page }) => {
   const result = await page.evaluate(() => {
     const captureCode = callback => {
