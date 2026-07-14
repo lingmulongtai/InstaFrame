@@ -3433,6 +3433,39 @@ test('aborting an image decode revokes its temporary Blob URL', async ({ page })
   expect(result).toEqual({ errorName: 'AbortError', activeUrls: 0 });
 });
 
+test('image source setup failures keep their original error and revoke the Blob URL', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const NativeImage = window.Image;
+    const createUrl = URL.createObjectURL.bind(URL);
+    const revokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    URL.createObjectURL = value => {
+      const url = createUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      revokeUrl(url);
+    };
+    window.Image = class FailingSourceImage {
+      removeAttribute() { throw new Error('simulated image cleanup failure'); }
+      set src(_value) { throw new Error('simulated image source failure'); }
+    };
+
+    try {
+      const message = await window.FrameEngine.loadImage(
+        new File(['image'], 'source-failure.jpg', { type: 'image/jpeg' })
+      ).then(() => 'resolved', error => error.message);
+      return { message, activeUrls: activeUrls.size };
+    } finally {
+      window.Image = NativeImage;
+    }
+  });
+
+  expect(result).toEqual({ message: 'simulated image source failure', activeUrls: 0 });
+});
+
 test('switching photos aborts stale live-preview image decoders', async ({ page }) => {
   await uploadJpegs(page, 3);
   await page.evaluate(() => {
