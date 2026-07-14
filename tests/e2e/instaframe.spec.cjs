@@ -3127,6 +3127,71 @@ test('uncertain audio hints use native capture and Web Audio fallback', async ({
   });
 });
 
+test('Web Audio fallback stops its track when canvas capture setup fails', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const file = new File([new Uint8Array(2 * 1024 * 1024 + 64)], 'failed-audio-route.mp4', {
+      type: 'video/mp4',
+    });
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCanvasCapture = HTMLCanvasElement.prototype.captureStream;
+    const NativeAudioContext = window.AudioContext;
+    const audioTrack = { stops: 0, stop() { this.stops += 1; } };
+    const contexts = [];
+
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        videoWidth: 320,
+        videoHeight: 180,
+        duration: 1,
+        currentTime: 0,
+        ended: false,
+        paused: true,
+        src: '',
+        captureStream() { return { getAudioTracks() { return []; }, getTracks() { return []; } }; },
+        pause() { this.paused = true; },
+        removeAttribute(name) { if (name === 'src') this.src = ''; },
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => {
+      throw new Error('simulated canvas capture failure');
+    };
+    window.AudioContext = class FakeAudioContext {
+      constructor() { this.state = 'running'; contexts.push(this); }
+      resume() { return Promise.resolve(); }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+      createMediaElementSource() { return { connect() {} }; }
+      createMediaStreamDestination() {
+        return { stream: { getAudioTracks() { return [audioTrack]; } } };
+      }
+    };
+
+    let message = '';
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+    } catch (error) {
+      message = error.message;
+    } finally {
+      document.createElement = nativeCreateElement;
+      HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
+      window.AudioContext = NativeAudioContext;
+    }
+    await Promise.resolve();
+    return {
+      message,
+      audioTrackStops: audioTrack.stops,
+      contextStates: contexts.map(context => context.state),
+    };
+  });
+
+  expect(result).toEqual({
+    message: 'simulated canvas capture failure',
+    audioTrackStops: 1,
+    contextStates: ['closed'],
+  });
+});
+
 test('MediaRecorder setup exceptions reject and revoke their source URL', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
