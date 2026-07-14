@@ -7247,6 +7247,43 @@ test('failed Leaflet script loads remove retry nodes and event handlers', async 
   });
 });
 
+test('Leaflet loads without a runtime remove their script before retrying', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeAppend = document.head.appendChild.bind(document.head);
+    const scripts = [];
+    document.head.appendChild = node => {
+      if (node instanceof HTMLScriptElement && node.src.includes('/vendor/leaflet/leaflet.js')) {
+        node.type = 'application/json';
+        scripts.push(node);
+      }
+      const appended = nativeAppend(node);
+      if (scripts.includes(node)) queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      return appended;
+    };
+    try {
+      const outcomes = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        outcomes.push(await window._loadLeafletScript('vendor/leaflet/leaflet.js')
+          .then(() => 'resolved', error => error.message));
+      }
+      return {
+        outcomes,
+        remainingScripts: document.querySelectorAll('script[src*="vendor/leaflet/leaflet.js"]').length,
+        handlersCleared: scripts.every(script => script.onload === null && script.onerror === null),
+      };
+    } finally {
+      document.head.appendChild = nativeAppend;
+      scripts.forEach(script => script.remove());
+    }
+  });
+
+  expect(result).toEqual({
+    outcomes: ['Leaflet runtime is unavailable', 'Leaflet runtime is unavailable'],
+    remainingScripts: 0,
+    handlersCleared: true,
+  });
+});
+
 test('map picker exposes accessible busy states and coalesces place-name lookup', async ({ page }) => {
   let releaseLeaflet;
   let markLeafletRequested;

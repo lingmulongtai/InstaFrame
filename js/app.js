@@ -3036,7 +3036,13 @@ function _loadLeafletScript(src) {
       cleanup(removeScript);
       callback(value);
     };
-    script.onload = () => finish(resolve, true);
+    script.onload = () => {
+      if (typeof L === 'undefined') {
+        finish(reject, new Error('Leaflet runtime is unavailable'), true);
+        return;
+      }
+      finish(resolve, true);
+    };
     script.onerror = () => finish(reject, new Error('Leaflet script load failed'), true);
     try {
       script.src = _versionedAssetUrl(src);
