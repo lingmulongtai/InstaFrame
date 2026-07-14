@@ -6388,6 +6388,39 @@ test('closing the map picker aborts its IP fallback and releases the map', async
   expect(await page.locator('#mapPickerContainer').evaluate(element => element._leaflet_id)).toBeUndefined();
 });
 
+test('invalid IP fallback coordinates leave the map usable without an unhandled error', async ({ page }) => {
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.route('https://ipapi.co/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ latitude: 'invalid', longitude: 'also-invalid' }),
+  }));
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'en');
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = (_success, failure) => failure(new Error('Use IP fallback'));
+  });
+  await uploadJpegs(page);
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  const ipResponse = page.waitForResponse(response => response.url().startsWith('https://ipapi.co/'));
+
+  await page.locator('#openMapPickerBtn').click();
+  await ipResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#mapPickerCoords')).toContainText(/click on the map|地図をクリック/i);
+  await expect(page.locator('#selectMapCenterBtn')).toBeEnabled();
+  await page.locator('#selectMapCenterBtn').click();
+  await expect(page.locator('#mapPickerCoords')).not.toContainText(/click on the map|地図をクリック/i);
+  expect(pageErrors).toEqual([]);
+});
+
 for (const { extension, mimeType } of [
   { extension: 'heic', mimeType: 'image/heic' },
   { extension: 'heif', mimeType: 'image/heif' },

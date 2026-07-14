@@ -3117,9 +3117,13 @@ async function _fetchIpLocation(locationRequestId = _mapPickerLocationRequestId)
   _ipLocationController = controller;
   try {
     const data = await _fetchLocationJson('https://ipapi.co/json/', {}, controller);
-    if (data?.latitude && data?.longitude && !controller.signal.aborted &&
+    const latitude = Number(data?.latitude);
+    const longitude = Number(data?.longitude);
+    const validCoordinates = Number.isFinite(latitude) && Math.abs(latitude) <= 90
+      && Number.isFinite(longitude) && Math.abs(longitude) <= 180;
+    if (validCoordinates && !controller.signal.aborted &&
         locationRequestId === _mapPickerLocationRequestId && _mapPickerMap) {
-      _mapPickerMap.setView([data.latitude, data.longitude], 10);
+      _mapPickerMap.setView([latitude, longitude], 10);
     }
   } finally {
     if (_ipLocationController === controller) _ipLocationController = null;
