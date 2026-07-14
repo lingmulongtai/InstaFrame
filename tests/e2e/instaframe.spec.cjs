@@ -4151,6 +4151,62 @@ test('image source setup failures keep their original error and revoke the Blob 
   expect(result).toEqual({ message: 'simulated image source failure', activeUrls: 0 });
 });
 
+test('live preview source setup failures detach their abort listener and revoke the Blob URL', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const NativeImage = window.Image;
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    let addedListeners = 0;
+    let removedListeners = 0;
+    let sourceRemovals = 0;
+    const signal = {
+      aborted: false,
+      addEventListener(type) { if (type === 'abort') addedListeners += 1; },
+      removeEventListener(type) { if (type === 'abort') removedListeners += 1; },
+    };
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    window.Image = class FailingPreviewSourceImage {
+      removeAttribute(name) { if (name === 'src') sourceRemovals += 1; }
+      set src(_value) { throw new Error('simulated preview source failure'); }
+    };
+
+    try {
+      const item = {
+        id: 987,
+        file: new File(['image'], 'preview-source-failure.jpg', { type: 'image/jpeg' }),
+      };
+      const message = await window._decodePreviewImage(item, signal, false)
+        .then(() => 'resolved', error => error.message);
+      return {
+        message,
+        activeUrls: activeUrls.size,
+        addedListeners,
+        removedListeners,
+        sourceRemovals,
+      };
+    } finally {
+      window.Image = NativeImage;
+    }
+  });
+
+  expect(result).toEqual({
+    message: 'simulated preview source failure',
+    activeUrls: 0,
+    addedListeners: 1,
+    removedListeners: 1,
+    sourceRemovals: 1,
+  });
+});
+
 test('switching photos aborts stale live-preview image decoders', async ({ page }) => {
   await uploadJpegs(page, 3);
   await page.evaluate(() => {
