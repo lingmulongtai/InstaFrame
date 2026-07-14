@@ -4554,8 +4554,12 @@ function _startPhotoThumbnail(item) {
     thumbnail.addEventListener('load', loaded);
     thumbnail.addEventListener('error', failed);
     signal.addEventListener('abort', aborted, { once: true });
-    thumbnail.src = objectUrl;
-    if (thumbnail.complete) queueMicrotask(thumbnail.naturalWidth ? loaded : failed);
+    try {
+      thumbnail.src = objectUrl;
+      if (thumbnail.complete) queueMicrotask(thumbnail.naturalWidth ? loaded : failed);
+    } catch (error) {
+      finish(reject, error, 'discard');
+    }
   }))
     .catch(error => {
       if (error?.name === 'AbortError' || !state.items.includes(item)) return;
