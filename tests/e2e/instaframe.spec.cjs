@@ -1694,6 +1694,43 @@ test('cancelled photo encoding keeps retries serialized until the native callbac
   });
 });
 
+test('a photo encode timeout releases its canvas retry lock', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const callbacks = [];
+    canvas.toBlob = callback => { callbacks.push(callback); };
+
+    const firstOutcome = await window.FrameEngine.canvasToBlob(canvas, { timeoutMs: 20 })
+      .then(() => 'resolved', error => error.code || error.name);
+    const second = window.FrameEngine.canvasToBlob(canvas);
+    while (callbacks.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    callbacks[1](new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+    const secondBlob = await second;
+    callbacks[0](new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+    await Promise.resolve();
+
+    return {
+      firstOutcome,
+      nativeEncodeCalls: callbacks.length,
+      secondType: secondBlob.type,
+    };
+  });
+
+  expect(result).toEqual({
+    firstOutcome: 'IMAGE_ENCODE_TIMEOUT',
+    nativeEncodeCalls: 2,
+    secondType: 'image/jpeg',
+  });
+});
+
 test('EXIF edits remain item-specific and visual settings persist', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.locator('#live-exif-model').fill('Edited Camera');

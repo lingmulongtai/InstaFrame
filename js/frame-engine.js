@@ -832,6 +832,7 @@ const FrameEngine = (() => {
       timeoutId = setTimeout(() => {
         const error = new Error('Image encoding timed out');
         error.code = 'IMAGE_ENCODE_TIMEOUT';
+        finishNativeEncode();
         fail(error);
       }, resolveGuardTimeout(timeoutMs, IMAGE_ENCODE_GUARD_MS));
       try {
