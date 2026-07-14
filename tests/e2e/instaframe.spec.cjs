@@ -2928,6 +2928,48 @@ test('aborting an image decode revokes its temporary Blob URL', async ({ page })
   expect(result).toEqual({ errorName: 'AbortError', activeUrls: 0 });
 });
 
+test('switching photos aborts stale live-preview image decoders', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const stats = { activePreviewUrls: new Set(), sourceRemoved: 0 };
+    window.__switchDecodeStats = stats;
+    URL.revokeObjectURL = url => {
+      stats.activePreviewUrls.delete(url);
+      revoke(url);
+    };
+    window.Image = class StalledPreviewImage {
+      set src(value) {
+        this._src = String(value);
+        stats.activePreviewUrls.add(this._src);
+      }
+
+      get src() { return this._src || ''; }
+
+      removeAttribute(name) {
+        if (name === 'src' && this._src) {
+          this._src = '';
+          stats.sourceRemoved += 1;
+        }
+      }
+    };
+  });
+
+  await page.evaluate(() => window.selectItem(2));
+  await expect.poll(() => page.evaluate(() => window.__switchDecodeStats.activePreviewUrls.size)).toBe(1);
+  await page.evaluate(() => window.selectItem(3));
+  await expect.poll(() => page.evaluate(() => ({
+    active: window.__switchDecodeStats.activePreviewUrls.size,
+    removed: window.__switchDecodeStats.sourceRemoved,
+  }))).toEqual({ active: 1, removed: 1 });
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect.poll(() => page.evaluate(() => ({
+    active: window.__switchDecodeStats.activePreviewUrls.size,
+    removed: window.__switchDecodeStats.sourceRemoved,
+  }))).toEqual({ active: 0, removed: 2 });
+});
+
 test('a stalled photo export decoder times out, revokes its URL, and restores controls', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

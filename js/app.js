@@ -3425,6 +3425,11 @@ function resetPreviewView() {
 function selectItem(id) {
   _flushLiveExifEdit();
   state.selectedItemId = id;
+  for (const [itemId, entry] of _imgLoadEntries) {
+    if (itemId === id) continue;
+    entry.controller.abort();
+    _imgLoadEntries.delete(itemId);
+  }
   document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected-preview'));
   document.querySelectorAll('.card-preview').forEach(preview => preview.setAttribute('aria-pressed', 'false'));
   const el = document.getElementById(`item-${id}`);
