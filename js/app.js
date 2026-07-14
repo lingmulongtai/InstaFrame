@@ -4458,13 +4458,20 @@ function showProgress(label, pct) {
 }
 
 function hideProgress() {
-  setVisible(document.getElementById('exportProgress'), false);
-  document.getElementById('imageSection')?.setAttribute('aria-busy', 'false');
+  const wrap = document.getElementById('exportProgress');
   const cancelBtn = document.getElementById('cancelExportBtn');
+  const activeElement = document.activeElement;
+  const shouldRestoreFocus = activeElement === document.body
+    || activeElement === cancelBtn
+    || wrap?.contains(activeElement);
+  setVisible(wrap, false);
+  document.getElementById('imageSection')?.setAttribute('aria-busy', 'false');
   if (cancelBtn) cancelBtn.style.display = 'none';
   const previousFocus = _exportProgressPreviousFocus;
   _exportProgressPreviousFocus = null;
-  queueMicrotask(() => previousFocus?.isConnected && previousFocus.focus?.());
+  if (shouldRestoreFocus) {
+    queueMicrotask(() => previousFocus?.isConnected && previousFocus.focus?.());
+  }
 }
 
 // ─── Video format helpers ─────────────────────────────────────────────────────

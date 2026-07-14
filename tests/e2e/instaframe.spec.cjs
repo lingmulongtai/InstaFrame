@@ -2517,6 +2517,29 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
 
+test('export completion preserves focus when the user moves to another control', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    window.__focusExportStarted = false;
+    window.FrameEngine.renderFrameWhenReady = async (...args) => {
+      window.__focusExportStarted = true;
+      await new Promise(resolve => { window.__releaseFocusExport = resolve; });
+      return render(...args);
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__focusExportStarted)).toBe(true);
+  await expect(page.locator('#cancelExportBtn')).toBeFocused();
+  const customize = page.locator('#customizeBtn');
+  await customize.focus();
+  await page.evaluate(() => window.__releaseFocusExport());
+
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(customize).toBeFocused();
+});
+
 test('a suspended export cannot unlock a newer export after BFCache restore', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
