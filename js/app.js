@@ -235,11 +235,13 @@ function _syncPreviewControlAvailability() {
   const hasPreview = zone.classList.contains('has-preview');
   const hasVideo = hasPreview && zone.classList.contains('has-video');
   const viewModified = hasPreview && zone.classList.contains('view-modified');
+  const mobileExifOpen = window.matchMedia('(max-width: 768px)').matches
+    && document.getElementById('previewExifWrap')?.classList.contains('exif-open');
   const availability = [
     ['previewHistoryWrap', hasPreview],
     ['previewQualityWrap', hasPreview && !hasVideo],
     ['previewExifWrap', hasPreview],
-    ['previewZoomBar', hasPreview],
+    ['previewZoomBar', hasPreview && !mobileExifOpen],
     ['previewResetViewBtn', viewModified],
     ['previewVideoBar', hasVideo],
   ];
@@ -2584,6 +2586,7 @@ function toggleLiveExifPanel() {
     content.setAttribute('aria-hidden', String(!open));
   }
   if (open) updateLiveExifPanel();
+  _syncPreviewControlAvailability();
 }
 
 let _liveExifApplyTimer = null;
