@@ -82,7 +82,7 @@ const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_LIVE_PREVIEW_DETAIL_PIXELS = 8_000_000;
 const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 768px), (max-width: 1024px) and (max-height: 500px) and (orientation: landscape)';
-const MAX_ACTIVE_PHOTO_THUMBNAILS = 2;
+const MAX_ACTIVE_PHOTO_DECODES = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
@@ -307,8 +307,8 @@ let   _renderSeq     = 0;         // increments on each render to cancel stale o
 let   _previewRenderController = null;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
-let   _activePhotoThumbnails = 0;
-const _photoThumbnailQueue = [];
+let   _activePhotoDecodes = 0;
+const _photoDecodeQueue = [];
 let   _activeVideoThumbnails = 0;
 const _videoThumbnailQueue = [];
 let   _exportProgressPreviousFocus = null;
@@ -1066,44 +1066,46 @@ function emptyExif() {
   return { make:'', model:'', lensModel:'', focalLength:'', fNumber:'', exposureTime:'', iso:'', location:'', latitude: null, longitude: null };
 }
 
-function _drainPhotoThumbnailQueue() {
-  while (_activePhotoThumbnails < MAX_ACTIVE_PHOTO_THUMBNAILS && _photoThumbnailQueue.length) {
-    const entry = _photoThumbnailQueue.shift();
-    if (entry.item.photoThumbnailController?.signal.aborted) {
+function _drainPhotoDecodeQueue() {
+  while (_activePhotoDecodes < MAX_ACTIVE_PHOTO_DECODES && _photoDecodeQueue.length) {
+    const entry = _photoDecodeQueue.shift();
+    entry.cleanup();
+    if (entry.signal?.aborted) {
       entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
       continue;
     }
-    _activePhotoThumbnails += 1;
+    _activePhotoDecodes += 1;
     Promise.resolve()
       .then(entry.task)
       .then(entry.resolve, entry.reject)
       .finally(() => {
-        _activePhotoThumbnails -= 1;
-        _drainPhotoThumbnailQueue();
+        _activePhotoDecodes -= 1;
+        _drainPhotoDecodeQueue();
       });
   }
 }
 
-function _queuePhotoThumbnail(item, task) {
+function _queuePhotoDecode(item, signal, task) {
   return new Promise((resolve, reject) => {
-    _photoThumbnailQueue.push({ item, task, resolve, reject });
-    _drainPhotoThumbnailQueue();
+    const entry = { item, signal, task, resolve, reject, cleanup: () => {} };
+    const abortQueued = () => {
+      const index = _photoDecodeQueue.indexOf(entry);
+      if (index < 0) return;
+      _photoDecodeQueue.splice(index, 1);
+      entry.cleanup();
+      reject(new DOMException('Thumbnail cancelled', 'AbortError'));
+      _drainPhotoDecodeQueue();
+    };
+    entry.cleanup = () => signal?.removeEventListener('abort', abortQueued);
+    signal?.addEventListener('abort', abortQueued, { once: true });
+    _photoDecodeQueue.push(entry);
+    _drainPhotoDecodeQueue();
   });
-}
-
-function _cancelQueuedPhotoThumbnail(item) {
-  for (let index = _photoThumbnailQueue.length - 1; index >= 0; index -= 1) {
-    const entry = _photoThumbnailQueue[index];
-    if (entry.item !== item) continue;
-    _photoThumbnailQueue.splice(index, 1);
-    entry.reject(new DOMException('Thumbnail cancelled', 'AbortError'));
-  }
 }
 
 function _cancelPhotoThumbnail(item) {
   if (!item) return;
   item.photoThumbnailController?.abort();
-  _cancelQueuedPhotoThumbnail(item);
   item.photoThumbnailController = null;
 }
 
@@ -3762,7 +3764,11 @@ async function _loadPreviewImage(item, { retainUncached = false } = {}) {
   if (existingLoad) return existingLoad.promise;
 
   const controller = new AbortController();
-  const promise = _decodePreviewImage(item, controller.signal, retainUncached)
+  const promise = _queuePhotoDecode(
+    item,
+    controller.signal,
+    () => _decodePreviewImage(item, controller.signal, retainUncached)
+  )
     .finally(() => {
       if (_imgLoadEntries.get(item.id)?.promise === promise) _imgLoadEntries.delete(item.id);
     });
@@ -4490,7 +4496,7 @@ function _startPhotoThumbnail(item) {
   item.photoThumbnailNeedsRestart = false;
   let thumbnailGuard = null;
 
-  const thumbnailPromise = _queuePhotoThumbnail(item, () => new Promise((resolve, reject) => {
+  const thumbnailPromise = _queuePhotoDecode(item, signal, () => new Promise((resolve, reject) => {
     if (signal.aborted || !state.items.includes(item) || !card.isConnected) {
       reject(new DOMException('Thumbnail cancelled', 'AbortError'));
       return;
