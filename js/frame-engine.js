@@ -302,20 +302,22 @@ const FrameEngine = (() => {
       style === 'saturate'  ? 'saturate(250%) '    : '';
 
     ctx.save();
-    ctx.filter = `${styleFilter}blur(${radius}px) brightness(${brightness}%)`;
+    try {
+      ctx.filter = `${styleFilter}blur(${radius}px) brightness(${brightness}%)`;
 
-    // Scale the source to cover the canvas (object-fit: cover)
-    const srcW = src.naturalWidth  || src.videoWidth  || src.width  || canvasW;
-    const srcH = src.naturalHeight || src.videoHeight || src.height || canvasH;
-    const scale = Math.max(canvasW / srcW, canvasH / srcH);
-    const dw = Math.ceil(srcW * scale);
-    const dh = Math.ceil(srcH * scale);
-    const dx = Math.round((canvasW - dw) / 2);
-    const dy = Math.round((canvasH - dh) / 2);
+      // Scale the source to cover the canvas (object-fit: cover)
+      const srcW = src.naturalWidth  || src.videoWidth  || src.width  || canvasW;
+      const srcH = src.naturalHeight || src.videoHeight || src.height || canvasH;
+      const scale = Math.max(canvasW / srcW, canvasH / srcH);
+      const dw = Math.ceil(srcW * scale);
+      const dh = Math.ceil(srcH * scale);
+      const dx = Math.round((canvasW - dw) / 2);
+      const dy = Math.round((canvasH - dh) / 2);
 
-    ctx.drawImage(src, dx, dy, dw, dh);
-    ctx.filter = 'none';
-    ctx.restore();
+      ctx.drawImage(src, dx, dy, dw, dh);
+    } finally {
+      ctx.restore();
+    }
   }
 
   /**
@@ -1605,28 +1607,40 @@ const FrameEngine = (() => {
       return null;
     }
 
+    const ownsBaseCanvas = !reusableBaseCanvas;
     const baseCanvas = reusableBaseCanvas || document.createElement('canvas');
-    const safeBaseScale = Math.max(0.01, Math.min(1, Number(baseScale) || 1));
-    const scratchW = Math.max(1, Math.round(layout.baseCanvasW * safeBaseScale));
-    const scratchH = Math.max(1, Math.round(layout.baseCanvasH * safeBaseScale));
-    if (baseCanvas.width !== scratchW || baseCanvas.height !== scratchH) {
-      baseCanvas.width = scratchW;
-      baseCanvas.height = scratchH;
-    }
-    const baseContext = baseCanvas.getContext('2d');
-    if (!baseContext) throw new Error('Canvas rendering is unavailable');
-    baseContext.save();
-    baseContext.scale(scratchW / layout.baseCanvasW, scratchH / layout.baseCanvasH);
-    drawVideoBaseFrameSync(baseContext, video, exif, settings, layout);
-    baseContext.restore();
+    try {
+      const safeBaseScale = Math.max(0.01, Math.min(1, Number(baseScale) || 1));
+      const scratchW = Math.max(1, Math.round(layout.baseCanvasW * safeBaseScale));
+      const scratchH = Math.max(1, Math.round(layout.baseCanvasH * safeBaseScale));
+      if (baseCanvas.width !== scratchW || baseCanvas.height !== scratchH) {
+        baseCanvas.width = scratchW;
+        baseCanvas.height = scratchH;
+      }
+      const baseContext = baseCanvas.getContext('2d');
+      if (!baseContext) throw new Error('Canvas rendering is unavailable');
+      baseContext.save();
+      try {
+        baseContext.scale(scratchW / layout.baseCanvasW, scratchH / layout.baseCanvasH);
+        drawVideoBaseFrameSync(baseContext, video, exif, settings, layout);
+      } finally {
+        baseContext.restore();
+      }
 
-    drawBlurBackground(ctx, baseCanvas, layout.canvasW, layout.canvasH, settings);
-    ctx.drawImage(
-      baseCanvas,
-      0, 0, scratchW, scratchH,
-      layout.frameX, layout.frameY, layout.baseCanvasW, layout.baseCanvasH
-    );
-    return baseCanvas;
+      drawBlurBackground(ctx, baseCanvas, layout.canvasW, layout.canvasH, settings);
+      ctx.drawImage(
+        baseCanvas,
+        0, 0, scratchW, scratchH,
+        layout.frameX, layout.frameY, layout.baseCanvasW, layout.baseCanvasH
+      );
+      return baseCanvas;
+    } catch (error) {
+      if (ownsBaseCanvas) {
+        baseCanvas.width = 0;
+        baseCanvas.height = 0;
+      }
+      throw error;
+    }
   }
 
   return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
