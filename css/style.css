@@ -2197,21 +2197,28 @@ input[type="range"]:focus-visible {
 #toast {
   position: fixed;
   bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%) translateY(16px);
+  left: max(12px, var(--safe-area-left));
+  right: max(12px, var(--safe-area-right));
+  width: max-content;
+  max-width: calc(100vw - var(--safe-area-left) - var(--safe-area-right) - 24px);
+  margin-inline: auto;
+  transform: translateY(16px);
   padding: 8px 18px;
-  border-radius: 100px;
+  border-radius: 12px;
   font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
   background: #18181b;
   color: white;
   z-index: 2000;
   opacity: 0;
   transition: opacity 0.2s, transform 0.2s;
   pointer-events: none;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
 }
-#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.show { opacity: 1; transform: translateY(0); }
 #toast.toast-success { background: #14532d; }
 #toast.toast-warn    { background: #78350f; }
 #toast.toast-error   { background: #7f1d1d; }

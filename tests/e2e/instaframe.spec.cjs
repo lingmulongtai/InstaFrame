@@ -6294,6 +6294,52 @@ test('a broken later photo becomes an explicit item and preview error', async ({
   await expect(badge.locator('.status-dot')).not.toHaveClass(/pending/);
 });
 
+test('long localized error toasts wrap inside mobile safe areas', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  const cases = [
+    { lang: 'en', name: `broken-${'very-long-file-name-'.repeat(7)}.png` },
+    { lang: 'ja', name: `破損-${'とても長い写真ファイル名'.repeat(8)}.png` },
+  ];
+
+  for (const { lang, name } of cases) {
+    await page.evaluate(value => localStorage.setItem('instaframe_lang', value), lang);
+    await page.reload();
+    await page.evaluate(() => {
+      const root = document.documentElement.style;
+      root.setProperty('--safe-area-left', '24px');
+      root.setProperty('--safe-area-right', '12px');
+    });
+    await page.locator('#fileInput').setInputFiles({
+      name,
+      mimeType: 'image/png',
+      buffer: Buffer.from('not-a-decodable-png'),
+    });
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+    const toast = page.locator('#toast');
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText(name);
+    const layout = await toast.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        height: bounds.height,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        whiteSpace: style.whiteSpace,
+        overflowWrap: style.overflowWrap,
+      };
+    });
+    expect(layout.left, `${lang} left safe area`).toBeGreaterThanOrEqual(24);
+    expect(layout.right, `${lang} right safe area`).toBeLessThanOrEqual(308);
+    expect(layout.height, `${lang} multiline height`).toBeGreaterThan(32);
+    expect(layout.scrollWidth, `${lang} horizontal overflow`).toBeLessThanOrEqual(layout.clientWidth + 1);
+    expect(layout.whiteSpace).toBe('normal');
+    expect(layout.overflowWrap).toBe('anywhere');
+  }
+});
+
 test('mobile layout exposes import, settings, and a readable EXIF editor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
