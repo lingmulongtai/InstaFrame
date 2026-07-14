@@ -861,10 +861,42 @@ test('BFCache suspension closes the map picker before releasing its map', async 
   expect(await page.locator('#mapPickerContainer').evaluate(element => element._leaflet_id)).toBeUndefined();
 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(page.locator('#openMapPickerBtn')).toBeFocused();
   await page.locator('#openMapPickerBtn').click();
   await expect(modal).toHaveClass(/open/);
   await expect(page.locator('#selectMapCenterBtn')).toBeEnabled();
   await page.locator('#mapPickerCloseBtn').click();
+});
+
+test('BFCache suspension cancels pending location consent and restores its trigger', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__restoredGeolocationCalls = 0;
+    navigator.geolocation.getCurrentPosition = (_success, failure) => {
+      window.__restoredGeolocationCalls += 1;
+      failure(new Error('Location unavailable'));
+    };
+  });
+
+  const trigger = page.locator('#getDeviceLocationBtn');
+  const modal = page.locator('#locationPrivacyModal');
+  await trigger.click();
+  await expect(modal).toHaveClass(/open/);
+  await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect(modal).not.toHaveClass(/open/);
+  await expect(modal).toBeHidden();
+  expect(await page.locator('.app-shell').evaluate(element => element.inert)).toBe(false);
+  expect(await page.evaluate(() => window.__restoredGeolocationCalls)).toBe(0);
+
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(modal).toHaveClass(/open/);
+  await page.locator('#locationPrivacyOnceBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__restoredGeolocationCalls)).toBe(1);
+  await expect(modal).not.toHaveClass(/open/);
 });
 
 test('page suspension pauses an import after metadata until the page is restored', async ({ page }) => {

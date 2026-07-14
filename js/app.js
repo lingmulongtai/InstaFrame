@@ -101,6 +101,7 @@ let _reservedImportBytes = 0;
 const _activeImportReservations = new Set();
 let _pageResourcesReleased = false;
 const _pageRestoreWaiters = new Set();
+let _pageRestoreFocusTarget = null;
 
 function _usesMobileLayout() {
   return window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
@@ -371,11 +372,11 @@ function _openLocationPrivacyModal() {
   document.getElementById('locationPrivacyOnceBtn')?.focus();
 }
 
-function _closeLocationPrivacyModal() {
+function _closeLocationPrivacyModal({ restoreFocus = true } = {}) {
   _setModalOpen(document.getElementById('locationPrivacyModal'), false);
   const previousFocus = _locationPrivacyPreviousFocus;
   _locationPrivacyPreviousFocus = null;
-  _restoreModalTriggerFocus(previousFocus);
+  if (restoreFocus) _restoreModalTriggerFocus(previousFocus);
 }
 
 function setupModalAccessibility() {
@@ -577,8 +578,8 @@ function _finishLocationConsent(allowed, persist = false) {
   resolvers.forEach(resolve => resolve(!!allowed));
 }
 
-function _cancelLocationConsent() {
-  _closeLocationPrivacyModal();
+function _cancelLocationConsent({ restoreFocus = true } = {}) {
+  _closeLocationPrivacyModal({ restoreFocus });
   const resolvers = [..._locationConsentResolvers];
   _locationConsentResolvers.clear();
   resolvers.forEach(resolve => resolve(false));
@@ -6399,7 +6400,7 @@ function setupCardSize() {
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
-function _releasePageResources() {
+function _releasePageResources(event) {
   _pageResourcesReleased = true;
   _clearLoadedMediaFocusRequest();
   // Commit the user's last debounced EXIF keystroke before freezing the page.
@@ -6415,7 +6416,20 @@ function _releasePageResources() {
   _previewRenderController?.abort();
   _previewRenderController = null;
   _disposeLiveVideoSource();
+  const shouldRestoreFocus = event?.persisted === true;
+  if (!shouldRestoreFocus) _pageRestoreFocusTarget = null;
+  const consentModal = document.getElementById('locationPrivacyModal');
+  if (consentModal?.classList.contains('open')) {
+    if (shouldRestoreFocus && _locationPrivacyPreviousFocus?.isConnected) {
+      _pageRestoreFocusTarget = _locationPrivacyPreviousFocus;
+    }
+    _cancelLocationConsent({ restoreFocus: false });
+  }
   _cancelLocationNetworkRequests();
+  const mapModal = document.getElementById('mapPickerModal');
+  if (shouldRestoreFocus && mapModal?.classList.contains('open') && mapModal._previousFocus?.isConnected) {
+    _pageRestoreFocusTarget = mapModal._previousFocus;
+  }
   closeMapPicker({ restoreFocus: false });
   _releasePendingDownloadUrls();
   state.items.forEach(item => {
@@ -6470,6 +6484,9 @@ function _restorePageResources() {
   updateUI();
   updateLiveExifPanel();
   scheduleLivePreview();
+  const focusTarget = _pageRestoreFocusTarget;
+  _pageRestoreFocusTarget = null;
+  _restoreModalTriggerFocus(focusTarget);
 }
 
 // Apply theme & layout immediately (before paint) to avoid flash
