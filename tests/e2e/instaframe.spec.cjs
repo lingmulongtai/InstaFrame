@@ -6070,6 +6070,59 @@ test('mobile controls stay inside simulated top and side safe areas', async ({ p
   expect(layout.sidebar.right).toBeLessThanOrEqual(667 - 20);
 });
 
+test('short landscape preview exposes a horizontal zoom control without clipping', async ({ page }) => {
+  await page.setViewportSize({ width: 667, height: 240 });
+  await page.reload();
+  await page.evaluate(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--safe-area-top', '24px');
+    root.setProperty('--safe-area-right', '20px');
+    root.setProperty('--safe-area-bottom', '18px');
+    root.setProperty('--safe-area-left', '36px');
+  });
+  await uploadJpegs(page);
+  await page.locator('.preview-exif-drawer-header').click();
+
+  const zoom = page.locator('#zoomRange');
+  const zoomBar = page.locator('#previewZoomBar');
+  await expect(zoomBar).toBeVisible();
+  await expect(zoom).toHaveAttribute('aria-orientation', 'horizontal');
+  const layout = await page.evaluate(() => {
+    const rect = selector => {
+      const bounds = document.querySelector(selector).getBoundingClientRect();
+      return { top: bounds.top, right: bounds.right, bottom: bounds.bottom, left: bounds.left };
+    };
+    return {
+      preview: rect('#dropZone'),
+      bar: rect('#previewZoomBar'),
+      controls: ['#zoomLabel', '#zoomInBtn', '#zoomRange', '#zoomOutBtn'].map(rect),
+      history: rect('#previewHistoryWrap'),
+    };
+  });
+  expect(layout.bar.top).toBeGreaterThanOrEqual(layout.preview.top);
+  expect(layout.bar.right).toBeLessThanOrEqual(layout.preview.right);
+  expect(layout.bar.bottom).toBeLessThanOrEqual(layout.preview.bottom);
+  expect(layout.bar.left).toBeGreaterThanOrEqual(layout.preview.left);
+  for (const control of layout.controls) {
+    expect(control.top).toBeGreaterThanOrEqual(layout.bar.top);
+    expect(control.right).toBeLessThanOrEqual(layout.bar.right);
+    expect(control.bottom).toBeLessThanOrEqual(layout.bar.bottom);
+    expect(control.left).toBeGreaterThanOrEqual(layout.bar.left);
+  }
+  const overlapsHistory = !(
+    layout.bar.right <= layout.history.left || layout.bar.left >= layout.history.right ||
+    layout.bar.bottom <= layout.history.top || layout.bar.top >= layout.history.bottom
+  );
+  expect(overlapsHistory).toBe(false);
+
+  const bounds = await zoom.boundingBox();
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await expect.poll(() => zoom.getAttribute('aria-valuenow')).toMatch(/^(24[0-9]|25[0-5])$/);
+  await zoom.focus();
+  await page.keyboard.press('End');
+  await expect(zoom).toHaveAttribute('aria-valuenow', '1200');
+});
+
 test('short mobile consent modal respects safe areas and keeps actions reachable', async ({ page }) => {
   await page.locator('#customizeBtn').click();
   await page.locator('#manageLocationPrivacyBtn').click();

@@ -2735,3 +2735,37 @@ input[type="range"]:focus-visible {
     min-width: 0;
   }
 }
+
+@media (max-width: 768px) and (max-height: 480px) {
+  .preview-zoom-bar {
+    right: 50%;
+    top: auto;
+    bottom: 8px;
+    transform: translateX(50%);
+    flex-direction: row;
+    gap: 4px;
+    padding: 5px 8px;
+  }
+  .preview-area.has-video .preview-zoom-bar { bottom: 48px; }
+  #zoomRange {
+    width: clamp(96px, 24vw, 160px);
+    height: 24px;
+  }
+  #zoomRange::before {
+    top: 50%;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    height: 3px;
+    transform: translateY(-50%);
+  }
+  #zoomRange::after {
+    top: 50%;
+    bottom: auto;
+    left: var(--zoom-slider-progress);
+    transform: translate(-50%, -50%);
+  }
+  .zoom-btn { width: 28px; height: 28px; font-size: 17px; }
+  .zoom-label { min-width: 40px; padding: 3px 5px; font-size: 10px; }
+}
