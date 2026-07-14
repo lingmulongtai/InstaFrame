@@ -526,9 +526,14 @@ function updateLocationPrivacyStatus() {
   }
   const tokenStatus = document.getElementById('mapboxTokenStatus');
   if (tokenStatus) {
-    tokenStatus.textContent = t(_isValidMapboxPublicToken(loadPrefs().mapboxPublicToken)
+    const tokenSource = _getConfiguredMapboxToken()?.source;
+    const statusKey = tokenSource === 'user'
       ? 'mapboxTokenConfigured'
-      : 'mapboxTokenNotConfigured');
+      : tokenSource === 'site'
+        ? 'mapboxSiteTokenConfigured'
+        : 'mapboxTokenNotConfigured';
+    tokenStatus.setAttribute('data-i18n', statusKey);
+    tokenStatus.textContent = t(statusKey);
   }
 }
 

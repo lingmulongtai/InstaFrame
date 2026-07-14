@@ -301,6 +301,38 @@ test('saved map overlay is normalized off when no valid token is configured', as
   expect(mapboxRequests).toEqual([]);
 });
 
+test('privacy settings distinguish a site Mapbox token from a device token', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.evaluate(() => {
+    window.INSTAFRAME_CONFIG = Object.freeze({
+      mapbox: Object.freeze({
+        publicToken: 'pk.site.test',
+        allowedOrigins: Object.freeze([window.location.origin]),
+        dailyRequestLimitPerDevice: 100,
+        monthlyRequestLimitPerDevice: 1000,
+      }),
+    });
+    window.updateLocationPrivacyStatus();
+  });
+  await page.locator('#customizeBtn').click();
+  const status = page.locator('#mapboxTokenStatus');
+  await expect(status).toHaveText('Provided by this site. Nothing is stored on this device.');
+  await expect(status).toHaveAttribute('data-i18n', 'mapboxSiteTokenConfigured');
+  await expect(page.locator('#mapboxTokenInput')).toHaveValue('');
+  expect(await page.evaluate(() => window.getMapboxToken())).toBeNull();
+
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.device.test',
+    }));
+    window.updateLocationPrivacyStatus();
+  });
+  await expect(status).toHaveText('Stored only on this device.');
+  expect(await page.evaluate(() => window.getMapboxToken())).toBe('pk.device.test');
+});
+
 test('radio choices expose their localized setting group names', async ({ page }) => {
   const expectGroups = async names => {
     for (const name of names) {
