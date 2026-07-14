@@ -214,6 +214,9 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
+  await expect(page.locator('.preview-empty-format-note')).toHaveText(
+    'HEIC/HEIFと動画の読み込みは、ブラウザのコンテナ・コーデック対応状況に依存します。'
+  );
   await uploadJpegs(page);
   await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
   await page.evaluate(() => window.showProgress('処理中…', 0));
@@ -223,6 +226,9 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#dropZone')).toContainText('Drop photos here');
+  await expect(page.locator('.preview-empty-format-note')).toHaveText(
+    "HEIC/HEIF and video decoding depend on your browser's container and codec support."
+  );
   await uploadJpegs(page);
   await page.evaluate(() => window.showProgress('Processing…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
