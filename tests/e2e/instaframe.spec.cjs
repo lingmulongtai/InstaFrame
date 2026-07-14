@@ -219,6 +219,8 @@ test('initial translated UI exposes the matching document language', async ({ pa
   );
   await uploadJpegs(page);
   await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
+  await expect(page.locator('#undoEditBtn')).toHaveAttribute('title', '戻る');
+  await expect(page.locator('#redoEditBtn')).toHaveAttribute('title', '進む');
   await page.evaluate(() => window.showProgress('処理中…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('キャンセル');
 
@@ -230,6 +232,8 @@ test('initial translated UI exposes the matching document language', async ({ pa
     "HEIC/HEIF and video decoding depend on your browser's container and codec support."
   );
   await uploadJpegs(page);
+  await expect(page.locator('#undoEditBtn')).toHaveAttribute('title', 'Undo');
+  await expect(page.locator('#redoEditBtn')).toHaveAttribute('title', 'Redo');
   await page.evaluate(() => window.showProgress('Processing…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
 });
