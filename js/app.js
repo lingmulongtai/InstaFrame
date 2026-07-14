@@ -3498,8 +3498,16 @@ function _syncPreviewZoomControl() {
   const maxZoom = InstaFrameCore.MAX_PREVIEW_ZOOM || 12;
   const range = document.getElementById('zoomRange');
   if (range) {
-    range.value = Math.round(InstaFrameCore.getPreviewSliderValueForZoom(previewZoom));
+    const sliderValue = Math.round(InstaFrameCore.getPreviewSliderValueForZoom(previewZoom));
+    const sliderMin = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MIN || minZoom * 100;
+    const sliderMax = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MAX || maxZoom * 100;
+    range.value = sliderValue;
+    range.setAttribute('aria-valuenow', String(percent));
     range.setAttribute('aria-valuetext', `${percent}%`);
+    range.style.setProperty(
+      '--zoom-slider-progress',
+      `${(sliderValue - sliderMin) / (sliderMax - sliderMin) * 100}%`
+    );
   }
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = `${percent}%`;
@@ -4921,9 +4929,60 @@ function setupDropZone() {
   // Zoom slider
   const zoomRange = document.getElementById('zoomRange');
   if (zoomRange) {
+    const zoomSliderMin = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MIN || 50;
+    const zoomSliderMax = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MAX || 1200;
     _syncPreviewZoomControl();
     zoomRange.addEventListener('input', () => {
       setPreviewZoom(InstaFrameCore.getPreviewZoomForSliderValue(zoomRange.value));
+    });
+    const setZoomFromPointer = event => {
+      const bounds = zoomRange.getBoundingClientRect();
+      if (!bounds.height) return;
+      const progress = Math.max(0, Math.min(1, (bounds.bottom - event.clientY) / bounds.height));
+      setPreviewZoom(InstaFrameCore.getPreviewZoomForSliderValue(
+        zoomSliderMin + progress * (zoomSliderMax - zoomSliderMin)
+      ));
+    };
+    let zoomPointerId = null;
+    zoomRange.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      event.preventDefault();
+      zoomPointerId = event.pointerId;
+      zoomRange.setPointerCapture?.(event.pointerId);
+      zoomRange.focus({ preventScroll: true });
+      setZoomFromPointer(event);
+    });
+    zoomRange.addEventListener('pointermove', event => {
+      if (event.pointerId !== zoomPointerId) return;
+      event.preventDefault();
+      setZoomFromPointer(event);
+    });
+    const finishZoomPointer = event => {
+      if (event.pointerId !== zoomPointerId) return;
+      zoomPointerId = null;
+      if (zoomRange.hasPointerCapture?.(event.pointerId)) {
+        zoomRange.releasePointerCapture(event.pointerId);
+      }
+    };
+    zoomRange.addEventListener('pointerup', finishZoomPointer);
+    zoomRange.addEventListener('pointercancel', finishZoomPointer);
+    zoomRange.addEventListener('keydown', event => {
+      const sliderStepRatio = Math.pow(
+        (InstaFrameCore.MAX_PREVIEW_ZOOM || 12) / (InstaFrameCore.MIN_PREVIEW_ZOOM || 0.5),
+        25 / (zoomSliderMax - zoomSliderMin)
+      );
+      let nextZoom = null;
+      if (event.key === 'Home') nextZoom = 0.5;
+      else if (event.key === 'End') nextZoom = 12;
+      else if (event.key === 'ArrowUp' || event.key === 'ArrowRight') {
+        nextZoom = previewZoom * sliderStepRatio;
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') {
+        nextZoom = previewZoom / sliderStepRatio;
+      } else if (event.key === 'PageUp') nextZoom = previewZoom * Math.pow(sliderStepRatio, 4);
+      else if (event.key === 'PageDown') nextZoom = previewZoom / Math.pow(sliderStepRatio, 4);
+      if (nextZoom == null) return;
+      event.preventDefault();
+      setPreviewZoom(nextZoom);
     });
   }
 
