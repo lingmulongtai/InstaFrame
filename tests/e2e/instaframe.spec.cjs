@@ -4478,6 +4478,18 @@ test('mobile high zoom sharpens only the visible preview crop', async ({ page })
   await expect(detail).toBeHidden();
   await page.mouse.up();
   await expect(detail).toBeVisible();
+
+  await page.mouse.move(panStart.x, panStart.y);
+  await page.mouse.down();
+  await page.mouse.move(panStart.x - 24, panStart.y - 16);
+  await expect(detail).toBeHidden();
+  const transformAtBlur = await canvas.evaluate(element => element.style.transform);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await expect(page.locator('#dropZone')).not.toHaveClass(/dragging/);
+  await expect(detail).toBeVisible();
+  await page.mouse.move(panStart.x + 60, panStart.y + 40);
+  await expect.poll(() => canvas.evaluate(element => element.style.transform)).toBe(transformAtBlur);
+  await page.mouse.up();
 });
 
 test('frame rendering rejects Canvas side and area overflow before allocation', async ({ page }) => {
