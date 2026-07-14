@@ -147,32 +147,38 @@ const FrameEngine = (() => {
     const canvas = document.createElement('canvas');
     canvas.width  = canvasW;
     canvas.height = canvasH;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas rendering is unavailable');
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas rendering is unavailable');
 
-    if (settings.frameBackground === 'blur') {
-      drawBlurBackground(ctx, img, canvasW, canvasH, settings);
-    } else {
-      ctx.fillStyle = frameColor;
-      ctx.fillRect(0, 0, canvasW, canvasH);
+      if (settings.frameBackground === 'blur') {
+        drawBlurBackground(ctx, img, canvasW, canvasH, settings);
+      } else {
+        ctx.fillStyle = frameColor;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+      }
+      drawImageAtY(ctx, img, sB, imageLayout.imageTop, W, H);
+      drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
+
+      // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
+      if (mapOverlayImg && settings.showMapOverlay) {
+        drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageLayout.imageTop, W, H });
+      }
+
+      drawExifText(ctx, exif, settings, {
+        canvasW, canvasH,
+        imageBottom: imageLayout.imageBottom,
+        bottomAreaHeight: bB,
+        isPortrait,
+        frameColor,
+      });
+
+      return canvas;
+    } catch (error) {
+      canvas.width = 0;
+      canvas.height = 0;
+      throw error;
     }
-    drawImageAtY(ctx, img, sB, imageLayout.imageTop, W, H);
-    drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-
-    // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
-    if (mapOverlayImg && settings.showMapOverlay) {
-      drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageLayout.imageTop, W, H });
-    }
-
-    drawExifText(ctx, exif, settings, {
-      canvasW, canvasH,
-      imageBottom: imageLayout.imageBottom,
-      bottomAreaHeight: bB,
-      isPortrait,
-      frameColor,
-    });
-
-    return canvas;
   }
 
   /**
@@ -193,17 +199,23 @@ const FrameEngine = (() => {
     const h = Math.round(sourceH * scale);
     const tmp = document.createElement('canvas');
     tmp.width = w; tmp.height = h;
-    const ctx = tmp.getContext('2d');
-    if (!ctx) throw new Error('Preview scaling failed');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, 0, 0, w, h);
-    if (signal?.aborted) {
+    try {
+      const ctx = tmp.getContext('2d');
+      if (!ctx) throw new Error('Preview scaling failed');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      if (signal?.aborted) {
+        tmp.width = 0;
+        tmp.height = 0;
+        assertNotAborted(signal);
+      }
+      return tmp;
+    } catch (error) {
       tmp.width = 0;
       tmp.height = 0;
-      assertNotAborted(signal);
+      throw error;
     }
-    return tmp;
   }
 
   /**
@@ -662,16 +674,22 @@ const FrameEngine = (() => {
 
     const out = document.createElement('canvas');
     out.width = canvasW; out.height = canvasH;
-    const ctx = out.getContext('2d');
-    if (!ctx) throw new Error('Canvas rendering is unavailable');
-    if (settings.frameBackground === 'blur') {
-      drawBlurBackground(ctx, src, canvasW, canvasH, settings);
-    } else {
-      ctx.fillStyle = frameColor;
-      ctx.fillRect(0, 0, canvasW, canvasH);
+    try {
+      const ctx = out.getContext('2d');
+      if (!ctx) throw new Error('Canvas rendering is unavailable');
+      if (settings.frameBackground === 'blur') {
+        drawBlurBackground(ctx, src, canvasW, canvasH, settings);
+      } else {
+        ctx.fillStyle = frameColor;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+      }
+      ctx.drawImage(src, contentX, contentY);
+      return out;
+    } catch (error) {
+      out.width = 0;
+      out.height = 0;
+      throw error;
     }
-    ctx.drawImage(src, contentX, contentY);
-    return out;
   }
 
   function formatShutter(val) {
@@ -777,6 +795,7 @@ const FrameEngine = (() => {
       const fail = error => {
         if (settled) return;
         settled = true;
+        img.removeAttribute('src');
         cleanup();
         reject(error);
       };

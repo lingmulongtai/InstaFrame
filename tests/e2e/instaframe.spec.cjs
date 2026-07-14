@@ -486,6 +486,7 @@ test('failed photo thumbnail compaction releases its decoded image and canvas', 
 
 test('every BFCache pagehide releases Blob URLs and restores a usable pending preview', async ({ page }) => {
   await page.evaluate(() => {
+    const NativeImage = window.Image;
     const active = new Set();
     const create = URL.createObjectURL.bind(URL);
     const revoke = URL.revokeObjectURL.bind(URL);
@@ -499,6 +500,12 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
       revoke(url);
     };
     window.__activePageObjectUrls = active;
+    window.__pageDecodedImages = [];
+    window.Image = function (...args) {
+      const image = new NativeImage(...args);
+      window.__pageDecodedImages.push(image);
+      return image;
+    };
   });
   await uploadJpegs(page);
   await page.locator('#generateAllBtn').click();
@@ -506,6 +513,7 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
   await page.evaluate(() => {
     window.__suspendedCardCanvases = [...document.querySelectorAll('#preview-1 canvas')];
+    window.__suspendedDecodedImages = [...window.__pageDecodedImages];
   });
   await page.evaluate(() => window.triggerDownload(new Blob(['download']), 'resource-check.txt'));
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBeGreaterThan(0);
@@ -525,6 +533,12 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
     { width: 0, height: 0, connected: false },
   ]);
   await expect(page.locator('#preview-1 img.thumb-orig')).not.toHaveAttribute('src');
+  const decodedImages = await page.evaluate(() => ({
+    count: window.__suspendedDecodedImages.length,
+    sources: window.__suspendedDecodedImages.map(image => image.hasAttribute('src')),
+  }));
+  expect(decodedImages.count).toBeGreaterThan(0);
+  expect(decodedImages.sources).not.toContain(true);
 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect(page.locator('#livePreviewCanvas')).toBeVisible();
@@ -2748,6 +2762,86 @@ test('large preview downscaling stays lossless and avoids a JPEG round-trip', as
   expect(result.toBlobCalls).toBe(0);
   expect(result.dimensions.width).toBeGreaterThan(50);
   expect(result.dimensions.width).toBeLessThan(60);
+});
+
+test('photo drawing failures zero every allocated canvas', async ({ page }) => {
+  const results = await page.evaluate(async () => {
+    const source = document.createElement('canvas');
+    source.width = 200;
+    source.height = 100;
+    source.getContext('2d').fillRect(0, 0, source.width, source.height);
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+
+    const run = async mode => {
+      const canvases = [];
+      let drawCalls = 0;
+      document.createElement = (tagName, options) => {
+        const element = nativeCreateElement(tagName, options);
+        if (String(tagName).toLowerCase() === 'canvas') canvases.push(element);
+        return element;
+      };
+      CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+        drawCalls += 1;
+        if (mode !== 'post-process' || drawCalls === 2) throw new Error(`${mode} failure`);
+        return nativeDrawImage.apply(this, args);
+      };
+      let message = '';
+      try {
+        if (mode === 'render') {
+          window.FrameEngine.renderFrame(source, {}, {});
+        } else if (mode === 'scale') {
+          await window.FrameEngine.renderFrameWhenReady(source, {}, {}, { maxPreviewPx: 50 });
+        } else {
+          await window.FrameEngine.renderFrameWhenReady(source, {}, { aspectRatio: '1:1' });
+        }
+      } catch (error) {
+        message = error.message;
+      } finally {
+        document.createElement = nativeCreateElement;
+        CanvasRenderingContext2D.prototype.drawImage = nativeDrawImage;
+      }
+      return { message, dimensions: canvases.map(canvas => [canvas.width, canvas.height]) };
+    };
+
+    try {
+      return [await run('render'), await run('scale'), await run('post-process')];
+    } finally {
+      source.width = 0;
+      source.height = 0;
+    }
+  });
+
+  expect(results.map(result => result.message)).toEqual([
+    'render failure',
+    'scale failure',
+    'post-process failure',
+  ]);
+  for (const result of results) {
+    expect(result.dimensions.length).toBeGreaterThan(0);
+    expect(result.dimensions.every(([width, height]) => width === 0 && height === 0)).toBe(true);
+  }
+});
+
+test('successful photo export releases its full-resolution decoder', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    const nativeLoadImage = window.FrameEngine.loadImage;
+    window.__fullResolutionExportImage = null;
+    window.FrameEngine.loadImage = async (...args) => {
+      const image = await nativeLoadImage(...args);
+      window.__fullResolutionExportImage = image;
+      return image;
+    };
+  });
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  await downloadPromise;
+  await expect.poll(() => page.evaluate(() => ({
+    captured: !!window.__fullResolutionExportImage,
+    hasSource: window.__fullResolutionExportImage?.hasAttribute('src') ?? null,
+  }))).toEqual({ captured: true, hasSource: false });
 });
 
 test('uncertain audio hints use native capture and Web Audio fallback', async ({ page }) => {
