@@ -2983,7 +2983,7 @@ function _releaseMapPickerResources() {
   _mapPickerMarker = null;
 }
 
-function closeMapPicker() {
+function closeMapPicker({ restoreFocus = true } = {}) {
   _releaseMapPickerResources();
   const modal = document.getElementById('mapPickerModal');
   if (modal) {
@@ -2991,7 +2991,7 @@ function closeMapPicker() {
     _setMapPickerBusy(false);
     const previousFocus = modal._previousFocus;
     modal._previousFocus = null;
-    _restoreModalTriggerFocus(previousFocus);
+    if (restoreFocus) _restoreModalTriggerFocus(previousFocus);
   }
 }
 
@@ -5824,7 +5824,7 @@ function _releasePageResources() {
   _previewRenderController = null;
   _disposeLiveVideoSource();
   _cancelLocationNetworkRequests();
-  _releaseMapPickerResources();
+  closeMapPicker({ restoreFocus: false });
   _releasePendingDownloadUrls();
   state.items.forEach(item => {
     const outputWasActive = item.status === 'done' || item.status === 'processing';
