@@ -5618,10 +5618,24 @@ function _darkenHex(hex, pct) {
   return '#' + [rr,gg,bb].map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
 }
 
+function _getAccentForeground(hex) {
+  const channels = [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16) / 255);
+  const [r, g, b] = channels.map(channel => (
+    channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+  ));
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  const blackContrast = (luminance + 0.05) / 0.05;
+  return blackContrast >= whiteContrast ? '#000000' : '#ffffff';
+}
+
 function _applyAccentColor(hex) {
   if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+  const hover = _darkenHex(hex, 12);
   document.documentElement.style.setProperty('--accent',   hex);
-  document.documentElement.style.setProperty('--accent-h', _darkenHex(hex, 12));
+  document.documentElement.style.setProperty('--accent-h', hover);
+  document.documentElement.style.setProperty('--accent-fg', _getAccentForeground(hex));
+  document.documentElement.style.setProperty('--accent-h-fg', _getAccentForeground(hover));
 }
 
 // ─── Main area vertical resize (preview ↕ image pool) ────────────────────────
