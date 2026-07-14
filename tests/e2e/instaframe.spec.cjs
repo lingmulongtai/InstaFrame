@@ -734,6 +734,29 @@ test('a failed ZIP download restores export controls without an unhandled reject
   expect(result).toEqual({ activeUrls: 0, unhandled: [], temporaryAnchors: 0 });
 });
 
+test('an invalid JSZip global cannot leave export controls locked', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await page.evaluate(() => {
+    window.JSZip = {};
+    window.__invalidZipUnhandled = [];
+    window.addEventListener('unhandledrejection', event => {
+      window.__invalidZipUnhandled.push(String(event.reason?.message || event.reason));
+    });
+  });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#clearAllBtn')).toBeEnabled();
+  await expect(page.locator('#toast')).toContainText(/required local component|必要なローカル部品/i);
+  expect(await page.evaluate(() => ({
+    activeController: eval('_activeExportController !== null'),
+    unhandled: window.__invalidZipUnhandled,
+  }))).toEqual({ activeController: false, unhandled: [] });
+});
+
 test('pagehide commits a pending live EXIF edit before releasing preview resources', async ({ page }) => {
   await uploadJpegs(page);
   await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);

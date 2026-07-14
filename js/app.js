@@ -1919,13 +1919,15 @@ async function downloadAll() {
 
   _showOwnedExportProgress(controller, t('progressPreparing'), packingStart);
 
-  let JSZipCtor;
+  let zip;
   try {
-    JSZipCtor = await _waitForAbortablePromise(
+    const JSZipCtor = await _waitForAbortablePromise(
       loadVendorScript('vendor/jszip.min.js', 'JSZip'),
       controller.signal,
       'Export cancelled'
     );
+    if (typeof JSZipCtor !== 'function') throw new TypeError('Invalid JSZip constructor');
+    zip = new JSZipCtor();
   } catch (error) {
     if (!_ownsGlobalExport(controller)) return;
     const cancelled = controller.signal.aborted || error?.name === 'AbortError';
@@ -1934,7 +1936,6 @@ async function downloadAll() {
     return;
   }
 
-  const zip   = new JSZipCtor();
   const opts  = _photoExportOpts();
   const total = done.length;
   const retainedBytes = _retainedOutputBytes();
