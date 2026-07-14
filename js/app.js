@@ -1738,6 +1738,12 @@ function _ownsGlobalExport(controller) {
   return _activeExportController === controller;
 }
 
+function _abortGlobalExportForMutation() {
+  if (_globalExportBusy && _activeExportController && !_activeExportController.signal.aborted) {
+    _activeExportController.abort();
+  }
+}
+
 function _showOwnedExportProgress(controller, label, progress) {
   if (_ownsGlobalExport(controller)) showProgress(label, progress);
 }
@@ -2426,9 +2432,7 @@ function markItemsPending(predicate = () => true) {
   const affected = state.items.filter(item =>
     predicate(item) && (item.status === 'done' || item.status === 'processing')
   );
-  if (affected.length && _globalExportBusy && _activeExportController && !_activeExportController.signal.aborted) {
-    _activeExportController.abort();
-  }
+  if (affected.length) _abortGlobalExportForMutation();
   affected.forEach(item => {
     item.status = 'pending';
     item.progress = 0;
@@ -2796,6 +2800,8 @@ function applyLiveExifEdit(item, nextExif) {
     prevExif.location !== nextExif.location;
   if (!changed) return;
 
+  _abortGlobalExportForMutation();
+
   if (!item.exif) item.exif = {};
   const locationChanged = prevExif.location !== nextExif.location;
   Object.assign(item.exif, nextExif);
@@ -2842,6 +2848,7 @@ function _cancelLocationOperations(itemId = null) {
 
 function _applyResolvedLocation(item, latitude, longitude, label) {
   if (!item) return;
+  _abortGlobalExportForMutation();
   if (!item.exif) item.exif = {};
   item.exif.latitude = latitude;
   item.exif.longitude = longitude;

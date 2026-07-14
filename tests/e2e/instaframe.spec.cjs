@@ -3209,6 +3209,83 @@ test('changing frame settings aborts active work and invalidates the whole batch
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
 });
 
+test('live EXIF edits abort an active ZIP before stale photo bytes can download', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await trackCancellationToasts(page);
+  await page.evaluate(() => {
+    window.__exifZipEncodeStarted = false;
+    window.FrameEngine.canvasToBlob = (_canvas, options) => new Promise((resolve, reject) => {
+      window.__exifZipEncodeStarted = true;
+      window.__exifZipSignal = options.signal;
+      options.signal.addEventListener('abort', () => {
+        reject(new DOMException('Export cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__exifZipEncodeStarted)).toBe(true);
+  await page.locator('#live-exif-model').fill('Edited during ZIP');
+
+  await expect.poll(() => page.evaluate(() => window.__exifZipSignal?.aborted)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
+  expect(downloads).toBe(0);
+});
+
+test('resolved device locations abort an active ZIP before stale output can download', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.route('https://nominatim.openstreetmap.org/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ address: { city: 'Updated City', country: 'Japan' } }),
+  }));
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = success => success({
+      coords: { latitude: 35.0116, longitude: 135.7681 },
+    });
+  });
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await trackCancellationToasts(page);
+  await page.evaluate(() => {
+    window.__locationZipEncodeStarted = false;
+    window.FrameEngine.canvasToBlob = (_canvas, options) => new Promise((resolve, reject) => {
+      window.__locationZipEncodeStarted = true;
+      window.__locationZipSignal = options.signal;
+      options.signal.addEventListener('abort', () => {
+        reject(new DOMException('Export cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__locationZipEncodeStarted)).toBe(true);
+  await page.locator('#getDeviceLocationBtn').click();
+
+  await expect(page.locator('#live-exif-location')).toHaveValue('Updated City, Japan');
+  await expect.poll(() => page.evaluate(() => window.__locationZipSignal?.aborted)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
+  expect(downloads).toBe(0);
+});
+
 test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
   await uploadJpegs(page);
   await trackCancellationToasts(page);
