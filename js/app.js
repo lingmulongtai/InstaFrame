@@ -2467,7 +2467,8 @@ function markDoneItemsPending() {
   markItemsPending();
 }
 
-function applySettings() {
+function applySettings(options = {}) {
+  const recordHistory = options?.recordHistory !== false;
   const before = _createSettingsSnapshot();
   // Frame color (custom color button or radio swatches)
   if (state.isCustomColor) {
@@ -2558,7 +2559,7 @@ function applySettings() {
   // Mark all done items as pending (frame settings changed → need re-render)
   markDoneItemsPending();
 
-  _recordSettingsHistory(before);
+  if (recordHistory) _recordSettingsHistory(before);
 
   saveSettings();
   updateUI();
@@ -5295,9 +5296,55 @@ function setupSettingsListeners() {
     const valEl = document.getElementById(valId);
     if (!el) return;
 
+    let pointerGesture = false;
+    let keyboardGesture = false;
+    let gestureBefore = null;
+    const beginGesture = () => {
+      if (!gestureBefore) gestureBefore = _createSettingsSnapshot();
+    };
+    const commitGesture = () => {
+      if (!gestureBefore) return;
+      _recordSettingsHistory(gestureBefore);
+      gestureBefore = null;
+    };
+
+    el.addEventListener('pointerdown', () => {
+      pointerGesture = true;
+      beginGesture();
+    });
+    const finishPointerGesture = () => {
+      if (!pointerGesture) return;
+      pointerGesture = false;
+      commitGesture();
+    };
+    el.addEventListener('pointerup', finishPointerGesture);
+    el.addEventListener('pointercancel', finishPointerGesture);
+    el.addEventListener('lostpointercapture', finishPointerGesture);
+    const rangeKeys = new Set([
+      'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+      'Home', 'End', 'PageUp', 'PageDown',
+    ]);
+    el.addEventListener('keydown', event => {
+      if (!rangeKeys.has(event.key)) return;
+      keyboardGesture = true;
+      beginGesture();
+    });
+    el.addEventListener('keyup', event => {
+      if (!keyboardGesture || !rangeKeys.has(event.key)) return;
+      keyboardGesture = false;
+      commitGesture();
+    });
+    el.addEventListener('blur', () => {
+      pointerGesture = false;
+      keyboardGesture = false;
+      commitGesture();
+    });
+
     el.addEventListener('input', () => {
       if (valEl) valEl.textContent = fmt(el.value);
-      onValueChange(el.value);
+      const grouped = pointerGesture || keyboardGesture;
+      if (grouped) beginGesture();
+      onValueChange(el.value, { recordHistory: !grouped });
     });
 
     // Double click slider track/thumb to reset to its default value.
@@ -5378,7 +5425,7 @@ function setupSettingsListeners() {
     ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1),       ''],
     ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%',                         '%'],
     ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%',                         '%'],
-  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, () => applySettings(), unit));
+  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, (_value, options) => applySettings(options), unit));
 
   // Frame color radios (standard swatches)
   document.querySelectorAll('input[name="frameColor"]').forEach(radio => {
@@ -5470,7 +5517,7 @@ function setupSettingsListeners() {
   [
     ['blurRadiusRange',     'blurRadiusVal',     v => v + 'px', 'px'],
     ['blurBrightnessRange', 'blurBrightnessVal', v => v + '%',  '%'],
-  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, () => applySettings(), unit));
+  ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, (_value, options) => applySettings(options), unit));
 
   const blurStyleEl = document.getElementById('blurStyleSelect');
   if (blurStyleEl) blurStyleEl.addEventListener('change', applySettings);
@@ -5539,12 +5586,12 @@ function setupSettingsListeners() {
     'photoQualityRange',
     'photoQualityRangeVal',
     v => v + '%',
-    v => {
+    (v, options) => {
       const before = _createSettingsSnapshot();
       const nextQuality = parseInt(v, 10);
       if (state.settings.exportPhotoQuality !== nextQuality) _abortGlobalExportForMutation();
       state.settings.exportPhotoQuality = nextQuality;
-      _recordSettingsHistory(before);
+      if (options?.recordHistory !== false) _recordSettingsHistory(before);
       saveSettings();
     },
     '%'
