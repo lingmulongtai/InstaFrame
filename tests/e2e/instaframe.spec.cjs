@@ -123,6 +123,7 @@ test('initial page and privacy consent modal have no axe violations', async ({ p
   await page.locator('#customizeBtn').click();
   await page.locator('#manageLocationPrivacyBtn').click();
   await expect(page.locator('#locationPrivacyCloseBtn')).toHaveAttribute('aria-label', /close|閉じる/i);
+  await expect(page.locator('#locationPrivacyModal')).toHaveAccessibleDescription(/写真・動画そのものはアップロードされません|photos and videos are never uploaded/i);
   const consent = await new AxeBuilder({ page }).include('#locationPrivacyModal').analyze();
   expect(consent.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 });
@@ -1230,6 +1231,7 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
   await page.locator('#shareAppBtn').press('Enter');
   await expect(page.locator('#shareAppModal')).toHaveClass(/open/);
   await expect(page.locator('#shareAppCloseBtn')).toBeFocused();
+  await expect(page.locator('#shareAppModal')).toHaveAccessibleDescription('Share InstaFrame with your friends.');
   await expect(page.locator('#shareUrlInput')).toHaveAccessibleName('Share URL');
   const results = await new AxeBuilder({ page }).include('#shareAppModal').analyze();
   expect(results.violations.filter(violation => ['critical', 'serious'].includes(violation.impact))).toEqual([]);
@@ -1259,6 +1261,7 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
 
   await page.locator('#langToggleBtn').click();
   await page.locator('#shareAppBtn').click();
+  await expect(page.locator('#shareAppModal')).toHaveAccessibleDescription('InstaFrameをSNSで共有できます。');
   await expect(page.locator('#shareUrlInput')).toHaveAccessibleName('共有URL');
   await page.keyboard.press('Escape');
 });

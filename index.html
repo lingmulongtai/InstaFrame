@@ -961,14 +961,14 @@
 </div>
 
 <!-- ─── Location privacy consent ───────────────────────────────────────────── -->
-<div class="map-modal privacy-modal" id="locationPrivacyModal" role="dialog" aria-modal="true" aria-labelledby="locationPrivacyModalTitle">
+<div class="map-modal privacy-modal" id="locationPrivacyModal" role="dialog" aria-modal="true" aria-labelledby="locationPrivacyModalTitle" aria-describedby="locationPrivacyDescription">
   <div class="map-modal-content privacy-modal-content">
     <div class="map-modal-header">
       <span class="map-modal-title" id="locationPrivacyModalTitle" data-i18n="privacyConsentTitle">Allow online location services?</span>
       <button type="button" class="map-modal-close" id="locationPrivacyCloseBtn" data-i18n-attr="title,aria-label" data-i18n="close" title="Close" aria-label="Close">×</button>
     </div>
     <div class="privacy-modal-body" role="region" tabindex="0" aria-labelledby="locationPrivacyModalTitle">
-      <p data-i18n="privacyConsentLead">Your photos and videos are never uploaded. If you continue, location data may be sent to the services below.</p>
+      <p id="locationPrivacyDescription" data-i18n="privacyConsentLead">Your photos and videos are never uploaded. If you continue, location data may be sent to the services below.</p>
       <ul>
         <li data-i18n="privacyConsentGeocode">Nominatim: latitude/longitude for place-name lookup</li>
         <li data-i18n="privacyConsentMap">OpenStreetMap: map tiles; ipapi only if device location is unavailable</li>
@@ -1004,14 +1004,14 @@
 </div>
 
 <!-- ─── Share App Modal ───────────────────────────────────────────────────────── -->
-<div class="map-modal" id="shareAppModal" role="dialog" aria-modal="true" aria-labelledby="shareAppModalTitle">
+<div class="map-modal" id="shareAppModal" role="dialog" aria-modal="true" aria-labelledby="shareAppModalTitle" aria-describedby="shareAppDescription">
   <div class="map-modal-content share-modal-content">
     <div class="map-modal-header">
       <span class="map-modal-title" id="shareAppModalTitle" data-i18n="shareAppTitle">Share this app</span>
       <button class="map-modal-close" id="shareAppCloseBtn" data-i18n-attr="title,aria-label" data-i18n="close" title="Close">×</button>
     </div>
     <div class="share-modal-body">
-      <p class="share-modal-sub" data-i18n="shareAppSub">Share InstaFrame with your friends.</p>
+      <p class="share-modal-sub" id="shareAppDescription" data-i18n="shareAppSub">Share InstaFrame with your friends.</p>
       <div class="share-grid">
         <a class="btn btn-secondary btn-sm" id="shareXBtn" target="_blank" rel="noopener noreferrer">X / Twitter</a>
         <a class="btn btn-secondary btn-sm" id="shareFacebookBtn" target="_blank" rel="noopener noreferrer">Facebook</a>
