@@ -3223,6 +3223,12 @@ test('zoom controls keep the same visual rate at low and high magnification', as
   await page.locator('#dropZone').dispatchEvent('wheel', { deltaY: -100 });
   await expect(page.locator('#zoomLabel')).toHaveText('672%');
 
+  await page.evaluate(() => window.setPreviewZoom(1));
+  await page.locator('#dropZone').dispatchEvent('wheel', { deltaY: -1 });
+  const microZoom = await page.evaluate(() => eval('previewZoom'));
+  expect(microZoom).toBeGreaterThan(1);
+  expect(microZoom).toBeLessThan(1.01);
+
   await page.locator('#zoomRange').evaluate(element => {
     element.value = '625';
     element.dispatchEvent(new Event('input', { bubbles: true }));

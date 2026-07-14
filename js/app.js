@@ -4657,7 +4657,7 @@ function setupDropZone() {
     if (!zone.classList.contains('has-preview')) return;
     if (e.deltaY === 0) return;
     e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const factor = InstaFrameCore.getPreviewWheelZoomFactor(e.deltaY, e.deltaMode);
     setPreviewZoom(previewZoom * factor);
   }, { passive: false });
 

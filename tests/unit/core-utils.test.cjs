@@ -48,6 +48,17 @@ test('preview zoom slider gives equal travel an equal visual scale ratio', () =>
   }
 });
 
+test('preview wheel zoom scales smoothly with bounded trackpad and mouse deltas', () => {
+  const micro = core.getPreviewWheelZoomFactor(-1);
+  const mouse = core.getPreviewWheelZoomFactor(-100);
+  assert.ok(micro > 1 && micro < 1.01);
+  assert.ok(Math.abs(mouse - 1.12) < 1e-12);
+  assert.ok(Math.abs(core.getPreviewWheelZoomFactor(100) - 1 / mouse) < 1e-12);
+  assert.ok(Math.abs(core.getPreviewWheelZoomFactor(-3, 1) - mouse) < 1e-12);
+  assert.equal(core.getPreviewWheelZoomFactor(-10_000), core.getPreviewWheelZoomFactor(-240));
+  assert.equal(core.getPreviewWheelZoomFactor(10_000), core.getPreviewWheelZoomFactor(240));
+});
+
 test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and entry overhead', () => {
   const mib = 1024 * 1024;
   assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 380 * mib + 4096);
