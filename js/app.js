@@ -1989,7 +1989,13 @@ async function downloadAll() {
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
-  triggerDownload(zipBlob, 'instaframe_export.zip');
+  try {
+    triggerDownload(zipBlob, 'instaframe_export.zip');
+  } catch (_) {
+    _finishOwnedGlobalExport(controller);
+    showToast(t('msgExportFailed'), 'error');
+    return;
+  }
   _finishOwnedGlobalExport(controller);
 }
 
@@ -1998,11 +2004,20 @@ function triggerDownload(blob, filename) {
   const a   = document.createElement('a');
   a.href     = url;
   a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  const timer = setTimeout(() => _releaseDownloadUrl(url), 5000);
-  _downloadUrlTimers.set(url, timer);
+  let downloadStarted = false;
+  try {
+    document.body.appendChild(a);
+    a.click();
+    downloadStarted = true;
+  } finally {
+    a.remove();
+    if (downloadStarted) {
+      const timer = setTimeout(() => _releaseDownloadUrl(url), 5000);
+      _downloadUrlTimers.set(url, timer);
+    } else {
+      URL.revokeObjectURL(url);
+    }
+  }
 }
 
 function _releaseDownloadUrl(url) {

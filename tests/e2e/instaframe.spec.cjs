@@ -626,6 +626,59 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
   await expect.poll(() => page.evaluate(() => window.__activePageObjectUrls.size)).toBe(0);
 });
 
+test('a failed ZIP download restores export controls without an unhandled rejection', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await page.evaluate(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const click = HTMLAnchorElement.prototype.click;
+    const activeUrls = new Set();
+    const unhandled = [];
+    const onUnhandled = event => { unhandled.push(String(event.reason?.message || event.reason)); };
+    URL.createObjectURL = value => {
+      const url = create(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      revoke(url);
+    };
+    HTMLAnchorElement.prototype.click = () => { throw new Error('simulated ZIP download failure'); };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    window.__failedZipDownload = {
+      activeUrls,
+      unhandled,
+      restore() {
+        URL.createObjectURL = create;
+        URL.revokeObjectURL = revoke;
+        HTMLAnchorElement.prototype.click = click;
+        window.removeEventListener('unhandledrejection', onUnhandled);
+      },
+    };
+  });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#toast')).toContainText(/could not finish|完了できません/i);
+
+  const result = await page.evaluate(() => {
+    const state = window.__failedZipDownload;
+    const result = {
+      activeUrls: state.activeUrls.size,
+      unhandled: [...state.unhandled],
+      temporaryAnchors: document.querySelectorAll('a[download="instaframe_export.zip"]').length,
+    };
+    state.restore();
+    delete window.__failedZipDownload;
+    return result;
+  });
+  expect(result).toEqual({ activeUrls: 0, unhandled: [], temporaryAnchors: 0 });
+});
+
 test('pagehide commits a pending live EXIF edit before releasing preview resources', async ({ page }) => {
   await uploadJpegs(page);
   await expect.poll(() => page.locator('#livePreviewCanvas').evaluate(canvas => canvas.width)).toBeGreaterThan(0);
