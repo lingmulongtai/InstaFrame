@@ -4529,6 +4529,76 @@ test('removing a photo aborts its in-flight place-name lookup', async ({ page })
   expect(await page.evaluate(() => window.__removedLocationToasts.some(entry => entry.type === 'success'))).toBe(false);
 });
 
+test('clearing all photos aborts in-flight location operations', async ({ page }) => {
+  await uploadJpegs(page, 1, true);
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+    const nativeFetch = window.fetch;
+    window.__clearedLocationSuccess = false;
+    const nativeShowToast = window.showToast;
+    window.showToast = (message, type, options) => {
+      if (type === 'success') window.__clearedLocationSuccess = true;
+      nativeShowToast(message, type, options);
+    };
+    window.fetch = (input, options = {}) => {
+      if (!String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        return nativeFetch(input, options);
+      }
+      window.__clearedLocationSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        window.__finishClearedLocation = () => resolve(new Response(JSON.stringify({
+          address: { city: 'Cleared City', country: 'Japan' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('Request cancelled', 'AbortError'));
+        }, { once: true });
+      });
+    };
+  });
+
+  await page.locator('#resolveLocationNameBtn').click();
+  await expect.poll(() => page.evaluate(() => !!window.__clearedLocationSignal)).toBe(true);
+  await page.locator('#clearAllBtn').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+
+  await expect.poll(() => page.evaluate(() => window.__clearedLocationSignal.aborted)).toBe(true);
+  await page.evaluate(() => window.__finishClearedLocation());
+  await page.waitForTimeout(50);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__clearedLocationSuccess)).toBe(false);
+});
+
+test('clearing all photos invalidates a late device-location callback', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+    window.__clearedDeviceLookupCalls = 0;
+    const nativeFetch = window.fetch;
+    window.fetch = (input, options) => {
+      if (String(input).startsWith('https://nominatim.openstreetmap.org/')) {
+        window.__clearedDeviceLookupCalls += 1;
+      }
+      return nativeFetch(input, options);
+    };
+    navigator.geolocation.getCurrentPosition = success => {
+      window.__finishClearedDeviceLocation = success;
+    };
+  });
+
+  await page.locator('#getDeviceLocationBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__finishClearedDeviceLocation)).toBe('function');
+  await page.locator('#clearAllBtn').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await page.evaluate(() => window.__finishClearedDeviceLocation({
+    coords: { latitude: 35.0116, longitude: 135.7681 },
+  }));
+  await page.waitForTimeout(50);
+
+  expect(await page.evaluate(() => window.__clearedDeviceLookupCalls)).toBe(0);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  await expect(page.locator('#live-exif-location')).toBeEnabled();
+});
+
 test('removed device-location targets skip reverse geocoding', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
