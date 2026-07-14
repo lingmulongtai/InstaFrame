@@ -2716,3 +2716,22 @@ input[type="range"]:focus-visible {
   min-height: 280px;
   background: #e5e7eb;
 }
+
+@media (max-height: 480px) {
+  #mapPickerModal .map-modal-content { height: 100%; }
+  #mapPickerModal .map-modal-header { padding: 8px 12px; }
+  #mapPickerModal .map-picker-help {
+    padding: 4px 10px;
+    line-height: 1.25;
+  }
+  #mapPickerModal .map-picker-container { min-height: 56px; }
+  #mapPickerModal .map-modal-footer {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+  #mapPickerModal .map-picker-coords {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}

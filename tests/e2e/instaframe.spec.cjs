@@ -6122,6 +6122,65 @@ test('short mobile consent modal respects safe areas and keeps actions reachable
   await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
 });
 
+test('short landscape map picker keeps its map and confirmation actions reachable', async ({ page }) => {
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.route('https://nominatim.openstreetmap.org/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ address: { city: 'Kyoto', country: 'Japan' } }),
+  }));
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.setViewportSize({ width: 667, height: 240 });
+  await page.reload();
+  await page.evaluate(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--safe-area-top', '24px');
+    root.setProperty('--safe-area-right', '20px');
+    root.setProperty('--safe-area-bottom', '18px');
+    root.setProperty('--safe-area-left', '36px');
+  });
+  await uploadJpegs(page);
+  await page.locator('#openMapPickerBtn').click();
+  await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
+
+  const layout = await page.locator('#mapPickerModal').evaluate(modal => {
+    const content = modal.querySelector('.map-modal-content');
+    const map = modal.querySelector('.map-picker-container');
+    const footer = modal.querySelector('.map-modal-footer');
+    const rect = element => {
+      const bounds = element.getBoundingClientRect();
+      return { top: bounds.top, right: bounds.right, bottom: bounds.bottom, left: bounds.left, height: bounds.height };
+    };
+    return {
+      content: rect(content),
+      map: rect(map),
+      footer: rect(footer),
+      buttons: [...footer.querySelectorAll('button')].map(rect),
+    };
+  });
+
+  expect(layout.content.top).toBeGreaterThanOrEqual(24);
+  expect(layout.content.left).toBeGreaterThanOrEqual(36);
+  expect(layout.content.right).toBeLessThanOrEqual(667 - 20);
+  expect(layout.content.bottom).toBeLessThanOrEqual(240 - 18);
+  expect(layout.map.height).toBeGreaterThanOrEqual(56);
+  expect(layout.footer.top).toBeGreaterThanOrEqual(layout.content.top);
+  expect(layout.footer.bottom).toBeLessThanOrEqual(layout.content.bottom);
+  for (const button of layout.buttons) {
+    expect(button.top).toBeGreaterThanOrEqual(layout.footer.top);
+    expect(button.bottom).toBeLessThanOrEqual(layout.footer.bottom);
+  }
+
+  await page.locator('#selectMapCenterBtn').click();
+  await expect(page.locator('#mapPickerCoords')).toContainText(/°[NS].*°[EW]/);
+  await page.locator('#confirmMapLocationBtn').click();
+  await expect(page.locator('#mapPickerModal')).not.toHaveClass(/open/);
+  await expect(page.locator('#live-exif-location')).toHaveValue('Kyoto, Japan');
+});
+
 test('short mobile Photos view keeps its empty import action visible and scrollable', async ({ page }) => {
   await page.setViewportSize({ width: 667, height: 240 });
   await page.reload();
