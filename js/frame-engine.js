@@ -876,8 +876,8 @@ const FrameEngine = (() => {
    */
   function captureVideoFrame(file, atSecond = 0, { signal, timeoutMs = 15_000 } = {}) {
     return new Promise((resolve, reject) => {
-      const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
+      const url   = URL.createObjectURL(file);
       video.muted   = true;
       video.preload = 'metadata';
       let captured = false;
@@ -968,8 +968,12 @@ const FrameEngine = (() => {
       };
 
       video.onerror = () => fail(new Error('Video load failed'));
-      video.src  = url;
-      video.load();
+      try {
+        video.src = url;
+        video.load();
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
@@ -990,8 +994,8 @@ const FrameEngine = (() => {
     assertNotAborted(signal);
 
     return new Promise((resolve, reject) => {
-      const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
+      const url   = URL.createObjectURL(file);
       video.muted   = true;
       video.preload = 'auto';
       let encoder = null;
@@ -1197,8 +1201,12 @@ const FrameEngine = (() => {
         () => fail(mediaTimeoutError('metadata loading')),
         resolveGuardTimeout(metadataTimeoutMs, VIDEO_METADATA_GUARD_MS)
       );
-      video.src  = url;
-      video.load();
+      try {
+        video.src = url;
+        video.load();
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
@@ -1314,8 +1322,8 @@ const FrameEngine = (() => {
     const sourceHasAudio = await _fileHasAudioTrackHint(file, signal);
 
     return new Promise((resolve, reject) => {
-      const url   = URL.createObjectURL(file);
       const video = document.createElement('video');
+      const url   = URL.createObjectURL(file);
       video.muted   = true;   // must be muted for autoplay; source audio is captured separately
       video.preload = 'auto';
       let audioContext = null;
@@ -1558,8 +1566,12 @@ const FrameEngine = (() => {
         () => fail(mediaTimeoutError('metadata loading')),
         resolveGuardTimeout(metadataTimeoutMs, VIDEO_METADATA_GUARD_MS)
       );
-      video.src  = url;
-      video.load();
+      try {
+        video.src = url;
+        video.load();
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 

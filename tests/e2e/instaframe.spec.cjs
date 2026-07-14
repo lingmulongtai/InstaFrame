@@ -2867,6 +2867,75 @@ test('thumbnail cleanup exceptions do not mask decoder failures or leak source U
   });
 });
 
+test('initial video load exceptions reject without retaining pipeline Blob URLs', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const result = await page.evaluate(async () => {
+    const createElement = document.createElement.bind(document);
+    const createUrl = URL.createObjectURL.bind(URL);
+    const revokeUrl = URL.revokeObjectURL.bind(URL);
+    let createdUrls = 0;
+    let revokedUrls = 0;
+
+    URL.createObjectURL = value => {
+      createdUrls += 1;
+      return createUrl(value);
+    };
+    URL.revokeObjectURL = url => {
+      revokedUrls += 1;
+      revokeUrl(url);
+    };
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return createElement(tagName, options);
+      const attributes = new Set();
+      return {
+        pause() {},
+        removeAttribute(name) { attributes.delete(name); },
+        hasAttribute(name) { return attributes.has(name); },
+        load() { throw new Error('simulated initial video load failure'); },
+        set src(value) {
+          this._src = String(value);
+          attributes.add('src');
+        },
+        get src() { return this._src || ''; },
+      };
+    };
+
+    const file = new File(
+      [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])],
+      'initial-load-failure.webm',
+      { type: 'video/webm' }
+    );
+    const outcomes = [];
+    outcomes.push(await window.FrameEngine.captureVideoFrame(file).then(
+      () => 'resolved',
+      error => error.message
+    ));
+    for (const preserveAudio of [false, true]) {
+      outcomes.push(await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio }).then(
+        () => 'resolved',
+        error => error.message
+      ));
+    }
+    return {
+      outcomes,
+      createdUrls,
+      revokedUrls,
+      activeUrls: window.__webCodecsResources.activeUrls.size,
+    };
+  });
+
+  expect(result).toEqual({
+    outcomes: [
+      'simulated initial video load failure',
+      'simulated initial video load failure',
+      'simulated initial video load failure',
+    ],
+    createdUrls: 4,
+    revokedUrls: 4,
+    activeUrls: 0,
+  });
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
