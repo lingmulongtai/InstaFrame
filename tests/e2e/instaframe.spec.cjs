@@ -2147,6 +2147,10 @@ test('clear cancels a stalled import before its first item is created', async ({
     { name: 'must-not-start.jpg', mimeType: 'image/jpeg', buffer: createJpeg({ colorShift: 20 }) },
   ]);
   await expect.poll(() => page.evaluate(() => window.__preItemClearStats.parseCalls)).toBe(1);
+  await page.evaluate(() => {
+    window.__preItemReservation = eval('[..._activeImportReservations][0]');
+  });
+  expect(await page.evaluate(() => window.__preItemReservation.files.length)).toBe(2);
   await expect(page.locator('.image-card')).toHaveCount(0);
   expect(await page.locator('#fileInput').evaluate(input => input.files.length)).toBe(0);
   const clearButton = page.locator('#clearAllBtn');
@@ -2155,6 +2159,7 @@ test('clear cancels a stalled import before its first item is created', async ({
   await clearButton.click();
   await page.locator('#destructiveConfirmAcceptBtn').click();
   await expect(page.locator('#imageSection')).toBeHidden();
+  expect(await page.evaluate(() => window.__preItemReservation.files.length)).toBe(0);
 
   await page.evaluate(() => window.__releasePreItemMetadata());
   await page.waitForTimeout(100);

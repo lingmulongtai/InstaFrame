@@ -1244,6 +1244,7 @@ function _releaseImportReservation(reservation) {
   _reservedImportBytes -= reservation.remainingBytes;
   reservation.remainingItems = 0;
   reservation.remainingBytes = 0;
+  reservation.files.length = 0;
   reservation.released = true;
   _activeImportReservations.delete(reservation);
 }
@@ -4637,7 +4638,9 @@ function setupDropZone() {
       const previousCount = state.items.length;
       const selectedFiles = Array.from(fileInput.files || []);
       fileInput.value = '';
-      await addFiles(selectedFiles);
+      const importPromise = addFiles(selectedFiles);
+      selectedFiles.length = 0;
+      await importPromise;
       if (fileInput === mobileInput && state.items.length > previousCount) {
         _requestLoadedMediaFocus();
       }
