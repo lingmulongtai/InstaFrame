@@ -95,6 +95,7 @@ let _importQueueTail = Promise.resolve();
 let _importGeneration = 0;
 let _reservedImportItems = 0;
 let _reservedImportBytes = 0;
+const _activeImportReservations = new Set();
 let _pageResourcesReleased = false;
 const _pageRestoreWaiters = new Set();
 const APP_ASSET_VERSION = (() => {
@@ -1215,17 +1216,21 @@ function _reserveImportFiles(files) {
   }
   _reservedImportItems += accepted.length;
   _reservedImportBytes += reservedBytes;
-  return {
+  const reservation = {
     files: accepted,
     unsupportedCount: submitted.length - candidates.length,
     rejectedCount,
     generation: _importGeneration,
     remainingItems: accepted.length,
     remainingBytes: reservedBytes,
+    released: false,
   };
+  if (accepted.length) _activeImportReservations.add(reservation);
+  return reservation;
 }
 
 function _consumeImportReservation(reservation, file) {
+  if (reservation.released) return;
   const size = file.size || 0;
   reservation.remainingItems -= 1;
   reservation.remainingBytes -= size;
@@ -1234,10 +1239,20 @@ function _consumeImportReservation(reservation, file) {
 }
 
 function _releaseImportReservation(reservation) {
+  if (reservation.released) return;
   _reservedImportItems -= reservation.remainingItems;
   _reservedImportBytes -= reservation.remainingBytes;
   reservation.remainingItems = 0;
   reservation.remainingBytes = 0;
+  reservation.released = true;
+  _activeImportReservations.delete(reservation);
+}
+
+function _cancelPendingImports() {
+  _importGeneration += 1;
+  for (const reservation of [..._activeImportReservations]) {
+    _releaseImportReservation(reservation);
+  }
 }
 
 async function _waitForPageResourcesRestore() {
@@ -1254,9 +1269,13 @@ function addFiles(files) {
     _showImportRejections(reservation);
     return Promise.resolve();
   }
+  updateUI();
   const run = _importQueueTail
     .then(() => _addFiles(reservation.files, reservation))
-    .finally(() => _releaseImportReservation(reservation));
+    .finally(() => {
+      _releaseImportReservation(reservation);
+      updateUI();
+    });
   _importQueueTail = run.catch(() => {});
   return run;
 }
@@ -1392,9 +1411,10 @@ function _syncLocationIconPicker(value, { focus = false } = {}) {
 }
 
 async function clearAllItems(skipConfirm = false) {
-  if (state.items.length === 0) return false;
+  const hasPendingImports = _reservedImportItems > 0;
+  if (state.items.length === 0 && !hasPendingImports) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ clearAll: true })) return false;
-  _importGeneration += 1;
+  _cancelPendingImports();
   _activeExportController?.abort();
   _cancelLocationOperations();
   const ids = state.items.map(i => i.id);
@@ -4348,6 +4368,8 @@ function updateImageCounter() {
 
 function updateUI() {
   const hasItems = state.items.length > 0;
+  const hasPendingImports = _reservedImportItems > 0;
+  const hasWorkspaceItems = hasItems || hasPendingImports;
   const fileInput = document.getElementById('fileInput');
   if (fileInput) {
     fileInput.tabIndex = hasItems ? -1 : 0;
@@ -4367,11 +4389,11 @@ function updateUI() {
 
   if (genBtn)  genBtn.disabled  = _globalExportBusy || !hasItems;
   if (dlBtn)   dlBtn.disabled   = _globalExportBusy || !hasItems;
-  if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasItems;
+  if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasWorkspaceItems;
   updateImageCounter();
 
-  setVisible(document.getElementById('imageSection'), hasItems, 'flex');
-  setVisible(document.getElementById('emptyHint'),    !hasItems);
+  setVisible(document.getElementById('imageSection'), hasWorkspaceItems, 'flex');
+  setVisible(document.getElementById('emptyHint'),    !hasWorkspaceItems);
   const resizeHandle = document.getElementById('mainResizeHandle');
   if (resizeHandle) {
     resizeHandle.style.display = hasItems ? 'block' : 'none';
@@ -4613,8 +4635,9 @@ function setupDropZone() {
   [input, mobileInput].filter(Boolean).forEach(fileInput => {
     fileInput.addEventListener('change', async () => {
       const previousCount = state.items.length;
-      await addFiles(fileInput.files);
+      const selectedFiles = Array.from(fileInput.files || []);
       fileInput.value = '';
+      await addFiles(selectedFiles);
       if (fileInput === mobileInput && state.items.length > previousCount) {
         _requestLoadedMediaFocus();
       }

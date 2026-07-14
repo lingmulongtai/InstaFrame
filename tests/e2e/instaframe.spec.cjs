@@ -2126,6 +2126,42 @@ test('clearing the workspace invalidates files still waiting in the import queue
   await expect(page.locator('#imageCounter')).toHaveText('');
 });
 
+test('clear cancels a stalled import before its first item is created', async ({ page }) => {
+  await page.evaluate(() => {
+    let releaseMetadata;
+    const stalledMetadata = new Promise(resolve => { releaseMetadata = resolve; });
+    window.__preItemClearStats = { parseCalls: 0 };
+    window.exifr = {
+      parse: () => {
+        window.__preItemClearStats.parseCalls += 1;
+        return window.__preItemClearStats.parseCalls === 1
+          ? stalledMetadata.then(() => null)
+          : Promise.resolve(null);
+      },
+    };
+    window.__releasePreItemMetadata = releaseMetadata;
+  });
+
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'stalled-first.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+    { name: 'must-not-start.jpg', mimeType: 'image/jpeg', buffer: createJpeg({ colorShift: 20 }) },
+  ]);
+  await expect.poll(() => page.evaluate(() => window.__preItemClearStats.parseCalls)).toBe(1);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+  expect(await page.locator('#fileInput').evaluate(input => input.files.length)).toBe(0);
+  const clearButton = page.locator('#clearAllBtn');
+  await expect(clearButton).toBeVisible();
+  await expect(clearButton).toBeEnabled();
+  await clearButton.click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect(page.locator('#imageSection')).toBeHidden();
+
+  await page.evaluate(() => window.__releasePreItemMetadata());
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__preItemClearStats.parseCalls)).toBe(1);
+  await expect(page.locator('.image-card')).toHaveCount(0);
+});
+
 test('a hung EXIF read cannot block later files in the import queue', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {
