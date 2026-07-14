@@ -393,7 +393,7 @@
                   <label for="text-color-custom" data-i18n="colorCustom">Custom</label>
                 </div>
               </div>
-              <input type="color" id="textColorPicker" value="#FFFFFF" aria-label="Custom text color">
+              <input type="color" id="textColorPicker" value="#FFFFFF" aria-label="Custom text color" data-i18n="customTextColor" data-i18n-attr="aria-label">
             </div>
           </div>
         </div>
@@ -515,9 +515,9 @@
         </div>
         <!-- Location icon picker (shown when showLocation is on) -->
         <div class="setting-row is-hidden" id="locationIconRow">
-          <div class="setting-label" data-i18n="mapIcon">Icon</div>
+          <div class="setting-label" id="locationIconLabel" data-i18n="mapIcon">Icon</div>
           <div class="setting-control">
-            <div class="icon-picker" role="radiogroup" aria-label="Location icon">
+            <div class="icon-picker" role="radiogroup" aria-labelledby="locationIconLabel">
               <button type="button" class="icon-pick-btn active" data-icon="pin" title="Pin" aria-label="Pin" role="radio" aria-checked="true" tabindex="0" data-i18n="locationIconPin" data-i18n-attr="title,aria-label">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
               </button>
