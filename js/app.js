@@ -1143,7 +1143,7 @@ function _cancelQueuedVideoThumbnail(item) {
   }
 }
 
-function _startVideoThumbnail(item) {
+function _startVideoThumbnail(item, { reportFailure = true } = {}) {
   if (!item?.isVideo || !state.items.includes(item) || item.thumbnailPromise) return item?.thumbnailPromise || null;
   const previewDiv = document.getElementById(`preview-${item.id}`);
   if (previewDiv?.querySelector('canvas.thumb-framed')) {
@@ -1162,10 +1162,12 @@ function _startVideoThumbnail(item) {
     // receives one of the bounded active-thumbnail slots.
     thumbnailGuard = setTimeout(() => {
       if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
-      item.status = 'error';
-      _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
-      updateItemStatus(item);
-      showToast(item.errorMsg, 'error');
+      if (reportFailure) {
+        item.status = 'error';
+        _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+        updateItemStatus(item);
+        showToast(item.errorMsg, 'error');
+      }
       thumbnailController.abort();
     }, VIDEO_THUMBNAIL_GUARD_MS);
     let img = null;
@@ -1217,6 +1219,7 @@ function _startVideoThumbnail(item) {
   })
     .catch(error => {
       if (error?.name === 'AbortError') return;
+      if (!reportFailure) return;
       if (item.status === 'error' && item.errorMsg) return;
       item.status = 'error';
       _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
@@ -1232,13 +1235,13 @@ function _startVideoThumbnail(item) {
   return thumbnailPromise;
 }
 
-function _restartInterruptedVideoThumbnail(item) {
+function _restartInterruptedVideoThumbnail(item, { reportFailure = true } = {}) {
   if (!item?.thumbnailNeedsRestart || !state.items.includes(item)) return;
   const restart = () => {
     if (!item.thumbnailNeedsRestart || !state.items.includes(item)) return;
     const previewDiv = document.getElementById(`preview-${item.id}`);
     item.thumbnailNeedsRestart = false;
-    if (!previewDiv?.querySelector('canvas.thumb-framed')) _startVideoThumbnail(item);
+    if (!previewDiv?.querySelector('canvas.thumb-framed')) _startVideoThumbnail(item, { reportFailure });
   };
   if (item.thumbnailPromise) void item.thumbnailPromise.then(restart, restart);
   else restart();
@@ -1748,7 +1751,12 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     if (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id) {
       scheduleLivePreview();
     }
-    if (item.isVideo && !_pageResourcesReleased) _restartInterruptedVideoThumbnail(item);
+    if (item.isVideo && !_pageResourcesReleased) {
+      const hasThumbnail = document.getElementById(`preview-${item.id}`)
+        ?.querySelector('canvas.thumb-framed');
+      if (item.status === 'done' && !hasThumbnail) item.thumbnailNeedsRestart = true;
+      _restartInterruptedVideoThumbnail(item, { reportFailure: item.status !== 'done' });
+    }
   }
   return shouldUpdate && item.status === 'done';
 }
