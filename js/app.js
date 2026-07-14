@@ -3824,8 +3824,12 @@ async function _decodePreviewImage(item, signal, retainUncached) {
       URL.revokeObjectURL(objUrl);
       fail(new Error('Image load timed out'));
     }, PREVIEW_IMAGE_DECODE_GUARD_MS);
-    img.src = objUrl;
-    if (img.complete && img.naturalWidth) succeed();
+    try {
+      img.src = objUrl;
+      if (img.complete && img.naturalWidth) succeed();
+    } catch (error) {
+      fail(error);
+    }
   }).catch(e => {
     _releaseDecodedImageSource(img, objUrl);
     if (e?.name !== 'AbortError') _imgFailed.add(item.id);
