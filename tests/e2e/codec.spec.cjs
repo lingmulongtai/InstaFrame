@@ -29,6 +29,12 @@ const mediaFixtures = [
   },
 ];
 
+const conditionalContainerFixtures = [
+  { label: 'AVI', extension: 'avi', mimeType: 'video/x-msvideo' },
+  { label: 'Matroska', extension: 'mkv', mimeType: 'video/x-matroska' },
+  { label: '3GP', extension: '3gp', mimeType: 'video/3gpp' },
+];
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
@@ -68,5 +74,22 @@ for (const fixture of mediaFixtures) {
     if (!fixture.allowedErrorProjects.has(testInfo.project.name)) {
       expect(outcome, `${testInfo.project.name} should decode the local ${fixture.label} fixture`).toBe('decoded');
     }
+  });
+}
+
+for (const fixture of conditionalContainerFixtures) {
+  test(`invalid ${fixture.label} input becomes an explicit per-item codec error`, async ({ page }) => {
+    const fileName = `unsupported.${fixture.extension}`;
+    await page.locator('#fileInput').setInputFiles({
+      name: fileName,
+      mimeType: fixture.mimeType,
+      buffer: Buffer.from(`not-a-decodable-${fixture.extension}-file`),
+    });
+    await expect(page.locator('#preview-1')).toBeVisible();
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/, { timeout: 20_000 });
+    await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', new RegExp(fileName, 'i'));
+    await expect(page.locator('#livePreviewError')).toBeVisible();
+    await expect(page.locator('#livePreviewError')).toContainText(fileName);
+    await expect(page.locator('[role="alert"]:visible')).toHaveCount(1);
   });
 }
