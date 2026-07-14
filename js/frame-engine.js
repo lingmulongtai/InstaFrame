@@ -946,21 +946,30 @@ const FrameEngine = (() => {
           fail(error);
           return;
         }
-        c.toBlob(blob => {
-          c.width = 0;
-          c.height = 0;
+        try {
+          c.toBlob(blob => {
+            releaseCanvasBackingStore(c);
+            if (thumbnailCanvas === c) thumbnailCanvas = null;
+            if (settled) return;
+            if (!blob) { fail(new Error('Video thumbnail encoding failed')); return; }
+            try {
+              thumbnailUrl = URL.createObjectURL(blob);
+              thumbnailImage = new Image();
+              thumbnailImage.onload = () => {
+                thumbnailLoaded = true;
+                succeed(thumbnailImage);
+              };
+              thumbnailImage.onerror = () => fail(new Error('Video thumbnail load failed'));
+              thumbnailImage.src = thumbnailUrl;
+            } catch (error) {
+              fail(error);
+            }
+          }, 'image/jpeg', 0.88);
+        } catch (error) {
+          releaseCanvasBackingStore(c);
           if (thumbnailCanvas === c) thumbnailCanvas = null;
-          if (settled) return;
-          if (!blob) { fail(new Error('Video thumbnail encoding failed')); return; }
-          thumbnailUrl = URL.createObjectURL(blob);
-          thumbnailImage = new Image();
-          thumbnailImage.onload = () => {
-            thumbnailLoaded = true;
-            succeed(thumbnailImage);
-          };
-          thumbnailImage.onerror = () => fail(new Error('Video thumbnail load failed'));
-          thumbnailImage.src = thumbnailUrl;
-        }, 'image/jpeg', 0.88);
+          fail(error);
+        }
       };
 
       video.onerror = () => fail(new Error('Video load failed'));
