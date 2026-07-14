@@ -1777,6 +1777,30 @@ test('history focus follows the remaining undo or redo action', async ({ page })
   await expect(undo).toBeFocused();
 });
 
+test('one slider gesture creates one undo entry without evicting earlier edits', async ({ page }) => {
+  await uploadJpegs(page);
+  const thickness = page.locator('#thicknessRange');
+  await page.locator('label[for="bg-blur"]').click();
+
+  await thickness.evaluate(element => {
+    element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    for (let index = 0; index < 100; index += 1) {
+      element.value = index % 2 === 0 ? '1.9' : '2.0';
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    element.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  });
+  await expect(thickness).toHaveValue('2');
+  await expect(page.locator('#thicknessRangeVal')).toHaveText('2.0×');
+
+  await page.locator('#undoEditBtn').click();
+  await expect(thickness).toHaveValue('1');
+  await expect(page.locator('#bg-blur')).toBeChecked();
+
+  await page.locator('#undoEditBtn').click();
+  await expect(page.locator('#bg-color')).toBeChecked();
+});
+
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
