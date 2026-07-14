@@ -2230,6 +2230,50 @@ test('clear cancels a stalled import before its first item is created', async ({
   await expect(page.locator('.image-card')).toHaveCount(0);
 });
 
+test('clearing an import aborts the active metadata FileReader', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__metadataReaderStats = { reads: 0, aborts: 0, finished: false };
+    window.FileReader = class StalledMetadataReader extends EventTarget {
+      constructor() {
+        super();
+        this.readyState = 0;
+        this.result = null;
+      }
+      readAsArrayBuffer() {
+        this.readyState = 1;
+        window.__metadataReaderStats.reads += 1;
+      }
+      abort() {
+        if (this.readyState !== 1) return;
+        this.readyState = 2;
+        window.__metadataReaderStats.aborts += 1;
+        this.dispatchEvent(new Event('abort'));
+        this.dispatchEvent(new Event('loadend'));
+      }
+    };
+    window.exifr = {
+      parse: file => new Promise(resolve => {
+        const reader = new FileReader();
+        reader.addEventListener('loadend', () => resolve(null), { once: true });
+        reader.readAsArrayBuffer(file);
+      }),
+    };
+    window.__abortableMetadataImport = window.addFiles([
+      new File(['metadata'], 'abortable-metadata.jpg', { type: 'image/jpeg' }),
+    ]).then(() => { window.__metadataReaderStats.finished = true; });
+  });
+  await expect.poll(() => page.evaluate(() => window.__metadataReaderStats.reads)).toBe(1);
+
+  await page.locator('#clearAllBtn').click();
+  await page.locator('#destructiveConfirmAcceptBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__metadataReaderStats)).toEqual({
+    reads: 1,
+    aborts: 1,
+    finished: true,
+  });
+  await expect(page.locator('.image-card')).toHaveCount(0);
+});
+
 test('a hung EXIF read cannot block later files in the import queue', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {
