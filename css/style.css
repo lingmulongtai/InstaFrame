@@ -1401,6 +1401,11 @@ input[type="range"]:focus-visible {
   text-align: center;
 }
 .video-speed-select:hover { background: rgba(255,255,255,0.22); }
+.video-speed-select:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.75);
+}
 .video-speed-select option { background: #1a1a1a; color: white; }
 
 /* ── EXIF panel (left edge of live preview, desktop only) ───────────────────── */

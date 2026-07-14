@@ -6932,6 +6932,37 @@ test('video controls announce their current action and restore audible volume', 
   await expect(mute).toHaveAccessibleName('Unmute video');
 });
 
+test('video playback speed keeps a visible keyboard focus indicator in every theme', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'speed-focus.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  const speed = page.locator('#videoSpeedSelect');
+  const volume = page.locator('#videoVolumeRange');
+  await expect(speed).toBeVisible();
+
+  for (const theme of ['light', 'soft-white', 'blue-grey-dark', 'dark', 'system']) {
+    await page.locator('html').evaluate((element, value) => element.setAttribute('data-theme', value), theme);
+    await volume.focus();
+    await page.keyboard.press('Tab');
+    await expect(speed).toBeFocused();
+    const indicator = await speed.evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        focusVisible: element.matches(':focus-visible'),
+        outlineStyle: style.outlineStyle,
+        outlineWidth: Number.parseFloat(style.outlineWidth),
+        outlineColor: style.outlineColor,
+      };
+    });
+    expect(indicator.focusVisible, `${theme} focus-visible`).toBe(true);
+    expect(indicator.outlineStyle, `${theme} outline style`).not.toBe('none');
+    expect(indicator.outlineWidth, `${theme} outline width`).toBeGreaterThanOrEqual(2);
+    expect(indicator.outlineColor, `${theme} outline color`).not.toBe('rgba(0, 0, 0, 0)');
+  }
+});
+
 test('photo card and preview Blob URLs remain bounded across language refresh and removal', async ({ page }) => {
   await page.addInitScript(() => {
     const create = URL.createObjectURL.bind(URL);
