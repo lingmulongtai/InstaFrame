@@ -1632,6 +1632,10 @@ async function _releaseItemThumbnailBeforeExport(item, signal) {
 
 async function generateItem(item, onExternalProgress = null, parentSignal = null) {
   if (item.exportController || !state.items.includes(item)) return false;
+  if (item.status === 'error') {
+    _releaseItemOutput(item);
+    _clearItemError(item);
+  }
   const controller = new AbortController();
   const runToken = {};
   const abortFromParent = () => controller.abort();
@@ -1774,12 +1778,12 @@ function _finishOwnedGlobalExport(controller) {
 
 async function generateAll() {
   if (_globalExportBusy) return;
-  const pending = state.items.filter(i => i.status === 'pending');
-  if (!pending.length && state.items.length === 0) {
+  const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
+  if (!candidates.length && state.items.length === 0) {
     showToast(t('msgNoImages'), 'warn');
     return;
   }
-  if (!pending.length) {
+  if (!candidates.length) {
     showToast(t('msgNoPending'), 'info');
     return;
   }
@@ -1787,7 +1791,7 @@ async function generateAll() {
   const controller = new AbortController();
   _activeExportController = controller;
   setGlobalBusy(true);
-  const total = pending.length;
+  const total = candidates.length;
   let cancelled = false;
   let failedCount = 0;
   let unexpectedError = null;
@@ -1796,7 +1800,7 @@ async function generateAll() {
   try {
     for (let idx = 0; idx < total; idx++) {
       if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
-      const item     = pending[idx];
+      const item     = candidates[idx];
       const basePct  = idx / total;
       const itemSlot = 1 / total;
       const prefix   = `${idx + 1} / ${total}`;
@@ -1816,7 +1820,7 @@ async function generateAll() {
   } finally {
     if (_ownsGlobalExport(controller)) {
       cancelled = controller.signal.aborted;
-      failedCount = pending.filter(item => item.status === 'error').length;
+      failedCount = candidates.filter(item => item.status === 'error').length;
       finishedOwnedExport = _finishOwnedGlobalExport(controller);
     }
   }
@@ -2026,17 +2030,17 @@ async function downloadAll() {
   _activeExportController = controller;
   setGlobalBusy(true);
 
-  // Auto-generate any pending items first
-  const pending = state.items.filter(i => i.status === 'pending');
-  const generationWeight = pending.length ? 0.55 : 0;
-  const packingWeight = pending.length ? 0.25 : 0.7;
+  // Auto-generate pending items and retry failed items first
+  const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
+  const generationWeight = candidates.length ? 0.55 : 0;
+  const packingWeight = candidates.length ? 0.25 : 0.7;
   const packingStart = generationWeight;
   const zipStart = packingStart + packingWeight;
-  if (pending.length) {
-    const total = pending.length;
+  if (candidates.length) {
+    const total = candidates.length;
     for (let idx = 0; idx < total; idx++) {
       if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
-      const item    = pending[idx];
+      const item    = candidates[idx];
       const basePct = generationWeight * (idx / total);
       const slot    = generationWeight / total;
       const prefix  = `${idx + 1} / ${total}`;

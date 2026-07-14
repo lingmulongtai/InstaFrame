@@ -3575,7 +3575,7 @@ test('removing a photo during its final encode discards the stale download', asy
   expect(downloads).toBe(0);
 });
 
-test('batch generation reports failed items instead of announcing complete success', async ({ page }) => {
+test('batch generation reports failures and retries failed items', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
   await uploadJpegs(page, 2);
@@ -3596,6 +3596,36 @@ test('batch generation reports failed items instead of announcing complete succe
   await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(1);
   await expect(page.locator('#toast')).toContainText('Frames that could not be generated: 1');
   await expect(page.locator('#toast')).not.toContainText('All frames generated');
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
+  await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
+  await expect(page.locator('#toast')).toContainText('All frames generated');
+});
+
+test('batch download retries failed items before building the ZIP', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    let calls = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error('simulated transient render failure');
+      return render(...args);
+    };
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const download = await downloadPromise;
+  const archive = await JSZip.loadAsync(await fs.readFile(await download.path()));
+  const entries = Object.values(archive.files).filter(entry => !entry.dir);
+
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
+  await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
+  expect(entries).toHaveLength(2);
 });
 
 test('video cancellation propagates an AbortSignal to the active encoder', async ({ page }) => {
