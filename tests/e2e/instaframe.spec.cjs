@@ -670,6 +670,78 @@ test('live EXIF edits do not cancel an independent photo card thumbnail', async 
   await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
 });
 
+test('a stalled photo card thumbnail retries once and recovers', async ({ page }) => {
+  await page.evaluate(() => {
+    const nativeSetTimeout = window.setTimeout;
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__photoThumbnailAttempts = 0;
+    window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
+      callback,
+      delay === 15_000 ? 25 : delay,
+      ...args
+    );
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__photoThumbnailAttempts += 1;
+          if (window.__photoThumbnailAttempts === 1) {
+            Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+            return;
+          }
+          delete this.complete;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+
+  await uploadJpegs(page);
+
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 1_000 }).toBe(2);
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
+  await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
+  await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
+});
+
+test('a repeatedly stalled photo card thumbnail stops retrying and reports an error', async ({ page }) => {
+  await page.evaluate(() => {
+    const nativeSetTimeout = window.setTimeout;
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__photoThumbnailAttempts = 0;
+    window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
+      callback,
+      delay === 15_000 ? 25 : delay,
+      ...args
+    );
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__photoThumbnailAttempts += 1;
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'stalled-thumbnail.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts)).toBe(2);
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__photoThumbnailAttempts)).toBe(2);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
+});
+
 test('failed photo thumbnail compaction releases its decoded image and canvas', async ({ page }) => {
   await page.evaluate(() => {
     const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
