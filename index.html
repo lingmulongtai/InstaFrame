@@ -54,8 +54,8 @@
       <div class="customize-section">
         <div class="customize-label" data-i18n="appearance">Appearance</div>
         <div class="customize-row">
-          <span class="customize-row-label" data-i18n="themeLabel">Theme</span>
-          <div class="pill-group">
+          <span class="customize-row-label" id="themeChoiceLabel" data-i18n="themeLabel">Theme</span>
+          <div class="pill-group" role="radiogroup" aria-labelledby="themeChoiceLabel">
             <label class="pill-option">
               <input type="radio" name="themeChoice" value="light">
               <span data-i18n="themeLight">Light</span>
@@ -101,8 +101,8 @@
       <div class="customize-section">
         <div class="customize-label" data-i18n="layoutLabel">Layout</div>
         <div class="customize-row">
-          <span class="customize-row-label" data-i18n="sidebarLabel">Sidebar</span>
-          <div class="pill-group">
+          <span class="customize-row-label" id="layoutChoiceLabel" data-i18n="sidebarLabel">Sidebar</span>
+          <div class="pill-group" role="radiogroup" aria-labelledby="layoutChoiceLabel">
             <label class="pill-option">
               <input type="radio" name="layoutChoice" value="left" checked>
               <span data-i18n="layoutLeft">Left</span>
@@ -114,8 +114,8 @@
           </div>
         </div>
         <div class="customize-row">
-          <span class="customize-row-label" data-i18n="editorSizeLabel">EXIF Editor</span>
-          <div class="pill-group">
+          <span class="customize-row-label" id="editorSizeChoiceLabel" data-i18n="editorSizeLabel">EXIF Editor</span>
+          <div class="pill-group" role="radiogroup" aria-labelledby="editorSizeChoiceLabel">
             <label class="pill-option">
               <input type="radio" name="editorSizeChoice" value="compact">
               <span data-i18n="editorSizeCompact">Compact</span>
@@ -181,9 +181,9 @@
 
         <!-- Frame Background Mode -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="frameBg">Background</div>
+          <div class="setting-label" id="frameBackgroundLabel" data-i18n="frameBg">Background</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="frameBackgroundLabel">
               <div class="ratio-pill">
                 <input type="radio" name="frameBackground" id="bg-color" value="color" checked>
                 <label for="bg-color" data-i18n="bgColor">Color</label>
@@ -198,9 +198,9 @@
 
         <!-- Color -->
         <div class="setting-row" id="frameColorRow">
-          <div class="setting-label" data-i18n="frameColor">Color</div>
+          <div class="setting-label" id="frameColorLabel" data-i18n="frameColor">Color</div>
           <div class="setting-control">
-            <div class="color-row">
+            <div class="color-row" role="radiogroup" aria-labelledby="frameColorLabel">
               <label class="color-option" data-i18n="colorWhite" data-i18n-attr="title" title="White">
                 <input type="radio" name="frameColor" value="#F0F0F0" checked>
                 <span class="color-swatch lightgray"></span>
@@ -278,9 +278,9 @@
 
         <!-- Aspect Ratio -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="aspectRatio">Ratio</div>
+          <div class="setting-label" id="aspectRatioLabel" data-i18n="aspectRatio">Ratio</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="aspectRatioLabel">
               <div class="ratio-pill">
                 <input type="radio" name="aspectRatio" id="ratio-orig" value="original" checked>
                 <label for="ratio-orig" data-i18n="ratioOriginal">Free</label>
@@ -322,9 +322,9 @@
         </div>
 
         <div class="setting-row">
-          <div class="setting-label" data-i18n="aspectOrientation">Orientation</div>
+          <div class="setting-label" id="aspectOrientationLabel" data-i18n="aspectOrientation">Orientation</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="aspectOrientationLabel">
               <div class="ratio-pill">
                 <input type="radio" name="aspectOrientation" id="aspect-orientation-auto" value="auto" checked>
                 <label for="aspect-orientation-auto" data-i18n="orientationAuto">Auto</label>
@@ -372,10 +372,10 @@
 
         <!-- Text Color -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="textColor">Text Color</div>
+          <div class="setting-label" id="textColorModeLabel" data-i18n="textColor">Text Color</div>
           <div class="setting-control">
             <div class="text-color-controls">
-              <div class="ratio-pills">
+              <div class="ratio-pills" role="radiogroup" aria-labelledby="textColorModeLabel">
                 <div class="ratio-pill">
                   <input type="radio" name="textColorMode" id="text-color-auto" value="auto" checked>
                   <label for="text-color-auto" data-i18n="textColorAuto">Auto</label>
@@ -495,9 +495,9 @@
         </div>
         <!-- Location position (shown when showLocation is on) -->
         <div class="setting-row location-pos-row is-hidden" id="locationPositionRow">
-          <div class="setting-label" data-i18n="locationPosition">Position</div>
+          <div class="setting-label" id="locationPositionLabel" data-i18n="locationPosition">Position</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="locationPositionLabel">
               <div class="ratio-pill">
                 <input type="radio" name="locationPos" id="locpos-below" value="below-exif" checked>
                 <label for="locpos-below" data-i18n="locPosBelow">Below EXIF</label>
@@ -558,9 +558,9 @@
           </div>
         </div>
         <div class="setting-row is-hidden" id="mapOverlayPositionRow">
-          <div class="setting-label" data-i18n="mapOverlayPosition">Map position</div>
+          <div class="setting-label" id="mapOverlayPositionLabel" data-i18n="mapOverlayPosition">Map position</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="mapOverlayPositionLabel">
               <div class="ratio-pill">
                 <input type="radio" name="mapOverlayPos" id="mapov-br" value="bottom-right" checked>
                 <label for="mapov-br" data-i18n="mapPosBottomRight">Bottom Right</label>
@@ -593,9 +593,9 @@
 
         <!-- Photo format -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="exportPhotoLabel">Photo</div>
+          <div class="setting-label" id="exportPhotoFormatLabel" data-i18n="exportPhotoLabel">Photo</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportPhotoFormatLabel">
               <div class="ratio-pill">
                 <input type="radio" name="exportPhotoFormat" id="fmt-jpeg" value="jpeg" checked>
                 <label for="fmt-jpeg">JPEG</label>
@@ -625,7 +625,7 @@
 
         <!-- Video format (dynamically filled by JS) -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="exportVideoLabel">Video</div>
+          <div class="setting-label" id="exportVideoFormatLabel" data-i18n="exportVideoLabel">Video</div>
           <div class="setting-control">
             <div class="ratio-pills" id="videoFormatPills"><!-- filled by JS --></div>
           </div>
@@ -633,9 +633,9 @@
 
         <!-- Video bitrate -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="exportBitrateLabel">Bitrate</div>
+          <div class="setting-label" id="exportVideoBitrateLabel" data-i18n="exportBitrateLabel">Bitrate</div>
           <div class="setting-control">
-            <div class="ratio-pills">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoBitrateLabel">
               <div class="ratio-pill">
                 <input type="radio" name="exportVideoBitrate" id="vbr-4" value="4">
                 <label for="vbr-4">4M</label>

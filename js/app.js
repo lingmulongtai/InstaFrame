@@ -4539,6 +4539,8 @@ function initVideoFormatOptions() {
     control.disabled = candidates.length === 0;
   });
   if (!candidates.length) {
+    container.removeAttribute('role');
+    container.removeAttribute('aria-labelledby');
     const message = document.createElement('p');
     message.className = 'export-format-unavailable';
     message.setAttribute('role', 'status');
@@ -4549,6 +4551,8 @@ function initVideoFormatOptions() {
     return;
   }
 
+  container.setAttribute('role', 'radiogroup');
+  container.setAttribute('aria-labelledby', 'exportVideoFormatLabel');
   const selectedFormat = candidates.some(format => format.value === state.settings.exportVideoFormat)
     ? state.settings.exportVideoFormat
     : candidates[0].value;

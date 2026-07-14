@@ -274,6 +274,45 @@ test('dynamic color and location controls expose localized group names', async (
   await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('マップアイコン');
 });
 
+test('radio choices expose their localized setting group names', async ({ page }) => {
+  const expectGroups = async names => {
+    for (const name of names) {
+      await expect(page.getByRole('radiogroup', { name, exact: true })).toHaveCount(1);
+    }
+  };
+
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'en');
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.test',
+    }));
+  });
+  await page.reload();
+  await page.locator('#customizeBtn').click();
+  await expectGroups(['Theme', 'Sidebar', 'EXIF Editor']);
+  await page.keyboard.press('Escape');
+
+  for (const selector of ['#showLocation', '#showMapOverlay']) {
+    await page.locator(selector).evaluate(control => {
+      control.checked = true;
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+  await expectGroups([
+    'Background', 'Frame Color', 'Aspect Ratio', 'Orientation', 'Text Color',
+    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Bitrate',
+  ]);
+
+  await page.locator('#langToggleBtn').click();
+  await expectGroups([
+    '背景', 'フレームカラー', 'アスペクト比', '向き', '文字色',
+    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', 'ビットレート',
+  ]);
+  await page.locator('#customizeBtn').click();
+  await expectGroups(['テーマ', 'サイドバー', 'EXIF編集']);
+});
+
 test('the editor remains usable when browser storage is unavailable', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -1677,6 +1716,7 @@ test('video export controls disappear when MediaRecorder supports no output MIME
   });
   await expect(page.locator('#videoFormatPills input[name="exportVideoFormat"]')).toHaveCount(0);
   await expect(page.locator('#videoFormatPills [role="status"]')).toContainText(/unavailable|書き出せません/i);
+  await expect(page.locator('#videoFormatPills')).not.toHaveAttribute('role', 'radiogroup');
   const disabledBitrates = await page.locator('input[name="exportVideoBitrate"]:disabled').count();
   const allBitrates = await page.locator('input[name="exportVideoBitrate"]').count();
   expect(disabledBitrates).toBe(allBitrates);
