@@ -99,6 +99,11 @@ test('mobile layout prefers the dynamic viewport and reserves the safe area', ()
   const dynamic = 'height: calc(100dvh - var(--tab-bar-h));';
   assert.ok(css.indexOf(fallback) >= 0);
   assert.ok(css.indexOf(dynamic) > css.indexOf(fallback));
-  assert.match(css, /--tab-bar-h:\s*calc\(56px \+ env\(safe-area-inset-bottom, 0px\)\)/);
-  assert.match(css, /\.mobile-tab-bar\s*\{[^}]*height:\s*var\(--tab-bar-h\)/s);
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    assert.match(css, new RegExp(`--safe-area-${side}:\\s*env\\(safe-area-inset-${side}, 0px\\)`));
+  }
+  assert.match(css, /--tab-bar-h:\s*calc\(56px \+ var\(--safe-area-bottom\)\)/);
+  assert.match(css, /\.mobile-tab-bar\s*\{[^}]*height:\s*var\(--tab-bar-h\)[^}]*padding:[^;}]*var\(--safe-area-right\)[^;}]*var\(--safe-area-bottom\)[^;}]*var\(--safe-area-left\)/s);
+  assert.match(css, /\.app-shell\s*\{[^}]*padding:\s*var\(--safe-area-top\) var\(--safe-area-right\) 0 var\(--safe-area-left\)/s);
+  assert.match(css, /\.sidebar\s*\{[^}]*top:\s*var\(--safe-area-top\)[^}]*left:\s*var\(--safe-area-left\)[^}]*right:\s*var\(--safe-area-right\)/s);
 });
