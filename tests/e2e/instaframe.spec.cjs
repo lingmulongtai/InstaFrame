@@ -574,42 +574,59 @@ test('a successful export recovers a photo from a transient live preview decode 
   await expect.poll(() => canvas.evaluate(element => element.width)).toBeGreaterThan(0);
 });
 
-test('photo card decoders stay bounded during a large import', async ({ page }) => {
+test('photo card and live preview decoders share one concurrency limit', async ({ page }) => {
   await page.evaluate(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const NativeImage = window.Image;
     window.__photoThumbnailReleases = [];
-    window.__activePhotoThumbnailDecoders = 0;
-    window.__maxPhotoThumbnailDecoders = 0;
+    window.__activePhotoDecoders = 0;
+    window.__maxPhotoDecoders = 0;
+    window.__previewPhotoDecoderStarts = 0;
+    window.__trackedPhotoDecoders = new WeakSet();
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
       configurable: true,
       get: descriptor.get,
       set(value) {
-        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
-          window.__activePhotoThumbnailDecoders += 1;
-          window.__maxPhotoThumbnailDecoders = Math.max(
-            window.__maxPhotoThumbnailDecoders,
-            window.__activePhotoThumbnailDecoders
+        if (String(value).startsWith('blob:')) {
+          window.__trackedPhotoDecoders.add(this);
+          window.__activePhotoDecoders += 1;
+          window.__maxPhotoDecoders = Math.max(
+            window.__maxPhotoDecoders,
+            window.__activePhotoDecoders
           );
-          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
-          window.__photoThumbnailReleases.push(() => {
-            delete this.complete;
-            descriptor.set.call(this, value);
-          });
-          return;
+          if (this.classList.contains('thumb-orig')) {
+            Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+            window.__photoThumbnailReleases.push(() => {
+              delete this.complete;
+              descriptor.set.call(this, value);
+            });
+            return;
+          }
+          window.__previewPhotoDecoderStarts += 1;
         }
         descriptor.set.call(this, value);
       },
     });
     const settle = event => {
-      if (!event.target.classList?.contains('thumb-orig')) return;
-      window.__activePhotoThumbnailDecoders -= 1;
+      if (!window.__trackedPhotoDecoders.has(event.target)) return;
+      window.__trackedPhotoDecoders.delete(event.target);
+      window.__activePhotoDecoders -= 1;
     };
+    window.Image = function (...args) {
+      const image = new NativeImage(...args);
+      image.addEventListener('load', settle);
+      image.addEventListener('error', settle);
+      return image;
+    };
+    window.Image.prototype = NativeImage.prototype;
     document.addEventListener('load', settle, true);
     document.addEventListener('error', settle, true);
   });
 
   await uploadJpegs(page, 6);
   await expect.poll(() => page.evaluate(() => window.__photoThumbnailReleases.length)).toBe(2);
+  await expect(page.locator('.image-card')).toHaveCount(6);
+  await page.locator('#preview-2').click();
 
   for (let index = 0; index < 6; index += 1) {
     await expect.poll(() => page.evaluate(() => window.__photoThumbnailReleases.length))
@@ -618,7 +635,8 @@ test('photo card decoders stay bounded during a large import', async ({ page }) 
   }
 
   await expect(page.locator('canvas.thumb-source')).toHaveCount(6);
-  expect(await page.evaluate(() => window.__maxPhotoThumbnailDecoders)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__previewPhotoDecoderStarts)).toBe(2);
+  expect(await page.evaluate(() => window.__maxPhotoDecoders)).toBe(2);
 });
 
 test('live EXIF edits do not cancel an independent photo card thumbnail', async ({ page }) => {
