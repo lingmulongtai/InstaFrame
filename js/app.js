@@ -4997,6 +4997,15 @@ function setupDropZone() {
     if (shouldRefresh) scheduleLivePreview();
   });
 
+  window.addEventListener('blur', () => {
+    const shouldRefresh = _pinching || _panDragging || _previewGestureActive;
+    _panDragging = false;
+    _pinching = false;
+    _previewGestureActive = false;
+    zone.classList.remove('dragging');
+    if (shouldRefresh) scheduleLivePreview();
+  });
+
   // "Add more files" button (visible in section header when files are loaded)
   const addMoreBtn = document.getElementById('addMoreBtn');
   if (addMoreBtn) {
