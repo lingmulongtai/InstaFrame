@@ -1464,7 +1464,7 @@ function _tryFocusLoadedMediaTarget() {
 
 function _clearLoadedMediaFocusRequest() {
   _pendingLoadedMediaFocus = false;
-  if (_loadedMediaFocusRetryId !== null) cancelAnimationFrame(_loadedMediaFocusRetryId);
+  if (_loadedMediaFocusRetryId !== null) clearTimeout(_loadedMediaFocusRetryId);
   _loadedMediaFocusRetryId = null;
   _loadedMediaFocusRetryCount = 0;
 }
@@ -1491,10 +1491,10 @@ function _settleLoadedMediaFocus() {
     return;
   }
   _loadedMediaFocusRetryCount += 1;
-  _loadedMediaFocusRetryId = requestAnimationFrame(() => {
+  _loadedMediaFocusRetryId = setTimeout(() => {
     _loadedMediaFocusRetryId = null;
     _settleLoadedMediaFocus();
-  });
+  }, 16);
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
