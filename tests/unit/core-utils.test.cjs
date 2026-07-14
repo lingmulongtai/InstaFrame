@@ -92,3 +92,13 @@ test('the published page has a self-only CSP with no inline handlers or styles',
   assert.match(index, /video\/3gpp/);
   assert.match(index, /video\/x-m4v/);
 });
+
+test('mobile layout prefers the dynamic viewport and reserves the safe area', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../../css/style.css'), 'utf8');
+  const fallback = 'height: calc(100vh - var(--tab-bar-h));';
+  const dynamic = 'height: calc(100dvh - var(--tab-bar-h));';
+  assert.ok(css.indexOf(fallback) >= 0);
+  assert.ok(css.indexOf(dynamic) > css.indexOf(fallback));
+  assert.match(css, /--tab-bar-h:\s*calc\(56px \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.match(css, /\.mobile-tab-bar\s*\{[^}]*height:\s*var\(--tab-bar-h\)/s);
+});

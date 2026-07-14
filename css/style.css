@@ -2324,7 +2324,8 @@ input[type="range"]:focus-visible {
 
   /* Safe-area padding for home indicator (notch devices) */
   @supports (padding: max(0px)) {
-    .mobile-tab-bar { padding-bottom: max(0px, env(safe-area-inset-bottom)); height: calc(56px + env(safe-area-inset-bottom, 0px)); }
+    :root { --tab-bar-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+    .mobile-tab-bar { padding-bottom: max(0px, env(safe-area-inset-bottom)); height: var(--tab-bar-h); }
   }
 
   html, body { overflow: hidden; }
@@ -2339,8 +2340,8 @@ input[type="range"]:focus-visible {
   /* App shell: column layout, leave room for tab bar */
   .app-shell {
     flex-direction: column;
-    height: calc(100dvh - var(--tab-bar-h));
     height: calc(100vh - var(--tab-bar-h));
+    height: calc(100dvh - var(--tab-bar-h));
     overflow: hidden;
     position: relative;
   }
