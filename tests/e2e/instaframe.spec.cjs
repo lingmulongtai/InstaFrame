@@ -740,6 +740,22 @@ test('translated dynamic controls and location icon radio state stay synchronize
   await expect(page.locator('.icon-pick-btn[data-icon="pin"]')).toHaveAttribute('aria-label', 'ピン');
 });
 
+test('color-only controls expose localized accessible names', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-blue')).toHaveAccessibleName('Blue accent');
+  await expect(page.locator('#accentCustomBtn')).toHaveAccessibleName('Custom accent');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('input[name="frameColor"][value="#F0F0F0"]')).toHaveAccessibleName('White');
+
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('input[name="frameColor"][value="#F0F0F0"]')).toHaveAccessibleName('ホワイト');
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-blue')).toHaveAccessibleName('ブルーのアクセント');
+  await expect(page.locator('#accentCustomBtn')).toHaveAccessibleName('カスタムアクセント');
+});
+
 test('language switching preserves card identity, selection, and video thumbnails', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
