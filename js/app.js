@@ -539,7 +539,7 @@ function _finishLocationConsent(allowed, persist = false) {
     _cancelLocationNetworkRequests();
     _releaseMapPickerResources();
     _cancelMapImageLoads();
-    _mapImgCache.clear();
+    _clearMapImageCache();
     saveSettings();
     scheduleLivePreview();
   }
@@ -613,7 +613,7 @@ function setupLocationPrivacy() {
     savePrefs(prefs);
     _mapboxUnavailableNotified = false;
     _cancelMapImageLoads();
-    _mapImgCache.clear();
+    _clearMapImageCache();
     updateLocationPrivacyStatus();
     showToast(t(value ? 'msgMapboxTokenSaved' : 'msgMapboxTokenCleared'), 'success');
   });
@@ -682,6 +682,24 @@ function _cancelMapImageLoads() {
   _mapImgLoadCancels.clear();
 }
 
+function _releaseMapImageSource(img) {
+  if (!img) return;
+  img.onload = null;
+  img.onerror = null;
+  img.removeAttribute('src');
+}
+
+function _deleteMapImageCacheEntry(key) {
+  const img = _mapImgCache.get(key);
+  _releaseMapImageSource(img);
+  _mapImgCache.delete(key);
+}
+
+function _clearMapImageCache() {
+  for (const img of _mapImgCache.values()) _releaseMapImageSource(img);
+  _mapImgCache.clear();
+}
+
 /** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
 async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
   if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -729,11 +747,14 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
     }, MAP_IMAGE_LOAD_GUARD_MS);
     img.crossOrigin = 'anonymous';
     img.onload  = () => {
-      if (_mapImgCache.size >= 12) _mapImgCache.delete(_mapImgCache.keys().next().value);
+      if (_mapImgCache.size >= 12) _deleteMapImageCacheEntry(_mapImgCache.keys().next().value);
       _mapImgCache.set(key, img);
       finish(img);
     };
-    img.onerror = () => finish(null);
+    img.onerror = () => {
+      img.removeAttribute('src');
+      finish(null);
+    };
     try {
       img.src = url;
       // Count started requests, including failures and timeouts. A success-only
@@ -5792,7 +5813,7 @@ function _releasePageResources() {
     liveCanvas.style.display = 'none';
   }
   _cancelMapImageLoads();
-  _mapImgCache.clear();
+  _clearMapImageCache();
 }
 
 function _restorePageResources() {

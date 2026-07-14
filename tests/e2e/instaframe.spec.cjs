@@ -4488,6 +4488,65 @@ test('a stalled Mapbox image times out and releases its source', async ({ page }
   expect(result).toEqual({ value: null, sourceAssigned: true, sourceRemoved: 1 });
 });
 
+test('completed Mapbox cache releases sources across every invalidation path', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.test',
+    }));
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    window.__cachedMapImages = [];
+    window.Image = class CachedMapImage {
+      constructor() {
+        this._attributes = new Set();
+        window.__cachedMapImages.push(this);
+      }
+      set src(value) {
+        this._src = String(value);
+        this._attributes.add('src');
+        queueMicrotask(() => this.onload?.(new Event('load')));
+      }
+      get src() { return this._src || ''; }
+      hasAttribute(name) { return this._attributes.has(name); }
+      removeAttribute(name) {
+        if (name !== 'src') return;
+        this._src = '';
+        this._attributes.delete('src');
+      }
+    };
+  });
+
+  for (let index = 0; index < 13; index += 1) {
+    await page.evaluate(value => window._fetchMapOverlayImage(35 + value / 1000, 135.7, 13), index);
+  }
+  expect(await page.evaluate(() => window.__cachedMapImages[0].hasAttribute('src'))).toBe(false);
+  expect(await page.evaluate(() => window.__cachedMapImages.slice(1).every(image => image.hasAttribute('src')))).toBe(true);
+
+  await page.locator('#mapboxTokenInput').evaluate(element => {
+    element.value = 'pk.test.changed';
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(await page.evaluate(() => window.__cachedMapImages.every(image => !image.hasAttribute('src')))).toBe(true);
+
+  await page.evaluate(() => window._fetchMapOverlayImage(36, 136, 13));
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await page.locator('#locationPrivacyRevokeBtn').click();
+  expect(await page.evaluate(() => window.__cachedMapImages.at(-1).hasAttribute('src'))).toBe(false);
+
+  await page.evaluate(async () => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.pagehide',
+    }));
+    await window._fetchMapOverlayImage(37, 137, 13);
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  });
+  expect(await page.evaluate(() => window.__cachedMapImages.at(-1).hasAttribute('src'))).toBe(false);
+});
+
 test('failed Mapbox requests still consume the local safety limit', async ({ page }) => {
   await page.evaluate(() => {
     const day = new Date().toISOString().slice(0, 10);
