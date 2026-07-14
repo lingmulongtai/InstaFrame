@@ -215,7 +215,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
   await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    'HEIC/HEIFと動画の読み込みは、ブラウザのコンテナ・コーデック対応状況に依存します。'
+    'ブラウザ依存の条件付き形式：HEIC/HEIF・MOV/M4V・AVI/MKV/3GP。読み込みにはコンテナとコーデックの対応が必要です。'
   );
   await uploadJpegs(page);
   await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
@@ -232,7 +232,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#dropZone')).toContainText('Drop photos here');
   await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    "HEIC/HEIF and video decoding depend on your browser's container and codec support."
+    'Conditional browser formats: HEIC/HEIF · MOV/M4V · AVI/MKV/3GP. Decoding depends on container and codec support.'
   );
   await uploadJpegs(page);
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', 'Photo card size');
