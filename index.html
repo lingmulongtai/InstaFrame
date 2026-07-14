@@ -81,13 +81,13 @@
           <div class="customize-row customize-row-accent">
             <span class="customize-row-label" id="accentSwatchesLabel" data-i18n="accentLabel">Accent</span>
             <div class="accent-swatches" id="accentSwatches" role="group" aria-labelledby="accentSwatchesLabel">
-              <button class="accent-swatch accent-blue" data-color="#2563eb" title="Blue" aria-label="Blue accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-purple" data-color="#7c3aed" title="Purple" aria-label="Purple accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-pink" data-color="#db2777" title="Pink" aria-label="Pink accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-green" data-color="#059669" title="Green" aria-label="Green accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-amber" data-color="#d97706" title="Amber" aria-label="Amber accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-cyan active" data-color="#08798f" title="Cyan" aria-label="Cyan accent" aria-pressed="true"></button>
-              <button type="button" id="accentCustomBtn" class="color-option-custom" title="Custom color" aria-label="Custom accent" aria-pressed="false">
+              <button class="accent-swatch accent-blue" data-color="#2563eb" data-i18n="accentBlue" data-i18n-attr="title,aria-label" title="Blue accent" aria-label="Blue accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-purple" data-color="#7c3aed" data-i18n="accentPurple" data-i18n-attr="title,aria-label" title="Purple accent" aria-label="Purple accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-pink" data-color="#db2777" data-i18n="accentPink" data-i18n-attr="title,aria-label" title="Pink accent" aria-label="Pink accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-green" data-color="#059669" data-i18n="accentGreen" data-i18n-attr="title,aria-label" title="Green accent" aria-label="Green accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-amber" data-color="#d97706" data-i18n="accentAmber" data-i18n-attr="title,aria-label" title="Amber accent" aria-label="Amber accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-cyan active" data-color="#08798f" data-i18n="accentCyan" data-i18n-attr="title,aria-label" title="Cyan accent" aria-label="Cyan accent" aria-pressed="true"></button>
+              <button type="button" id="accentCustomBtn" class="color-option-custom" data-i18n="accentCustom" data-i18n-attr="title,aria-label" title="Custom accent" aria-label="Custom accent" aria-pressed="false">
                 <span class="rainbow-icon"></span>
               </button>
               <input type="color" id="accentColorPicker" class="accent-color-picker-proxy" value="#08798f" tabindex="-1" aria-hidden="true">
@@ -201,20 +201,20 @@
           <div class="setting-label" data-i18n="frameColor">Color</div>
           <div class="setting-control">
             <div class="color-row">
-              <label class="color-option" title="White">
+              <label class="color-option" data-i18n="colorWhite" data-i18n-attr="title" title="White">
                 <input type="radio" name="frameColor" value="#F0F0F0" checked>
                 <span class="color-swatch lightgray"></span>
               </label>
-              <label class="color-option" title="Gray">
+              <label class="color-option" data-i18n="colorLightGray" data-i18n-attr="title" title="Light Gray">
                 <input type="radio" name="frameColor" value="#9E9E9E">
                 <span class="color-swatch gray"></span>
               </label>
-              <label class="color-option" title="Black">
+              <label class="color-option" data-i18n="colorBlack" data-i18n-attr="title" title="Black">
                 <input type="radio" name="frameColor" value="#1a1a1a">
                 <span class="color-swatch black"></span>
               </label>
               <!-- Custom color: single rainbow button (picker inside = no artifact) -->
-              <label id="customColorBtn" class="color-option-custom" title="Custom Color">
+              <label id="customColorBtn" class="color-option-custom" data-i18n="colorCustom" data-i18n-attr="title" title="Custom">
                 <input type="color" id="customColorPicker" value="#e8c49a">
                 <span class="rainbow-icon" id="customColorIcon"></span>
               </label>
