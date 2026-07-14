@@ -59,6 +59,7 @@ const state = {
 let itemIdCounter = 0;
 let previewZoom   = 1.0;
 let previewPan    = { x: 0, y: 0 };
+let _previewGestureActive = false;
 let _pendingLoadedMediaFocus = false;
 let _loadedMediaFocusRetryId = null;
 let _loadedMediaFocusRetryCount = 0;
@@ -79,6 +80,7 @@ const MAX_RETAINED_OUTPUT_BYTES = 384 * 1024 * 1024;
 const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
+const MAX_LIVE_PREVIEW_DETAIL_PIXELS = 8_000_000;
 const MAX_ACTIVE_PHOTO_THUMBNAILS = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
@@ -3469,6 +3471,7 @@ function setupVideoPreviewBar() {
 
 // ─── Preview Zoom & Pan ───────────────────────────────────────────────────────
 function applyPreviewTransform() {
+  _clearLivePreviewDetail();
   const transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
   const isDark = FrameEngine.isColorDark(state.settings.frameColor);
   const canvas = document.getElementById('livePreviewCanvas');
@@ -3776,6 +3779,73 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   _settleLoadedMediaFocus();
 }
 
+function _clearLivePreviewDetail() {
+  const detail = document.getElementById('livePreviewDetailCanvas');
+  const canvas = document.getElementById('livePreviewCanvas');
+  if (detail) {
+    detail.style.display = 'none';
+    detail.width = 0;
+    detail.height = 0;
+  }
+  if (canvas) {
+    delete canvas.dataset.previewDetailDensity;
+    delete canvas.dataset.previewDetailPixels;
+  }
+}
+
+function _drawVisiblePreviewDetail(canvas, pane, src) {
+  const detail = document.getElementById('livePreviewDetailCanvas');
+  if (_previewGestureActive || !detail || !canvas.width || !canvas.height || !src?.width || !src?.height) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const paneRect = pane.getBoundingClientRect();
+  const plan = InstaFrameCore.getVisiblePreviewDetailPlan({
+    sourceWidth: src.width,
+    sourceHeight: src.height,
+    canvasRect,
+    viewportRect: paneRect,
+    baseBackingWidth: canvas.width,
+    baseBackingHeight: canvas.height,
+    devicePixelRatio: window.devicePixelRatio,
+    maxPixels: MAX_LIVE_PREVIEW_DETAIL_PIXELS,
+  });
+  if (!plan) return;
+
+  detail.width = plan.pixelWidth;
+  detail.height = plan.pixelHeight;
+  detail.style.left = `${plan.left - paneRect.left}px`;
+  detail.style.top = `${plan.top - paneRect.top}px`;
+  detail.style.width = `${plan.width}px`;
+  detail.style.height = `${plan.height}px`;
+
+  const radius = (parseFloat(getComputedStyle(canvas).borderTopLeftRadius) || 0) * previewZoom;
+  const atLeft = Math.abs(plan.left - canvasRect.left) < 0.5;
+  const atTop = Math.abs(plan.top - canvasRect.top) < 0.5;
+  const atRight = Math.abs(plan.left + plan.width - canvasRect.right) < 0.5;
+  const atBottom = Math.abs(plan.top + plan.height - canvasRect.bottom) < 0.5;
+  detail.style.borderTopLeftRadius = atLeft && atTop ? `${radius}px` : '0';
+  detail.style.borderTopRightRadius = atRight && atTop ? `${radius}px` : '0';
+  detail.style.borderBottomRightRadius = atRight && atBottom ? `${radius}px` : '0';
+  detail.style.borderBottomLeftRadius = atLeft && atBottom ? `${radius}px` : '0';
+
+  const context = detail.getContext('2d');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    src,
+    plan.sourceX,
+    plan.sourceY,
+    plan.sourceWidth,
+    plan.sourceHeight,
+    0,
+    0,
+    detail.width,
+    detail.height
+  );
+  detail.style.display = 'block';
+  canvas.dataset.previewDetailDensity = plan.density.toFixed(3);
+  canvas.dataset.previewDetailPixels = String(detail.width * detail.height);
+}
+
 // ─── Canvas-based Video Preview ──────────────────────────────────────────────
 
 function _cancelVideoCanvasPreviewFrame() {
@@ -4050,6 +4120,7 @@ async function renderLivePreview() {
   // ── Empty state ────────────────────────────────────────────────────────────
   if (state.items.length === 0) {
     _disposeLiveVideoSource();
+    _clearLivePreviewDetail();
     canvas.style.display = 'none';
     canvas.width = 0;
     canvas.height = 0;
@@ -4068,6 +4139,7 @@ async function renderLivePreview() {
   // ── Video: canvas-based framed preview ────────────────────────────────────
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
+    _clearLivePreviewDetail();
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
@@ -4106,6 +4178,7 @@ async function renderLivePreview() {
   if (cached) {
     _drawFrameToCanvas(canvas, pane, emptyEl, cached);
     applyPreviewTransform();
+    _drawVisiblePreviewDetail(canvas, pane, cached);
     return;
   }
 
@@ -4114,6 +4187,7 @@ async function renderLivePreview() {
     if (k.startsWith(`${item.id}|`)) {
       _drawFrameToCanvas(canvas, pane, emptyEl, c);
       applyPreviewTransform();
+      _drawVisiblePreviewDetail(canvas, pane, c);
       break;
     }
   }
@@ -4164,9 +4238,10 @@ async function renderLivePreview() {
       _frameCache.delete(oldest);
     }
     _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
+    applyPreviewTransform();
+    _drawVisiblePreviewDetail(canvas, pane, rendered);
     if (renderedPixels <= MAX_FRAME_CACHE_PIXELS) _frameCache.set(hash, rendered);
     else { rendered.width = 0; rendered.height = 0; }
-    applyPreviewTransform();
   } catch (error) {
     if (error?.name === 'AbortError' || signal.aborted || seq !== _renderSeq) return;
     // Framing, optional map, and isolated live-decoder failures remain
@@ -4802,6 +4877,7 @@ function setupDropZone() {
     // Skip if the click landed on an interactive overlay element
     if (e.target.closest('button, input, select, a, label, .preview-exif-wrap, .preview-zoom-bar, .preview-quality-wrap, .preview-history-wrap, .preview-reset-view-btn')) return;
     _panDragging = true;
+    _previewGestureActive = true;
     _panStart    = { x: e.clientX, y: e.clientY };
     _panOrigin   = { x: previewPan.x, y: previewPan.y };
     zone.classList.add('dragging');
@@ -4819,7 +4895,9 @@ function setupDropZone() {
   window.addEventListener('mouseup', () => {
     if (!_panDragging) return;
     _panDragging = false;
+    _previewGestureActive = false;
     zone.classList.remove('dragging');
+    scheduleLivePreview();
   });
 
   // Touch: single-finger pan + two-finger pinch-to-zoom (whole preview area)
@@ -4849,6 +4927,7 @@ function setupDropZone() {
       // Two fingers → start pinch; cancel any ongoing pan
       _panDragging = false;
       _pinching    = true;
+      _previewGestureActive = true;
       _pinchDist   = _touchDist(e.touches);
       _pinchZoom   = previewZoom;
       _pinchPan    = { ...previewPan };
@@ -4858,6 +4937,7 @@ function setupDropZone() {
     } else if (e.touches.length === 1 && !_pinching) {
       // One finger → pan
       _panDragging = true;
+      _previewGestureActive = true;
       _panStart    = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       _panOrigin   = { x: previewPan.x, y: previewPan.y };
       e.preventDefault();
@@ -4896,9 +4976,10 @@ function setupDropZone() {
 
   zone.addEventListener('touchend', e => {
     if (e.touches.length === 0) {
-      if (_pinching) scheduleLivePreview(); // re-render at new zoom level
+      if (_pinching || _panDragging) scheduleLivePreview();
       _panDragging = false;
       _pinching    = false;
+      _previewGestureActive = false;
     } else if (e.touches.length === 1 && _pinching) {
       // Lifted one finger mid-pinch → switch to pan
       _pinching  = false;
@@ -4906,6 +4987,14 @@ function setupDropZone() {
       _panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       _panOrigin = { x: previewPan.x, y: previewPan.y };
     }
+  });
+
+  zone.addEventListener('touchcancel', () => {
+    const shouldRefresh = _pinching || _panDragging;
+    _panDragging = false;
+    _pinching = false;
+    _previewGestureActive = false;
+    if (shouldRefresh) scheduleLivePreview();
   });
 
   // "Add more files" button (visible in section header when files are loaded)
@@ -6048,6 +6137,7 @@ function _releasePageResources() {
     liveCanvas.height = 0;
     liveCanvas.style.display = 'none';
   }
+  _clearLivePreviewDetail();
   _cancelMapImageLoads();
   _clearMapImageCache();
 }
