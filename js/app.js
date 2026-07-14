@@ -3531,12 +3531,17 @@ function applyPreviewTransform() {
   }
 }
 
+function _isHorizontalPreviewZoomControl() {
+  return window.matchMedia('(max-width: 768px) and (max-height: 480px)').matches;
+}
+
 function _syncPreviewZoomControl() {
   const percent = Math.round(previewZoom * 100);
   const minZoom = InstaFrameCore.MIN_PREVIEW_ZOOM || 0.5;
   const maxZoom = InstaFrameCore.MAX_PREVIEW_ZOOM || 12;
   const range = document.getElementById('zoomRange');
   if (range) {
+    range.setAttribute('aria-orientation', _isHorizontalPreviewZoomControl() ? 'horizontal' : 'vertical');
     const sliderValue = Math.round(InstaFrameCore.getPreviewSliderValueForZoom(previewZoom));
     const sliderMin = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MIN || minZoom * 100;
     const sliderMax = InstaFrameCore.PREVIEW_ZOOM_SLIDER_MAX || maxZoom * 100;
@@ -4993,8 +4998,11 @@ function setupDropZone() {
     });
     const setZoomFromPointer = event => {
       const bounds = zoomRange.getBoundingClientRect();
-      if (!bounds.height) return;
-      const progress = Math.max(0, Math.min(1, (bounds.bottom - event.clientY) / bounds.height));
+      const horizontal = _isHorizontalPreviewZoomControl();
+      const extent = horizontal ? bounds.width : bounds.height;
+      if (!extent) return;
+      const offset = horizontal ? event.clientX - bounds.left : bounds.bottom - event.clientY;
+      const progress = Math.max(0, Math.min(1, offset / extent));
       setPreviewZoom(InstaFrameCore.getPreviewZoomForSliderValue(
         zoomSliderMin + progress * (zoomSliderMax - zoomSliderMin)
       ));
@@ -6108,6 +6116,7 @@ function setupMobileTabs() {
     if (layoutChanged) lastFocusedResizeHandleTab = null;
     mobileLayoutActive = mobileNow;
     updateUI();
+    _syncPreviewZoomControl();
     updateEmptyTapOverlay();
     const previewPanel = document.getElementById('dropZone');
     if (state.items.length && previewPanel && !previewPanel.hidden) {
