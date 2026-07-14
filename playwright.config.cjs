@@ -10,7 +10,7 @@ module.exports = defineConfig({
   testDir: './tests/e2e',
   testMatch: crossBrowserSuite
     ? ['**/cross-browser.spec.cjs', '**/codec.spec.cjs']
-    : ['**/instaframe.spec.cjs', '**/codec.spec.cjs'],
+    : ['**/instaframe.spec.cjs', '**/cross-browser.spec.cjs', '**/codec.spec.cjs'],
   globalSetup: require.resolve('./tests/e2e/global-setup.cjs'),
   timeout: 60_000,
   expect: { timeout: 10_000 },
