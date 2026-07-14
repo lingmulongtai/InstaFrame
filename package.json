@@ -20,7 +20,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.61.1",
-    "eslint": "10.6.0",
+    "eslint": "10.7.0",
     "globals": "17.7.0",
     "jpeg-js": "0.4.4",
     "piexifjs": "1.0.6"
