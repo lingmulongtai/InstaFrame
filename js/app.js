@@ -3594,6 +3594,21 @@ function selectItem(id) {
 // ─── Preview Helpers ──────────────────────────────────────────────────────────
 const PREVIEW_LAYOUT_LONG_EDGE = 6144;
 
+function _resizeCanvasBackingStore(canvas, width, height) {
+  const nextWidth = Math.max(0, Math.round(width));
+  const nextHeight = Math.max(0, Math.round(height));
+  if (canvas.width === nextWidth && canvas.height === nextHeight) return false;
+  // Reset one axis before an aspect-ratio change. Setting the new width while
+  // the old height is still active can briefly allocate a much larger bitmap.
+  if (canvas.width > 0 && canvas.height > 0) {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+  canvas.width = nextWidth;
+  canvas.height = nextHeight;
+  return true;
+}
+
 /**
  * Stable hash of settings that affect composition. Preview quality is excluded:
  * it changes backing-store density only, never layout geometry.
@@ -3759,8 +3774,11 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   const backing = _getLivePreviewBackingScale(dispW, dispH);
   const backingScale = backing.scale;
 
-  canvas.width        = Math.round(dispW * backingScale);
-  canvas.height       = Math.round(dispH * backingScale);
+  _resizeCanvasBackingStore(
+    canvas,
+    Math.round(dispW * backingScale),
+    Math.round(dispH * backingScale)
+  );
   canvas.style.width  = dispW + 'px';
   canvas.style.height = dispH + 'px';
   canvas.dataset.previewQuality = backing.quality;
@@ -3792,8 +3810,7 @@ function _clearLivePreviewDetail() {
   const canvas = document.getElementById('livePreviewCanvas');
   if (detail) {
     detail.style.display = 'none';
-    detail.width = 0;
-    detail.height = 0;
+    _resizeCanvasBackingStore(detail, 0, 0);
   }
   if (canvas) {
     delete canvas.dataset.previewDetailDensity;
@@ -3818,8 +3835,7 @@ function _drawVisiblePreviewDetail(canvas, pane, src) {
   });
   if (!plan) return;
 
-  detail.width = plan.pixelWidth;
-  detail.height = plan.pixelHeight;
+  _resizeCanvasBackingStore(detail, plan.pixelWidth, plan.pixelHeight);
   detail.style.left = `${plan.left - paneRect.left}px`;
   detail.style.top = `${plan.top - paneRect.top}px`;
   detail.style.width = `${plan.width}px`;
@@ -3971,8 +3987,7 @@ function _failLiveVideoPreview(itemId, generation) {
 
   const canvas = document.getElementById('livePreviewCanvas');
   if (canvas) {
-    canvas.width = 0;
-    canvas.height = 0;
+    _resizeCanvasBackingStore(canvas, 0, 0);
     canvas.style.width = '';
     canvas.style.height = '';
     canvas.style.display = 'none';
@@ -4031,8 +4046,11 @@ function _startVideoCanvasPreview(item) {
       const areaH = Math.max(pane.clientHeight - 40, 60);
       if (canvas.style.display === 'none' || canvas.style.display === '') {
         const backingScale = _getLivePreviewBackingScale(areaW, areaH).scale;
-        canvas.width  = Math.round(areaW * backingScale);
-        canvas.height = Math.round(areaH * backingScale);
+        _resizeCanvasBackingStore(
+          canvas,
+          Math.round(areaW * backingScale),
+          Math.round(areaH * backingScale)
+        );
         canvas.style.width  = areaW + 'px';
         canvas.style.height = areaH + 'px';
         canvas.style.display = 'block';
@@ -4072,8 +4090,7 @@ function _startVideoCanvasPreview(item) {
     const targetH = Math.round(dispH * backingScale);
 
     if (canvas.width !== targetW || canvas.height !== targetH) {
-      canvas.width        = targetW;
-      canvas.height       = targetH;
+      _resizeCanvasBackingStore(canvas, targetW, targetH);
       canvas.style.width  = dispW + 'px';
       canvas.style.height = dispH + 'px';
     }
@@ -4130,8 +4147,7 @@ async function renderLivePreview() {
     _disposeLiveVideoSource();
     _clearLivePreviewDetail();
     canvas.style.display = 'none';
-    canvas.width = 0;
-    canvas.height = 0;
+    _resizeCanvasBackingStore(canvas, 0, 0);
     canvas.style.width = '';
     canvas.style.height = '';
     if (emptyEl) emptyEl.style.display = '';
@@ -4523,8 +4539,11 @@ function updateItemPreview(item) {
       }
       const maxW = 400, maxH = 400;
       const scale = Math.min(maxW / item.canvas.width, maxH / item.canvas.height);
-      existing.width  = Math.round(item.canvas.width  * scale);
-      existing.height = Math.round(item.canvas.height * scale);
+      _resizeCanvasBackingStore(
+        existing,
+        Math.round(item.canvas.width * scale),
+        Math.round(item.canvas.height * scale)
+      );
       existing.getContext('2d').drawImage(item.canvas, 0, 0, existing.width, existing.height);
 
       const origThumb = previewDiv.querySelector('img.thumb-orig');
