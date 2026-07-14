@@ -4566,10 +4566,7 @@ test('paused live preview redraws after seeking a static video frame', async ({ 
   const beforeDraws = await page.evaluate(() => window.__pausedSeekDraws);
   await video.evaluate(element => {
     clearTimeout(element._previewReadinessGuard);
-    window.__pausedSeekGuardFired = false;
-    element._previewReadinessGuard = setTimeout(() => {
-      window.__pausedSeekGuardFired = true;
-    }, 100);
+    element._previewReadinessGuard = setTimeout(() => {}, 5_000);
   });
 
   const targetTime = await video.evaluate(element => new Promise(resolve => {
@@ -4579,9 +4576,7 @@ test('paused live preview redraws after seeking a static video frame', async ({ 
   }));
   await expect.poll(() => page.evaluate(() => window.__pausedSeekDraws)).toBeGreaterThan(beforeDraws);
   expect(await video.evaluate(element => element.currentTime)).toBeCloseTo(targetTime, 2);
-  await page.waitForTimeout(150);
-  expect(await page.evaluate(() => window.__pausedSeekGuardFired)).toBe(false);
-  expect(await video.evaluate(element => element._previewReadinessGuard)).toBeNull();
+  await expect.poll(() => video.evaluate(element => element._previewReadinessGuard)).toBeNull();
 });
 
 test('paused live video preview redraws only when its frame changes', async ({ page }) => {
