@@ -2640,6 +2640,9 @@ test('zoom controls keep the same visual rate at low and high magnification', as
   await page.evaluate(() => window.setPreviewZoom(12));
   await expect(page.locator('#zoomInBtn')).toBeDisabled();
   await expect(page.locator('#zoomOutBtn')).toBeEnabled();
+  await page.evaluate(() => window.setLang('en'));
+  await expect(page.locator('#zoomLabel')).toHaveAccessibleName('Reset zoom to 100%');
+  await page.evaluate(() => window.setLang('ja'));
   await expect(page.locator('#zoomLabel')).toHaveAccessibleName('ズームを100%に戻す');
   await page.locator('#zoomLabel').click();
   await expect(page.locator('#zoomLabel')).toHaveText('100%');
