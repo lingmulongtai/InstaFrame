@@ -3304,9 +3304,14 @@ function setupShareAppModal() {
         tmp.style.position = 'fixed';
         tmp.style.opacity = '0';
         document.body.appendChild(tmp);
-        tmp.select();
-        document.execCommand('copy');
-        document.body.removeChild(tmp);
+        let copied = false;
+        try {
+          tmp.select();
+          copied = document.execCommand('copy');
+        } finally {
+          tmp.remove();
+        }
+        if (!copied) throw new Error('Legacy clipboard copy failed');
       }
       if (!ownsResult()) return;
       const message = t('msgLinkCopied');
