@@ -1721,6 +1721,12 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   await expect(page.locator('#vbr-8')).toBeChecked();
 });
 
+test('photo quality starts at the advertised 92 percent', async ({ page }) => {
+  await expect(page.locator('#photoQualityRange')).toHaveValue('92');
+  await expect(page.locator('#photoQualityRangeVal')).toHaveText('92%');
+  expect(await page.evaluate(() => eval('state.settings.exportPhotoQuality'))).toBe(92);
+});
+
 test('history focus follows the remaining undo or redo action', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="bg-blur"]').click();
