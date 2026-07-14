@@ -3076,6 +3076,70 @@ test('an unsupported video thumbnail is decoded only once before reporting an er
   expect(await page.evaluate(() => window.__thumbnailDecodeAttempts)).toBe(1);
 });
 
+test('a successful video export retries one transient thumbnail failure', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__transientVideoThumbnailCalls = 0;
+    window.FrameEngine.captureVideoFrame = async () => {
+      window.__transientVideoThumbnailCalls += 1;
+      if (window.__transientVideoThumbnailCalls === 1) {
+        throw new Error('simulated transient thumbnail failure');
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 64;
+      canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+      return canvas;
+    };
+    window.FrameEngine.renderFrameWhenReady = async source => source;
+    window.FrameEngine.renderVideoFrameWhenReady = async () => new Blob(
+      [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])],
+      { type: 'video/webm' }
+    );
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'transient-thumbnail.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
+
+  await page.locator('#generateAllBtn').click();
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__transientVideoThumbnailCalls)).toBe(2);
+});
+
+test('a failed post-export thumbnail retry does not invalidate the video output or loop', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__failedVideoThumbnailRetryCalls = 0;
+    window.FrameEngine.captureVideoFrame = async () => {
+      window.__failedVideoThumbnailRetryCalls += 1;
+      throw new Error('simulated persistent thumbnail failure');
+    };
+    window.FrameEngine.renderVideoFrameWhenReady = async () => new Blob(
+      [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])],
+      { type: 'video/webm' }
+    );
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'persistent-thumbnail-failure.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+
+  await page.locator('#generateAllBtn').click();
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#dl-btn-1')).toBeEnabled();
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => window.__failedVideoThumbnailRetryCalls)).toBe(2);
+});
+
 test('a hung browser video decoder exits pending state through the app-level guard', async ({ page }) => {
   await page.evaluate(() => {
     const nativeSetTimeout = window.setTimeout.bind(window);
