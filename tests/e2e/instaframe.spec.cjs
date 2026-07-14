@@ -7499,6 +7499,52 @@ test('long localized error toasts wrap inside mobile safe areas', async ({ page 
   }
 });
 
+test('short mobile previews keep empty and long error content reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 667, height: 240 });
+  await page.reload();
+  const empty = page.locator('#previewEmpty');
+
+  const emptyLayout = await page.evaluate(() => {
+    const pane = document.getElementById('dropZone');
+    const content = document.getElementById('previewEmpty');
+    const paneRect = pane.getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    return {
+      overflowY: getComputedStyle(pane).overflowY,
+      paneTop: paneRect.top,
+      contentTop: contentRect.top,
+      scrollHeight: pane.scrollHeight,
+      clientHeight: pane.clientHeight,
+    };
+  });
+  expect(emptyLayout.overflowY).toBe('auto');
+  expect(emptyLayout.contentTop).toBeGreaterThanOrEqual(emptyLayout.paneTop);
+  expect(emptyLayout.scrollHeight).toBeGreaterThan(emptyLayout.clientHeight);
+  await expect(empty).toBeVisible();
+
+  const errorLayout = await page.locator('#livePreviewError').evaluate(element => {
+    element.hidden = false;
+    element.textContent = 'A very long preview error needs to remain readable. '.repeat(30);
+    const pane = document.getElementById('dropZone');
+    const paneRect = pane.getBoundingClientRect();
+    const errorRect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      paneTop: paneRect.top,
+      paneBottom: paneRect.bottom,
+      errorTop: errorRect.top,
+      errorBottom: errorRect.bottom,
+      overflowY: style.overflowY,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    };
+  });
+  expect(errorLayout.errorTop).toBeGreaterThanOrEqual(errorLayout.paneTop);
+  expect(errorLayout.errorBottom).toBeLessThanOrEqual(errorLayout.paneBottom);
+  expect(errorLayout.overflowY).toBe('auto');
+  expect(errorLayout.scrollHeight).toBeGreaterThan(errorLayout.clientHeight);
+});
+
 test('mobile layout exposes import, settings, and a readable EXIF editor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
