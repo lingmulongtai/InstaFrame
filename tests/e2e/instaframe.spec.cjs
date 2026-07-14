@@ -7228,13 +7228,16 @@ test('video playback speed keeps a visible keyboard focus indicator in every the
     mimeType: 'video/webm',
     buffer: createWebm(),
   });
+  const videoBar = page.locator('#previewVideoBar');
   const speed = page.locator('#videoSpeedSelect');
   const volume = page.locator('#videoVolumeRange');
+  await expect(videoBar).toHaveAttribute('aria-hidden', 'false');
   await expect(speed).toBeVisible();
 
   for (const theme of ['light', 'soft-white', 'blue-grey-dark', 'dark', 'system']) {
     await page.locator('html').evaluate((element, value) => element.setAttribute('data-theme', value), theme);
     await volume.focus();
+    await expect(volume).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(speed).toBeFocused();
     const indicator = await speed.evaluate(element => {
