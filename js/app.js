@@ -5907,6 +5907,11 @@ function setupMobileTabs() {
     mobileLayoutActive = mobileNow;
     updateUI();
     updateEmptyTapOverlay();
+    const previewPanel = document.getElementById('dropZone');
+    if (state.items.length && previewPanel && !previewPanel.hidden) {
+      _clearLivePreviewDetail();
+      scheduleLivePreview();
+    }
   });
 
   // Mobile "Add Photos" button (in empty hint on Photos tab)
