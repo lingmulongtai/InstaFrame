@@ -1373,6 +1373,30 @@ test('privacy consent changes expose a focused polite status update', async ({ p
   await expect(status).toContainText(/off|オフ/i);
 });
 
+test('location consent wording matches its browser-session lifetime', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await expect(page.locator('.privacy-modal-note')).toHaveText(
+    'Choose access for this browser session or remember the choice on this device. You can revoke it from Customize.'
+  );
+  await expect(page.locator('#locationPrivacyOnceBtn')).toHaveText('Allow for this session');
+  await page.locator('#locationPrivacyOnceBtn').click();
+  await expect(page.locator('#locationPrivacyStatus')).toHaveText('Allowed for this session');
+  expect(await page.evaluate(() => window.requestLocationNetworkConsent())).toBe(true);
+  await expect(page.locator('#locationPrivacyModal')).not.toHaveClass(/open/);
+
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
+  await page.reload();
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await expect(page.locator('.privacy-modal-note')).toHaveText(
+    'このブラウザのセッション中だけ許可するか、この端末に選択を保存できます。カスタマイズ画面からいつでも取り消せます。'
+  );
+  await expect(page.locator('#locationPrivacyOnceBtn')).toHaveText('このセッション中許可');
+});
+
 test('JPEG upload renders a preview and exports a framed image', async ({ page }) => {
   await uploadJpegs(page);
   await expect(page.locator('#live-exif-model')).toHaveValue('X-T5');
