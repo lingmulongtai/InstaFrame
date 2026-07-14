@@ -5504,6 +5504,33 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   expect(await page.locator('#settingsPanel').evaluate(element => element.inert)).toBe(false);
 });
 
+test('short mobile Photos view keeps its empty import action visible and scrollable', async ({ page }) => {
+  await page.setViewportSize({ width: 667, height: 240 });
+  await page.reload();
+  await page.locator('#tabPhotosBtn').click();
+
+  const layout = await page.locator('#emptyHint').evaluate(hint => {
+    const button = document.getElementById('mobileAddBtn').getBoundingClientRect();
+    const bounds = hint.getBoundingClientRect();
+    return {
+      buttonTop: button.top,
+      buttonBottom: button.bottom,
+      hintTop: bounds.top,
+      hintBottom: bounds.bottom,
+      overflowY: getComputedStyle(hint).overflowY,
+      clientHeight: hint.clientHeight,
+      scrollHeight: hint.scrollHeight,
+    };
+  });
+
+  expect(layout.buttonTop).toBeGreaterThanOrEqual(layout.hintTop);
+  expect(layout.buttonBottom).toBeLessThanOrEqual(layout.hintBottom);
+  expect(layout.overflowY).toBe('auto');
+  expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight);
+  await page.locator('#mobileAddBtn').focus();
+  await expect(page.locator('#mobileAddBtn')).toBeFocused();
+});
+
 test('removing the final mobile Photos item focuses the visible import action', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();

@@ -2418,9 +2418,16 @@ input[type="range"]:focus-visible {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 16px;
     padding: 20px 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .empty-hint-inner {
+    flex-shrink: 0;
+    margin-block: auto;
   }
 
   /* Photos tab gets a centered import action when the library is empty. */
