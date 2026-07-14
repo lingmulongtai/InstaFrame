@@ -59,6 +59,19 @@ test('preview wheel zoom scales smoothly with bounded trackpad and mouse deltas'
   assert.equal(core.getPreviewWheelZoomFactor(10_000), core.getPreviewWheelZoomFactor(240));
 });
 
+test('preview pan keeps the same image point beneath wheel and moving pinch focus', () => {
+  const anchored = core.getPreviewPanForZoomFocus(30, -10, 1, 2, 100, 50, 100, 50, 0, 0);
+  assert.deepEqual(anchored, { x: -40, y: -70 });
+
+  const restored = core.getPreviewPanForZoomFocus(
+    anchored.x, anchored.y, 2, 1, 100, 50, 100, 50, 0, 0
+  );
+  assert.deepEqual(restored, { x: 30, y: -10 });
+
+  const movedPinch = core.getPreviewPanForZoomFocus(0, 0, 1, 2, 80, 40, 100, 55, 0, 0);
+  assert.deepEqual(movedPinch, { x: -60, y: -25 });
+});
+
 test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and entry overhead', () => {
   const mib = 1024 * 1024;
   assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 380 * mib + 4096);

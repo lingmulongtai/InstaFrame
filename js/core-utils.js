@@ -43,6 +43,30 @@
     return Math.pow(1.12, -boundedDelta / 100);
   }
 
+  function getPreviewPanForZoomFocus(
+    panX,
+    panY,
+    currentZoom,
+    nextZoom,
+    sourceFocalX,
+    sourceFocalY,
+    targetFocalX,
+    targetFocalY,
+    centerX,
+    centerY
+  ) {
+    const fromZoom = Math.max(0.0001, Number(currentZoom) || 1);
+    const toZoom = Math.max(0.0001, Number(nextZoom) || fromZoom);
+    const originX = Number(centerX) || 0;
+    const originY = Number(centerY) || 0;
+    const localX = ((Number(sourceFocalX) || 0) - originX - (Number(panX) || 0)) / fromZoom;
+    const localY = ((Number(sourceFocalY) || 0) - originY - (Number(panY) || 0)) / fromZoom;
+    return {
+      x: (Number(targetFocalX) || 0) - originX - toZoom * localX,
+      y: (Number(targetFocalY) || 0) - originY - toZoom * localY,
+    };
+  }
+
   /**
    * Return backing-store pixels per CSS pixel. Composition is rendered once at
    * a stable logical size; only this density changes between quality choices.
@@ -120,6 +144,7 @@
     getPreviewZoomForSliderValue,
     getPreviewSliderValueForZoom,
     getPreviewWheelZoomFactor,
+    getPreviewPanForZoomFocus,
     getPreviewBackingScale,
     getBudgetedPreviewBackingScale,
     estimateZipPeakBytes,
