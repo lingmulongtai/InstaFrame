@@ -68,6 +68,7 @@
 - 写真・動画カードのサムネイル同時デコードは種類ごと最大2件、同一項目の生成処理は最大1件
 - MediaRecorderの実チャンクとWebCodecsの圧縮済みchunkが512 MiBを超える前に生成を中断。WebCodecsの未処理エンコード待ち行列は最大4フレーム
 - 動画書き出しはメタデータを15秒、デコードフレーム進行を60秒待っても進まない場合に終了し、一時リソースを解放
+- EXIF・動画メタデータ読み取りは15秒で終了。全削除時は実行中のFileReaderも中断
 
 30項目を超える場合は上限内でも先に警告します。上限を超えたファイルは追加または生成せず、既に追加した項目は保持します。書き出しはキャンセルでき、削除・再編集・ページ離脱時にはCanvas、Blob URL、MediaStream、AudioContextを解放します。戻る/進むキャッシュから復帰した場合は、解放済みの生成結果を未処理へ戻してライブプレビューを再構築します。
 
@@ -79,8 +80,9 @@
 2. 下書き・標準・高画質・最高画質は、表示キャンバスのピクセル密度だけを変更
 3. Autoは通常表示でも最低2倍、ズーム時は倍率に合わせて最大12倍のバックバッファへ再描画
 4. プレビュー用の縮小画素はJPEGへ再圧縮せず、ロスレスなCanvasのままフレームへ渡す
+5. 高倍率で全体Canvasが上限に達した場合は、画面内に見えている元画像領域だけを最大8メガピクセルで追加描画
 
-そのため画質変更や最大1200%までのズームはシャープさと表示範囲だけに影響し、アスペクト比、余白、文字位置には影響しません。ライブCanvasはデスクトップ24メガピクセル、モバイル12メガピクセルを上限として、端末メモリを使い切らない範囲で倍率へ追従します。
+そのため画質変更や最大1200%までのズームはシャープさと表示範囲だけに影響し、アスペクト比、余白、文字位置には影響しません。全体のライブCanvasはデスクトップ24メガピクセル、モバイル12メガピクセルを上限とします。それで表示密度が足りない場合だけ、ズーム中の可視領域を元の6144px論理Canvasから最大8メガピクセルの一時Canvasへ再描画します。この一時Canvasはパン・ピンチ中に破棄し、操作終了後の表示範囲だけを再生成します。
 
 ## Mapboxトークン管理
 
@@ -204,6 +206,6 @@ InstaFrame/
 
 ## English summary
 
-InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom.
+InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom. When the full preview reaches its 12/24-megapixel mobile/desktop limit, only the visible source crop receives an additional memory-bounded detail pass.
 
 Run `npm ci`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. Browser tests build and serve the same allowlisted `dist/` boundary used by Pages, without exposing repository internals. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract.
