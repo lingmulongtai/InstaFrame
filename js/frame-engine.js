@@ -799,9 +799,12 @@ const FrameEngine = (() => {
     let releaseNativeEncode;
     const nativeEncode = new Promise(resolve => { releaseNativeEncode = resolve; });
     let nativeEncodeSettled = false;
+    let nativeEncodeTimeoutId = null;
     const finishNativeEncode = () => {
       if (nativeEncodeSettled) return;
       nativeEncodeSettled = true;
+      clearTimeout(nativeEncodeTimeoutId);
+      nativeEncodeTimeoutId = null;
       if (_canvasEncodeLocks.get(canvas) === nativeEncode) _canvasEncodeLocks.delete(canvas);
       releaseNativeEncode();
     };
@@ -809,9 +812,7 @@ const FrameEngine = (() => {
 
     return new Promise((resolve, reject) => {
       let settled = false;
-      let timeoutId = null;
       const cleanup = () => {
-        clearTimeout(timeoutId);
         signal?.removeEventListener('abort', abort);
       };
       const succeed = blob => {
@@ -827,14 +828,14 @@ const FrameEngine = (() => {
         reject(error);
       };
       const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
-      signal?.addEventListener('abort', abort, { once: true });
-      if (signal?.aborted) { abort(); return; }
-      timeoutId = setTimeout(() => {
+      nativeEncodeTimeoutId = setTimeout(() => {
         const error = new Error('Image encoding timed out');
         error.code = 'IMAGE_ENCODE_TIMEOUT';
         finishNativeEncode();
         fail(error);
       }, resolveGuardTimeout(timeoutMs, IMAGE_ENCODE_GUARD_MS));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
       try {
         canvas.toBlob(async blob => {
           finishNativeEncode();

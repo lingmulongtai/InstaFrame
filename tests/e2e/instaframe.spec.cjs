@@ -1860,6 +1860,38 @@ test('cancelled photo encoding keeps retries serialized until the native callbac
   });
 });
 
+test('cancelled photo encoding releases its retry lock when the native callback never returns', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    let nativeEncodeCalls = 0;
+    canvas.toBlob = () => { nativeEncodeCalls += 1; };
+    const controller = new AbortController();
+    const first = window.FrameEngine.canvasToBlob(canvas, {
+      signal: controller.signal,
+      timeoutMs: 25,
+    }).then(() => 'resolved', error => error.name);
+    await Promise.resolve();
+    controller.abort();
+    const firstOutcome = await first;
+
+    const second = window.FrameEngine.canvasToBlob(canvas, { timeoutMs: 25 })
+      .then(() => 'resolved', error => error.code || error.name);
+    const secondOutcome = await Promise.race([
+      second,
+      new Promise(resolve => setTimeout(() => resolve('STALLED'), 200)),
+    ]);
+    return { firstOutcome, secondOutcome, nativeEncodeCalls };
+  });
+
+  expect(result).toEqual({
+    firstOutcome: 'AbortError',
+    secondOutcome: 'IMAGE_ENCODE_TIMEOUT',
+    nativeEncodeCalls: 2,
+  });
+});
+
 test('a photo encode timeout releases its canvas retry lock', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
