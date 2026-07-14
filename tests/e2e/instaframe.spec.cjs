@@ -4055,6 +4055,93 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
   expect(result.draw.corner[3]).toBeGreaterThan(0);
 });
 
+test('failed blur video draws release only the scratch canvas they allocate', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const source = document.createElement('canvas');
+    source.width = 160;
+    source.height = 90;
+    const output = document.createElement('canvas');
+    const reusable = document.createElement('canvas');
+    const settings = {
+      thicknessScale: 1,
+      frameColor: '#f0f0f0',
+      frameBackground: 'blur',
+      blurBrightness: 80,
+      textColorMode: 'auto',
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 10,
+      showShotOn: false,
+      showExifInfo: false,
+      showLocation: false,
+    };
+    const layout = window.FrameEngine.computeVideoFrameLayout(source.width, source.height, settings);
+    output.width = layout.canvasW;
+    output.height = layout.canvasH;
+    const outputContext = output.getContext('2d');
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+    let allocated = null;
+    let failingCanvas = null;
+    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+      if (this.canvas === failingCanvas) throw new Error('simulated scratch draw failure');
+      return nativeDrawImage.apply(this, args);
+    };
+
+    const outcomes = [];
+    try {
+      try {
+        document.createElement = (tagName, options) => {
+          const element = nativeCreateElement(tagName, options);
+          if (String(tagName).toLowerCase() === 'canvas') {
+            allocated = element;
+            failingCanvas = element;
+          }
+          return element;
+        };
+        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+      } catch (error) {
+        outcomes.push({ kind: 'allocated', message: error.message, size: [allocated.width, allocated.height] });
+      }
+
+      document.createElement = nativeCreateElement;
+      failingCanvas = reusable;
+      try {
+        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout, reusable);
+      } catch (error) {
+        outcomes.push({ kind: 'reused', message: error.message, size: [reusable.width, reusable.height] });
+      }
+      const transform = reusable.getContext('2d').getTransform();
+      return {
+        outcomes,
+        expectedReusableSize: [layout.baseCanvasW, layout.baseCanvasH],
+        reusableTransform: { a: transform.a, d: transform.d, e: transform.e, f: transform.f },
+      };
+    } finally {
+      document.createElement = nativeCreateElement;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDrawImage;
+      source.width = 0;
+      source.height = 0;
+      output.width = 0;
+      output.height = 0;
+      reusable.width = 0;
+      reusable.height = 0;
+    }
+  });
+
+  expect(result.outcomes).toEqual([
+    { kind: 'allocated', message: 'simulated scratch draw failure', size: [0, 0] },
+    {
+      kind: 'reused',
+      message: 'simulated scratch draw failure',
+      size: result.expectedReusableSize,
+    },
+  ]);
+  expect(result.expectedReusableSize[0]).toBeGreaterThan(0);
+  expect(result.expectedReusableSize[1]).toBeGreaterThan(0);
+  expect(result.reusableTransform).toEqual({ a: 1, d: 1, e: 0, f: 0 });
+});
+
 test('blur video frames reuse one automatic-contrast sampler', async ({ page }) => {
   const sampleCanvasCount = await page.evaluate(() => {
     const nativeCreateElement = document.createElement;
