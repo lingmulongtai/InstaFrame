@@ -2456,7 +2456,7 @@ test('batch actions wait until every accepted import is materialized', async ({ 
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     let releaseSecondMetadata;
     const secondMetadata = new Promise(resolve => { releaseSecondMetadata = resolve; });
-    window.__completeImportStats = { parseCalls: 0, renderCalls: 0, downloads: 0 };
+    window.__completeImportStats = { parseCalls: 0, downloads: 0 };
     window.exifr = {
       parse: () => {
         window.__completeImportStats.parseCalls += 1;
@@ -2464,11 +2464,6 @@ test('batch actions wait until every accepted import is materialized', async ({ 
           ? secondMetadata.then(() => null)
           : Promise.resolve(null);
       },
-    };
-    const render = window.FrameEngine.renderFrameWhenReady;
-    window.FrameEngine.renderFrameWhenReady = (...args) => {
-      window.__completeImportStats.renderCalls += 1;
-      return render(...args);
     };
     HTMLAnchorElement.prototype.click = () => {
       window.__completeImportStats.downloads += 1;
@@ -2485,15 +2480,18 @@ test('batch actions wait until every accepted import is materialized', async ({ 
   await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
 
-  const rendersBeforeBatchActions = await page.evaluate(() => window.__completeImportStats.renderCalls);
   await page.evaluate(async () => {
     await Promise.all([window.generateAll(), window.downloadAll()]);
   });
   expect(await page.evaluate(() => window.__completeImportStats)).toEqual({
     parseCalls: 2,
-    renderCalls: rendersBeforeBatchActions,
     downloads: 0,
   });
+  expect(await page.evaluate(() => ({
+    busy: eval('_globalExportBusy'),
+    activeController: eval('_activeExportController !== null'),
+    statuses: eval('state.items.map(item => item.status)'),
+  }))).toEqual({ busy: false, activeController: false, statuses: ['pending'] });
   await expect(page.locator('#exportProgress')).toBeHidden();
 
   await page.evaluate(async () => {
