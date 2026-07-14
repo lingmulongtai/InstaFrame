@@ -1377,6 +1377,8 @@ const FrameEngine = (() => {
       let stopTimer = null;
       let metadataTimer = null;
       let progressTimer = null;
+      let visibilityHandler = null;
+      let visibilityPaused = false;
       let settled = false;
       let cleaned = false;
 
@@ -1392,6 +1394,10 @@ const FrameEngine = (() => {
         if (progressTimer != null) clearTimeout(progressTimer);
         metadataTimer = null;
         progressTimer = null;
+        if (visibilityHandler) {
+          document.removeEventListener('visibilitychange', visibilityHandler);
+          visibilityHandler = null;
+        }
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch (_) {}
         }
@@ -1558,6 +1564,10 @@ const FrameEngine = (() => {
           fail(event.error || new Error('Video recording failed'));
         };
         video.onended = () => {
+          if (visibilityPaused || document.visibilityState === 'hidden') {
+            fail(new Error('Video export was interrupted while the page was hidden'));
+            return;
+          }
           stopRecorderAfterFlush();
         };
 
@@ -1585,17 +1595,60 @@ const FrameEngine = (() => {
           }
         }
 
+        const startVisiblePlayback = () => {
+          if (settled || signal?.aborted || visibilityPaused || document.visibilityState === 'hidden') return;
+          try {
+            if (recorder.state === 'paused') recorder.resume();
+            armProgressWatchdog();
+            video.play()
+              .then(() => {
+                if (settled || signal?.aborted) return;
+                if (document.visibilityState === 'hidden') {
+                  visibilityHandler?.();
+                  return;
+                }
+                if (!visibilityPaused && rafId == null) rafId = requestAnimationFrame(drawLoop);
+              })
+              .catch(error => {
+                if (visibilityPaused || document.visibilityState === 'hidden') return;
+                if (recorder.state !== 'inactive') recorder.stop();
+                fail(error);
+              });
+          } catch (error) {
+            fail(error);
+          }
+        };
+
+        visibilityHandler = () => {
+          if (settled || signal?.aborted) return;
+          if (document.visibilityState === 'hidden') {
+            if (visibilityPaused) return;
+            visibilityPaused = true;
+            if (rafId != null) {
+              cancelAnimationFrame(rafId);
+              rafId = null;
+            }
+            if (progressTimer != null) {
+              clearTimeout(progressTimer);
+              progressTimer = null;
+            }
+            try {
+              video.pause();
+              if (recorder.state === 'recording') recorder.pause();
+            } catch (error) {
+              fail(error);
+            }
+            return;
+          }
+          if (!visibilityPaused) return;
+          visibilityPaused = false;
+          startVisiblePlayback();
+        };
+        document.addEventListener('visibilitychange', visibilityHandler);
+
           recorder.start(200);
-          armProgressWatchdog();
-          video.play()
-            .then(() => {
-              if (settled || signal?.aborted) return;
-              rafId = requestAnimationFrame(drawLoop);
-            })
-            .catch(err => {
-              if (recorder.state !== 'inactive') recorder.stop();
-              fail(err);
-            });
+          if (document.visibilityState === 'hidden') visibilityHandler();
+          else startVisiblePlayback();
         } catch (error) {
           fail(error);
         }
