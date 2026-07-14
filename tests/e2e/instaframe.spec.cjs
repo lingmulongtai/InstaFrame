@@ -1927,6 +1927,37 @@ test('batch encoding failure restores controls and reports the error', async ({ 
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
+test('a stalled photo encoder times out and ignores its late callback', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.__stalledPhotoEncodeCallback = null;
+    window.setTimeout = (callback, delay, ...args) => (
+      nativeSetTimeout(callback, delay === 60_000 ? 0 : delay, ...args)
+    );
+    HTMLCanvasElement.prototype.toBlob = callback => {
+      window.__stalledPhotoEncodeCallback = callback;
+    };
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__stalledPhotoEncodeCallback)).toBe('function');
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#toast')).toContainText(/could not finish|完了できません/);
+
+  await page.evaluate(() => {
+    window.__stalledPhotoEncodeCallback(new Blob(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xd9])],
+      { type: 'image/jpeg' }
+    ));
+  });
+  await page.waitForTimeout(50);
+  expect(downloads).toBe(0);
+});
+
 test('an unexpected post-export UI failure cannot leave batch controls locked', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));

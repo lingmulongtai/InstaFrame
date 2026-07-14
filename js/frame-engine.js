@@ -10,6 +10,7 @@ const FrameEngine = (() => {
   const MAX_PENDING_VIDEO_ENCODES = 4;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
+  const IMAGE_ENCODE_GUARD_MS = 60_000;
   const VIDEO_METADATA_GUARD_MS = 15_000;
   const VIDEO_PROGRESS_GUARD_MS = 60_000;
   const VIDEO_RECORDER_FLUSH_DELAY_MS = 120;
@@ -740,7 +741,12 @@ const FrameEngine = (() => {
     return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   }
 
-  function canvasToBlob(canvas, { format = 'jpeg', quality = 0.92, signal = null } = {}) {
+  function canvasToBlob(canvas, {
+    format = 'jpeg',
+    quality = 0.92,
+    signal = null,
+    timeoutMs = IMAGE_ENCODE_GUARD_MS,
+  } = {}) {
     const mime = format === 'png'  ? 'image/png'
                : format === 'webp' ? 'image/webp'
                :                     'image/jpeg';
@@ -748,7 +754,11 @@ const FrameEngine = (() => {
     assertNotAborted(signal);
     return new Promise((resolve, reject) => {
       let settled = false;
-      const cleanup = () => signal?.removeEventListener('abort', abort);
+      let timeoutId = null;
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', abort);
+      };
       const succeed = blob => {
         if (settled) return;
         settled = true;
@@ -764,6 +774,11 @@ const FrameEngine = (() => {
       const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) { abort(); return; }
+      timeoutId = setTimeout(() => {
+        const error = new Error('Image encoding timed out');
+        error.code = 'IMAGE_ENCODE_TIMEOUT';
+        fail(error);
+      }, resolveGuardTimeout(timeoutMs, IMAGE_ENCODE_GUARD_MS));
       try {
         canvas.toBlob(async blob => {
           if (settled) return;
