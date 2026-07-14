@@ -747,6 +747,12 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
     }, MAP_IMAGE_LOAD_GUARD_MS);
     img.crossOrigin = 'anonymous';
     img.onload  = () => {
+      const cached = _mapImgCache.get(key);
+      if (cached) {
+        _releaseMapImageSource(img);
+        finish(cached);
+        return;
+      }
       if (_mapImgCache.size >= 12) _deleteMapImageCacheEntry(_mapImgCache.keys().next().value);
       _mapImgCache.set(key, img);
       finish(img);

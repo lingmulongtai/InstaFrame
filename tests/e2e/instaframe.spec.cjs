@@ -4612,6 +4612,54 @@ test('completed Mapbox cache releases sources across every invalidation path', a
   expect(await page.evaluate(() => window.__cachedMapImages.at(-1).hasAttribute('src'))).toBe(false);
 });
 
+test('concurrent identical Mapbox loads share one cached image and release the duplicate', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({
+      locationNetworkConsent: 'always',
+      mapboxPublicToken: 'pk.test.concurrent',
+    }));
+  });
+  await page.reload();
+
+  const result = await page.evaluate(async () => {
+    const images = [];
+    window.Image = class ConcurrentMapImage {
+      constructor() {
+        this._attributes = new Set();
+        images.push(this);
+      }
+      set src(value) {
+        this._src = String(value);
+        this._attributes.add('src');
+      }
+      get src() { return this._src || ''; }
+      hasAttribute(name) { return this._attributes.has(name); }
+      removeAttribute(name) {
+        if (name !== 'src') return;
+        this._src = '';
+        this._attributes.delete('src');
+      }
+    };
+
+    const firstPromise = window._fetchMapOverlayImage(35.0116, 135.7681, 13);
+    const secondPromise = window._fetchMapOverlayImage(35.0116, 135.7681, 13);
+    images[0].onload(new Event('load'));
+    images[1].onload(new Event('load'));
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    return {
+      imageCount: images.length,
+      sameResult: first === second,
+      sourceStates: images.map(image => image.hasAttribute('src')),
+    };
+  });
+
+  expect(result).toEqual({
+    imageCount: 2,
+    sameResult: true,
+    sourceStates: [true, false],
+  });
+});
+
 test('failed Mapbox requests still consume the local safety limit', async ({ page }) => {
   await page.evaluate(() => {
     const day = new Date().toISOString().slice(0, 10);
