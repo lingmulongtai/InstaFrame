@@ -698,6 +698,76 @@ test('failed photo thumbnail compaction releases its decoded image and canvas', 
   ])).toEqual([0, 0]);
 });
 
+test('photo thumbnail source setup failures detach abort listeners and revoke their Blob URL', async ({ page }) => {
+  await uploadJpegs(page);
+  const result = await page.evaluate(async () => {
+    const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    const nativeAdd = AbortSignal.prototype.addEventListener;
+    const nativeRemove = AbortSignal.prototype.removeEventListener;
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    let addedListeners = 0;
+    let removedListeners = 0;
+    AbortSignal.prototype.addEventListener = function (type, ...args) {
+      if (type === 'abort') addedListeners += 1;
+      return nativeAdd.call(this, type, ...args);
+    };
+    AbortSignal.prototype.removeEventListener = function (type, ...args) {
+      if (type === 'abort') removedListeners += 1;
+      return nativeRemove.call(this, type, ...args);
+    };
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: srcDescriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          throw new Error('simulated thumbnail source failure');
+        }
+        srcDescriptor.set.call(this, value);
+      },
+    });
+
+    try {
+      const item = eval('state.items[0]');
+      const existing = document.querySelector('#preview-1 canvas.thumb-source');
+      existing.width = 0;
+      existing.height = 0;
+      existing.remove();
+      await window._startPhotoThumbnail(item);
+      const thumbnail = document.querySelector('#preview-1 img.thumb-orig');
+      return {
+        activeUrls: activeUrls.size,
+        addedListeners,
+        removedListeners,
+        hasSource: thumbnail.hasAttribute('src'),
+        unavailable: document.getElementById('preview-1').classList.contains('thumbnail-unavailable'),
+      };
+    } finally {
+      Object.defineProperty(HTMLImageElement.prototype, 'src', srcDescriptor);
+      AbortSignal.prototype.addEventListener = nativeAdd;
+      AbortSignal.prototype.removeEventListener = nativeRemove;
+    }
+  });
+
+  expect(result).toEqual({
+    activeUrls: 0,
+    addedListeners: 2,
+    removedListeners: 2,
+    hasSource: false,
+    unavailable: true,
+  });
+});
+
 test('every BFCache pagehide releases Blob URLs and restores a usable pending preview', async ({ page }) => {
   await page.evaluate(() => {
     const NativeImage = window.Image;
