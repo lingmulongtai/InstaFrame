@@ -863,6 +863,63 @@ test('language switching preserves card identity, selection, and video thumbnail
   await expect(page.locator('#preview-2')).toHaveAttribute('aria-label', /selected-video\.webm/);
 });
 
+test('completed video thumbnails release their decoded image source', async ({ page }) => {
+  await page.evaluate(() => {
+    const capture = window.FrameEngine.captureVideoFrame.bind(window.FrameEngine);
+    window.__completedThumbnailImage = null;
+    window.FrameEngine.captureVideoFrame = async (...args) => {
+      const image = await capture(...args);
+      window.__completedThumbnailImage = image;
+      return image;
+    };
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'released-thumbnail.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+
+  await expect(page.locator('#item-1 canvas.thumb-framed')).toBeVisible();
+  expect(await page.evaluate(() => window.__completedThumbnailImage.hasAttribute('src'))).toBe(false);
+});
+
+test('failed video thumbnail drawing releases decoded image and framing canvas', async ({ page }) => {
+  await page.evaluate(() => {
+    const image = new Image();
+    image.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, get: () => 320 },
+      naturalHeight: { configurable: true, get: () => 180 },
+    });
+    const framed = document.createElement('canvas');
+    framed.width = 400;
+    framed.height = 225;
+    window.__failedThumbnailImage = image;
+    window.__failedThumbnailCanvas = framed;
+    window.FrameEngine.captureVideoFrame = async () => image;
+    window.FrameEngine.renderFrameWhenReady = async () => framed;
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (...args) {
+      if (this.classList.contains('thumb-framed')) {
+        return { drawImage: () => { throw new Error('simulated thumbnail draw failure'); } };
+      }
+      return getContext.apply(this, args);
+    };
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'failed-thumbnail-draw.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  expect(await page.evaluate(() => window.__failedThumbnailImage.hasAttribute('src'))).toBe(false);
+  expect(await page.evaluate(() => [
+    window.__failedThumbnailCanvas.width,
+    window.__failedThumbnailCanvas.height,
+  ])).toEqual([0, 0]);
+});
+
 test('language switching retranslates persistent media errors', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

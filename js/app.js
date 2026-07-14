@@ -1027,42 +1027,52 @@ function _startVideoThumbnail(item) {
       showToast(item.errorMsg, 'error');
       thumbnailController.abort();
     }, VIDEO_THUMBNAIL_GUARD_MS);
-    const img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
+    let img = null;
     let framed = null;
-    let thumbnailSource = img;
+    let thumbnailCanvas = null;
+    let thumbnailCommitted = false;
     try {
-      // Render a framed preview at thumbnail resolution
-      framed = await FrameEngine.renderFrameWhenReady(
-        img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
-      thumbnailSource = framed;
-    } catch (error) {
-      if (error?.name === 'AbortError') throw error;
-      // The video decoded successfully; only framing failed. Draw the
-      // already-decoded image instead of starting the same decode again.
-    }
-    const currentPreview = document.getElementById(`preview-${item.id}`);
-    if (!currentPreview) {
+      img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
+      let thumbnailSource = img;
+      try {
+        // Render a framed preview at thumbnail resolution
+        framed = await FrameEngine.renderFrameWhenReady(
+          img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
+        thumbnailSource = framed;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        // The video decoded successfully; only framing failed. Draw the
+        // already-decoded image instead of starting the same decode again.
+      }
+      const currentPreview = document.getElementById(`preview-${item.id}`);
+      if (!currentPreview) return;
+      const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
+      const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
+      if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
+      const maxW = 200, maxH = 200;
+      const scale = Math.min(maxW / sourceW, maxH / sourceH);
+      thumbnailCanvas = currentPreview.querySelector('canvas.thumb-framed');
+      if (!thumbnailCanvas) {
+        thumbnailCanvas = document.createElement('canvas');
+        thumbnailCanvas.className = 'thumb-framed';
+        currentPreview.insertBefore(thumbnailCanvas, currentPreview.firstChild);
+      }
+      thumbnailCanvas.width = Math.round(sourceW * scale);
+      thumbnailCanvas.height = Math.round(sourceH * scale);
+      thumbnailCanvas.getContext('2d').drawImage(
+        thumbnailSource, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+      thumbnailCommitted = true;
+      const origThumb = currentPreview.querySelector('img.thumb-orig');
+      if (origThumb) origThumb.style.display = 'none';
+    } finally {
+      if (!thumbnailCommitted && thumbnailCanvas) {
+        thumbnailCanvas.width = 0;
+        thumbnailCanvas.height = 0;
+        thumbnailCanvas.remove();
+      }
       if (framed) { framed.width = 0; framed.height = 0; }
-      return;
+      img?.removeAttribute('src');
     }
-    const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
-    const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
-    if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
-    const maxW = 200, maxH = 200;
-    const scale = Math.min(maxW / sourceW, maxH / sourceH);
-    let thumbnailCanvas = currentPreview.querySelector('canvas.thumb-framed');
-    if (!thumbnailCanvas) {
-      thumbnailCanvas = document.createElement('canvas');
-      thumbnailCanvas.className = 'thumb-framed';
-      currentPreview.insertBefore(thumbnailCanvas, currentPreview.firstChild);
-    }
-    thumbnailCanvas.width = Math.round(sourceW * scale);
-    thumbnailCanvas.height = Math.round(sourceH * scale);
-    thumbnailCanvas.getContext('2d').drawImage(
-      thumbnailSource, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
-    if (framed) { framed.width = 0; framed.height = 0; }
-    const origThumb = currentPreview.querySelector('img.thumb-orig');
-    if (origThumb) origThumb.style.display = 'none';
   })
     .catch(error => {
       if (error?.name === 'AbortError') return;
