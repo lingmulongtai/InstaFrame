@@ -5414,23 +5414,41 @@ test('video export preserves an input audio track', async ({ page }) => {
     const blob = new Blob([bytes], { type: mimeType });
     const video = document.createElement('video');
     video.muted = true;
-    video.src = URL.createObjectURL(blob);
-    await new Promise((resolve, reject) => {
-      video.onloadedmetadata = resolve;
-      video.onerror = () => reject(new Error('Exported video could not be decoded'));
-    });
-    await video.play();
-    await new Promise(resolve => setTimeout(resolve, 200));
-    const captured = video.captureStream();
-    const info = {
-      duration: video.duration,
-      videoTracks: captured.getVideoTracks().length,
-      audioTracks: captured.getAudioTracks().length,
-    };
-    video.pause();
-    captured.getTracks().forEach(track => track.stop());
-    URL.revokeObjectURL(video.src);
-    return info;
+    const url = URL.createObjectURL(blob);
+    video.src = url;
+    let captured = null;
+    try {
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        video.onerror = () => reject(new Error('Exported video could not be decoded'));
+      });
+      captured = video.captureStream();
+      await video.play();
+      await new Promise((resolve, reject) => {
+        const deadline = performance.now() + 5_000;
+        const checkTracks = () => {
+          if (captured.getVideoTracks().length > 0 && captured.getAudioTracks().length > 0) {
+            resolve();
+          } else if (performance.now() >= deadline) {
+            reject(new Error('Exported video tracks did not become available'));
+          } else {
+            setTimeout(checkTracks, 25);
+          }
+        };
+        checkTracks();
+      });
+      return {
+        duration: video.duration,
+        videoTracks: captured.getVideoTracks().length,
+        audioTracks: captured.getAudioTracks().length,
+      };
+    } finally {
+      video.pause();
+      captured?.getTracks().forEach(track => track.stop());
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+    }
   }, {
     base64: bytes.toString('base64'),
     mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
