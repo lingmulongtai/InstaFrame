@@ -231,6 +231,21 @@ test('card actions identify their target file in both languages', async ({ page 
   await expect(page.locator('#item-2 [data-action="remove"]')).toHaveAccessibleName('「photo-2.jpg」を削除');
 });
 
+test('dynamic color and location controls expose localized group names', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#showLocation').evaluate(element => {
+    element.checked = true;
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(page.locator('#textColorPicker')).toHaveAccessibleName('Custom text color');
+  await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('Map Icon');
+
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('#textColorPicker')).toHaveAccessibleName('カスタム文字色');
+  await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('マップアイコン');
+});
+
 test('the editor remains usable when browser storage is unavailable', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
