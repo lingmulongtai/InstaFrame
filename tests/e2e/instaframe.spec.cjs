@@ -2856,8 +2856,16 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   });
   await page.locator('#generateAllBtn').click();
   await expect(page.locator('#exportProgress')).toBeVisible();
+  await expect(page.locator('#imageSection')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#exportProgressMeter')).toHaveAccessibleName(/.+/);
+  const activeExportAudit = await new AxeBuilder({ page }).include('#imageSection').analyze();
+  expect(
+    activeExportAudit.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)),
+    JSON.stringify(activeExportAudit.violations, null, 2)
+  ).toEqual([]);
   await page.locator('#cancelExportBtn').click();
   await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#imageSection')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
   expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(1);
 });
