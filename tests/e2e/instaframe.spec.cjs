@@ -1231,6 +1231,22 @@ test('undo restores JPEG quality controls after a PNG history state', async ({ p
   await expect(page.locator('#photoQualityRange')).toBeEnabled();
 });
 
+test('history focus follows the remaining undo or redo action', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('label[for="bg-blur"]').click();
+
+  const undo = page.locator('#undoEditBtn');
+  const redo = page.locator('#redoEditBtn');
+  await undo.focus();
+  await undo.press('Enter');
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeFocused();
+
+  await redo.press('Enter');
+  await expect(redo).toBeDisabled();
+  await expect(undo).toBeFocused();
+});
+
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await uploadJpegs(page, 2);
   const downloadPromise = page.waitForEvent('download');
