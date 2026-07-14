@@ -55,6 +55,16 @@ const FrameEngine = (() => {
     ) throw resourceLimitError();
   }
 
+  function resizeReusableCanvas(canvas, width, height) {
+    if (canvas.width === width && canvas.height === height) return;
+    if (canvas.width > 0 && canvas.height > 0) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    canvas.width = width;
+    canvas.height = height;
+  }
+
   const FONT_STACKS = {
     'Inter':              "'Inter', Arial, sans-serif",
     'Montserrat':         "'Montserrat', Arial, sans-serif",
@@ -1619,8 +1629,7 @@ const FrameEngine = (() => {
       const scratchW = Math.max(1, Math.round(layout.baseCanvasW * safeBaseScale));
       const scratchH = Math.max(1, Math.round(layout.baseCanvasH * safeBaseScale));
       if (baseCanvas.width !== scratchW || baseCanvas.height !== scratchH) {
-        baseCanvas.width = scratchW;
-        baseCanvas.height = scratchH;
+        resizeReusableCanvas(baseCanvas, scratchW, scratchH);
       }
       const baseContext = baseCanvas.getContext('2d');
       if (!baseContext) throw new Error('Canvas rendering is unavailable');

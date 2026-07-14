@@ -4796,6 +4796,43 @@ test('blur video frames reuse one automatic-contrast sampler', async ({ page }) 
   expect(sampleCanvasCount).toBeLessThanOrEqual(1);
 });
 
+test('reused preview canvases release their old bitmap before an aspect flip', async ({ page }) => {
+  const samples = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    const width = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'width');
+    const height = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'height');
+    const allocations = [];
+    Object.defineProperties(canvas, {
+      width: {
+        configurable: true,
+        get: () => width.get.call(canvas),
+        set: value => {
+          width.set.call(canvas, value);
+          allocations.push(canvas.width * canvas.height);
+        },
+      },
+      height: {
+        configurable: true,
+        get: () => height.get.call(canvas),
+        set: value => {
+          height.set.call(canvas, value);
+          allocations.push(canvas.width * canvas.height);
+        },
+      },
+    });
+
+    window._resizeCanvasBackingStore(canvas, 100, 8000);
+    allocations.length = 0;
+    window._resizeCanvasBackingStore(canvas, 8000, 100);
+    return { allocations, width: canvas.width, height: canvas.height };
+  });
+
+  expect(samples.width).toBe(8000);
+  expect(samples.height).toBe(100);
+  expect(Math.max(...samples.allocations)).toBeLessThanOrEqual(8000 * 100);
+  expect(samples.allocations).toContain(0);
+});
+
 test('live video preview keeps the requested ratio and padding after seeking', async ({ page }) => {
   const fixture = await loadAudioVideoFixture();
   await page.locator('#fileInput').setInputFiles({
