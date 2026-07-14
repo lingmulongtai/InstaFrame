@@ -830,10 +830,10 @@ const FrameEngine = (() => {
       let timeoutId = null;
       const cleanup = () => {
         clearTimeout(timeoutId);
-        signal?.removeEventListener('abort', abort);
+        runBestEffortCleanup(() => signal?.removeEventListener('abort', abort));
         img.onload = null;
         img.onerror = null;
-        URL.revokeObjectURL(url);
+        revokeObjectUrl(url);
       };
       const succeed = () => {
         if (settled) return;
@@ -844,20 +844,16 @@ const FrameEngine = (() => {
       const fail = error => {
         if (settled) return;
         settled = true;
-        img.removeAttribute('src');
+        runBestEffortCleanup(() => img.removeAttribute('src'));
         cleanup();
         reject(error);
       };
-      const abort = () => {
-        img.removeAttribute('src');
-        fail(new DOMException('Image load cancelled', 'AbortError'));
-      };
+      const abort = () => fail(new DOMException('Image load cancelled', 'AbortError'));
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) { abort(); return; }
       img.onload  = succeed;
       img.onerror = () => fail(new Error('Image load failed'));
       timeoutId = setTimeout(() => {
-        img.removeAttribute('src');
         const error = new Error('Image load timed out');
         error.code = 'IMAGE_DECODE_TIMEOUT';
         fail(error);
