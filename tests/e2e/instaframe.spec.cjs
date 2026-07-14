@@ -5084,7 +5084,10 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await page.locator('#tabPreviewBtn').click();
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
+  const zoomBar = page.locator('#previewZoomBar');
   await expect(drawer).toBeVisible();
+  await expect(zoomBar).toHaveAttribute('aria-hidden', 'true');
+  expect(await zoomBar.evaluate(element => element.inert)).toBe(true);
   const [box, historyBox, headerTitleBox] = await Promise.all([
     drawer.boundingBox(),
     page.locator('#previewHistoryWrap').boundingBox(),
@@ -5096,6 +5099,21 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   expect(historyBox.x + historyBox.width).toBeLessThanOrEqual(box.x + box.width - 8);
   expect(historyBox.y).toBeGreaterThanOrEqual(box.y);
   expect(historyBox.y + historyBox.height).toBeLessThanOrEqual(box.y + 44);
+  await page.locator('.preview-exif-drawer-header').click();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
+  await expect(zoomBar).toBeVisible();
+  await expect(zoomBar).toHaveAttribute('aria-hidden', 'false');
+  expect(await zoomBar.evaluate(element => element.inert)).toBe(false);
+  const [zoomRangeBox, zoomInBox, zoomOutBox] = await Promise.all([
+    page.locator('#zoomRange').boundingBox(),
+    page.locator('#zoomInBtn').boundingBox(),
+    page.locator('#zoomOutBtn').boundingBox(),
+  ]);
+  expect(zoomRangeBox.height).toBeGreaterThanOrEqual(112);
+  expect(zoomInBox.width).toBeGreaterThanOrEqual(32);
+  expect(zoomInBox.height).toBeGreaterThanOrEqual(32);
+  expect(zoomOutBox.width).toBeGreaterThanOrEqual(32);
+  expect(zoomOutBox.height).toBeGreaterThanOrEqual(32);
   await page.evaluate(() => document.documentElement.setAttribute('data-editor-size', 'large'));
   const largeBox = await drawer.boundingBox();
   expect(largeBox.x).toBeGreaterThanOrEqual(8);
