@@ -5088,7 +5088,20 @@ function setupSettingsListeners() {
     valEl.setAttribute('contenteditable', 'true');
     valEl.setAttribute('role', 'textbox');
     valEl.setAttribute('spellcheck', 'false');
-    valEl.setAttribute('title', 'Edit value');
+    const updateEditableName = () => {
+      const labelledBy = el.getAttribute('aria-labelledby')?.split(/\s+/).filter(Boolean) || [];
+      const labelledText = labelledBy
+        .map(labelId => document.getElementById(labelId)?.textContent?.trim())
+        .filter(Boolean)
+        .join(' ');
+      const visibleLabel = el.closest('.setting-row')?.querySelector('.setting-label, .blur-sub-label');
+      const controlName = labelledText || visibleLabel?.textContent?.trim() || el.getAttribute('aria-label') || id;
+      const editableName = tf('editSettingValue', { name: controlName });
+      valEl.setAttribute('aria-label', editableName);
+      valEl.setAttribute('title', editableName);
+    };
+    updateEditableName();
+    document.addEventListener('instaframe:languagechange', updateEditableName);
 
     const commit = () => {
       const parsed = _extractNumericInputValue(valEl.textContent, expectedUnit ? [expectedUnit] : []);
