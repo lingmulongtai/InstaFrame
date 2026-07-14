@@ -1463,6 +1463,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   const signal = controller.signal;
   let shouldUpdate = true;
   let recoveredPreviewDecode = false;
+  let decodedPhoto = null;
   item.status   = 'processing';
   item.progress = 0;
   updateItemStatus(item);
@@ -1502,7 +1503,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       }
       item.videoBlob = videoBlob;
     } else {
-      const img = await FrameEngine.loadImage(item.file, { signal });
+      decodedPhoto = await FrameEngine.loadImage(item.file, { signal });
       // A full export decode proves that a prior live-preview failure was
       // transient. Let the selected item retry instead of remaining blacklisted.
       recoveredPreviewDecode = _imgFailed.delete(item.id);
@@ -1513,7 +1514,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           item.exif && item.exif.latitude != null && item.exif.longitude != null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
       }
-      const rendered = await FrameEngine.renderFrameWhenReady(img, item.exif, state.settings, { mapOverlayImg, signal });
+      const rendered = await FrameEngine.renderFrameWhenReady(decodedPhoto, item.exif, state.settings, { mapOverlayImg, signal });
       if (_retainedOutputBytes(item) + rendered.width * rendered.height * 4 > MAX_RETAINED_OUTPUT_BYTES) {
         rendered.width = 0;
         rendered.height = 0;
@@ -1550,6 +1551,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       if (onExternalProgress) onExternalProgress(1);
     }
   } finally {
+    decodedPhoto?.removeAttribute?.('src');
     parentSignal?.removeEventListener('abort', abortFromParent);
     if (item.exportRunToken === runToken) {
       item.exportController = null;
@@ -3399,13 +3401,19 @@ function _previewSettingsHash() {
   ].join('|');
 }
 
+function _releaseDecodedImageSource(image, objectUrl = null) {
+  image?.removeAttribute?.('src');
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+}
+
 /** Drop all cached data for one item (call on remove + EXIF edit). */
 function _invalidateItemCache(itemId) {
   _imgLoadEntries.get(itemId)?.controller.abort();
   _imgLoadEntries.delete(itemId);
+  _releaseDecodedImageSource(_transientPreviewImages.get(itemId));
   _transientPreviewImages.delete(itemId);
   const e = _imgCache.get(itemId);
-  if (e) { URL.revokeObjectURL(e.objUrl); _imgCache.delete(itemId); }
+  if (e) { _releaseDecodedImageSource(e.img, e.objUrl); _imgCache.delete(itemId); }
   _imgFailed.delete(itemId);
   for (const k of [..._frameCache.keys()]) {
     if (k.startsWith(`${itemId}|`)) {
@@ -3494,14 +3502,14 @@ async function _decodePreviewImage(item, signal, retainUncached) {
     img.src = objUrl;
     if (img.complete && img.naturalWidth) succeed();
   }).catch(e => {
-    URL.revokeObjectURL(objUrl);
+    _releaseDecodedImageSource(img, objUrl);
     if (e?.name !== 'AbortError') _imgFailed.add(item.id);
     throw e;
   });
 
   const imagePixels = img.naturalWidth * img.naturalHeight;
   if (imagePixels > MAX_SOURCE_IMAGE_PIXELS) {
-    URL.revokeObjectURL(objUrl);
+    _releaseDecodedImageSource(img, objUrl);
     _imgFailed.add(item.id);
     throw _mediaResourceLimitError();
   }
@@ -3514,7 +3522,7 @@ async function _decodePreviewImage(item, signal, retainUncached) {
     const firstKey = _imgCache.keys().next().value;
     const first = _imgCache.get(firstKey);
     cachedPixels -= first.img.naturalWidth * first.img.naturalHeight;
-    URL.revokeObjectURL(first.objUrl);
+    _releaseDecodedImageSource(first.img, first.objUrl);
     _imgCache.delete(firstKey);
   }
   if (imagePixels > MAX_PREVIEW_CACHE_PIXELS) {
@@ -3911,8 +3919,11 @@ async function renderLivePreview() {
   const controller = new AbortController();
   const signal = controller.signal;
   _previewRenderController = controller;
+  let previewImage = null;
+  let releasePreviewImage = false;
   try {
-    const img = await _waitForPreviewResource(_loadPreviewImage(item), signal);
+    previewImage = await _waitForPreviewResource(_loadPreviewImage(item), signal);
+    releasePreviewImage = _imgCache.get(item.id)?.img !== previewImage;
 
     // Pre-fetch map overlay image if enabled and coordinates are available
     let mapOverlayImg = null;
@@ -3922,7 +3933,7 @@ async function renderLivePreview() {
     }
 
     const rendered = await FrameEngine.renderFrameWhenReady(
-      img, item.exif, state.settings,
+      previewImage, item.exif, state.settings,
       { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg, signal });
 
     rendered.dataset.previewSourceLimit = String(PREVIEW_LAYOUT_LONG_EDGE);
@@ -3967,6 +3978,7 @@ async function renderLivePreview() {
       _setLivePreviewError(_getItemErrorMessage(item));
     }
   } finally {
+    if (releasePreviewImage) _releaseDecodedImageSource(previewImage);
     if (_previewRenderController === controller) _previewRenderController = null;
   }
 }
@@ -5735,8 +5747,9 @@ function _releasePageResources() {
   });
   for (const entry of _imgLoadEntries.values()) entry.controller.abort();
   _imgLoadEntries.clear();
+  for (const image of _transientPreviewImages.values()) _releaseDecodedImageSource(image);
   _transientPreviewImages.clear();
-  for (const entry of _imgCache.values()) URL.revokeObjectURL(entry.objUrl);
+  for (const entry of _imgCache.values()) _releaseDecodedImageSource(entry.img, entry.objUrl);
   _imgCache.clear();
   for (const canvas of _frameCache.values()) { canvas.width = 0; canvas.height = 0; }
   _frameCache.clear();
