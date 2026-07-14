@@ -164,6 +164,39 @@ test('every theme keeps dynamic controls and destructive dialogs at WCAG contras
   }
 });
 
+test('every accent choice keeps selected controls at WCAG contrast', async ({ page }) => {
+  await page.locator('#customizeBtn').click();
+  const accents = [
+    { label: 'blue', selector: '.accent-blue' },
+    { label: 'purple', selector: '.accent-purple' },
+    { label: 'pink', selector: '.accent-pink' },
+    { label: 'green', selector: '.accent-green' },
+    { label: 'amber', selector: '.accent-amber' },
+    { label: 'cyan', selector: '.accent-cyan' },
+  ];
+
+  for (const { label, selector } of accents) {
+    await page.locator(selector).click();
+    const audit = await new AxeBuilder({ page })
+      .include('#customizePanel')
+      .withRules(['color-contrast'])
+      .analyze();
+    expect(audit.violations, `${label}: ${JSON.stringify(audit.violations, null, 2)}`).toEqual([]);
+  }
+
+  for (const color of ['#ffffff', '#000000']) {
+    await page.locator('#accentColorPicker').evaluate((element, value) => {
+      element.value = value;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, color);
+    const audit = await new AxeBuilder({ page })
+      .include('#customizePanel')
+      .withRules(['color-contrast'])
+      .analyze();
+    expect(audit.violations, `${color}: ${JSON.stringify(audit.violations, null, 2)}`).toEqual([]);
+  }
+});
+
 test('initial translated UI exposes the matching document language', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
