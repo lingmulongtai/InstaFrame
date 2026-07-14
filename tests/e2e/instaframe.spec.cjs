@@ -1810,6 +1810,46 @@ test('video export controls disappear when MediaRecorder supports no output MIME
   expect(disabledBitrates).toBe(allBitrates);
 });
 
+test('generic WebM remains selectable when codec-specific recorder MIME types are unavailable', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', {
+      configurable: true,
+      value() { return new MediaStream(); },
+    });
+    window.MediaRecorder = class GenericWebMRecorder {
+      static isTypeSupported(mime) { return mime === 'video/webm'; }
+    };
+    window.initVideoFormatOptions();
+  });
+  const formats = page.locator('#videoFormatPills input[name="exportVideoFormat"]');
+  await expect(formats).toHaveCount(1);
+  await expect(formats).toHaveValue('webm');
+  await expect(formats).toBeChecked();
+  await expect(page.locator('#videoFormatPills [role="status"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.resolveVideoMime('webm'))).toBe('video/webm');
+  const disabledBitrates = await page.locator('input[name="exportVideoBitrate"]:disabled').count();
+  expect(disabledBitrates).toBe(0);
+});
+
+test('video export controls stay unavailable without canvas stream capture', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', {
+      configurable: true,
+      value: undefined,
+    });
+    window.MediaRecorder = class RecorderWithoutCanvasCapture {
+      static isTypeSupported() { return true; }
+    };
+    window.initVideoFormatOptions();
+  });
+  await expect(page.locator('#videoFormatPills input[name="exportVideoFormat"]')).toHaveCount(0);
+  await expect(page.locator('#videoFormatPills [role="status"]')).toContainText(/unavailable|書き出せません/i);
+  expect(await page.evaluate(() => window.resolveVideoMime(''))).toBe('');
+  const disabledBitrates = await page.locator('input[name="exportVideoBitrate"]:disabled').count();
+  const allBitrates = await page.locator('input[name="exportVideoBitrate"]').count();
+  expect(disabledBitrates).toBe(allBitrates);
+});
+
 test('supported video export selection survives a page reload', async ({ page }) => {
   const choices = await page.locator('input[name="exportVideoFormat"]').evaluateAll(inputs => (
     inputs.map(input => input.value)

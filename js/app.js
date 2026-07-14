@@ -4825,7 +4825,11 @@ const VIDEO_FORMAT_MAP = {
 };
 
 function _supportsVideoExportMime(mime) {
-  try { return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime); }
+  try {
+    return typeof MediaRecorder !== 'undefined' &&
+      typeof HTMLCanvasElement?.prototype?.captureStream === 'function' &&
+      MediaRecorder.isTypeSupported(mime);
+  }
   catch { return false; }
 }
 
@@ -4848,6 +4852,10 @@ function initVideoFormatOptions() {
     { label: 'VP9',  value: 'vp9',  mime: 'video/webm;codecs=vp9,opus' },
     { label: 'VP8',  value: 'vp8',  mime: 'video/webm;codecs=vp8,opus' },
   ].filter(format => _supportsVideoExportMime(format.mime));
+  if (!candidates.some(format => format.value === 'vp9' || format.value === 'vp8') &&
+      _supportsVideoExportMime('video/webm')) {
+    candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
+  }
 
   document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(control => {
     control.disabled = candidates.length === 0;
