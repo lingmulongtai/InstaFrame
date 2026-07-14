@@ -868,7 +868,10 @@
             </svg>
             <input type="range" id="cardSizeRange" min="120" max="320" step="20" value="200" data-i18n="cardSize" data-i18n-attr="aria-label">
           </div>
-          <span class="section-counter" id="imageCounter" aria-live="polite"></span>
+          <span class="section-counter" id="imageCounter">
+            <span id="imageCounterVisual" aria-hidden="true"></span>
+            <span class="sr-only" id="imageCounterStatus" role="status" aria-live="polite" aria-atomic="true"></span>
+          </span>
           <button class="btn btn-secondary btn-sm" id="addMoreBtn" data-i18n="addMore">+ Add</button>
         </div>
       </div>

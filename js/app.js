@@ -4318,6 +4318,14 @@ function updateItemPreview(item) {
   }
 }
 
+function updateImageCounter() {
+  const count = state.items.length;
+  const visual = document.getElementById('imageCounterVisual');
+  const status = document.getElementById('imageCounterStatus');
+  if (visual) visual.textContent = count ? `(${count})` : '';
+  if (status) status.textContent = count ? tf('imageCount', { count }) : '';
+}
+
 function updateUI() {
   const hasItems = state.items.length > 0;
   const fileInput = document.getElementById('fileInput');
@@ -4336,12 +4344,11 @@ function updateUI() {
   const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
   const clrBtn  = document.getElementById('clearAllBtn');
-  const counter = document.getElementById('imageCounter');
 
   if (genBtn)  genBtn.disabled  = _globalExportBusy || !hasItems;
   if (dlBtn)   dlBtn.disabled   = _globalExportBusy || !hasItems;
   if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasItems;
-  if (counter) counter.textContent = hasItems ? `(${state.items.length})` : '';
+  updateImageCounter();
 
   setVisible(document.getElementById('imageSection'), hasItems, 'flex');
   setVisible(document.getElementById('emptyHint'),    !hasItems);
@@ -5878,6 +5885,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   setupAccessibleFormNames();
   document.addEventListener('instaframe:languagechange', setupAccessibleFormNames);
+  document.addEventListener('instaframe:languagechange', updateImageCounter);
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
