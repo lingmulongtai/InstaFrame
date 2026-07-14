@@ -1225,6 +1225,16 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('#previewQualityBtn')).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('#previewQualityBtn')).toBeFocused();
   await expect(page.locator('.pq-option[data-q="draft"]')).toHaveAttribute('aria-checked', 'true');
+  await page.evaluate(() => window.setLang('en'));
+  await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('Preview quality: Draft');
+  await page.locator('#previewQualityBtn').press('Enter');
+  await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('Preview quality');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.setLang('ja'));
+  await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('プレビュー画質: 下書き');
+  await page.locator('#previewQualityBtn').press('Enter');
+  await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('プレビュー画質');
+  await page.keyboard.press('Escape');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('#tabPreviewBtn')).toHaveAttribute('aria-controls', 'dropZone');

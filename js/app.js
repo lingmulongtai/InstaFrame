@@ -5202,7 +5202,12 @@ function _applyQualitySelection(q, popup, label) {
     o.classList.toggle('active', selected);
     o.setAttribute('aria-checked', String(selected));
   });
-  if (label) label.textContent = t(QUALITY_I18N_KEYS[q] || QUALITY_I18N_KEYS.auto);
+  const translatedValue = t(QUALITY_I18N_KEYS[q] || QUALITY_I18N_KEYS.auto);
+  if (label) label.textContent = translatedValue;
+  document.getElementById('previewQualityBtn')?.setAttribute(
+    'aria-label',
+    tf('previewQualityControl', { value: translatedValue })
+  );
   updatePreviewViewModifiedState();
 }
 
