@@ -164,6 +164,16 @@ test('consent and map dialogs support axe, keyboard selection, Escape, and focus
   await expect.poll(() => localLeafletResponses.length).toBe(2);
   expect(localLeafletResponses.every(response => response.status === 200)).toBe(true);
   expect(await page.evaluate(() => typeof window.L)).toBe('object');
+  const confirmLocation = page.locator('#confirmMapLocationBtn');
+  const transitionProperties = await confirmLocation.evaluate(element => (
+    getComputedStyle(element).transitionProperty.split(',').map(property => property.trim())
+  ));
+  expect(transitionProperties).not.toContain('opacity');
+  await confirmLocation.evaluate(element => {
+    element.disabled = true;
+    void element.offsetWidth;
+    element.disabled = false;
+  });
   await assertNoAxeViolations(page, '#mapPickerModal');
   await page.locator('#selectMapCenterBtn').click();
   await expect(page.locator('#mapPickerCoords')).toContainText(/°[NS].*°[EW]/);

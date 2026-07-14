@@ -2061,7 +2061,7 @@ input[type="range"]:focus-visible {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s, opacity 0.1s, border-color 0.1s;
+  transition: background 0.1s, border-color 0.1s;
   white-space: nowrap;
   line-height: 1.4;
   font-family: inherit;
