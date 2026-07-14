@@ -1486,6 +1486,7 @@ function _isCurrentItemExport(item, runToken, signal) {
 async function _releaseItemThumbnailBeforeExport(item, signal) {
   const thumbnailPromise = item.thumbnailPromise;
   if (!thumbnailPromise) return;
+  item.thumbnailNeedsRestart = true;
   item.thumbnailController?.abort();
   _cancelQueuedVideoThumbnail(item);
   await thumbnailPromise;
@@ -1607,6 +1608,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     if (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id) {
       scheduleLivePreview();
     }
+    if (item.isVideo && !_pageResourcesReleased) _restartInterruptedVideoThumbnail(item);
   }
   return shouldUpdate && item.status === 'done';
 }
