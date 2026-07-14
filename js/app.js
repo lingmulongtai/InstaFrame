@@ -2853,6 +2853,7 @@ function _cancelLocationOperations(itemId = null) {
 
 function _applyResolvedLocation(item, latitude, longitude, label) {
   if (!item) return;
+  if (_liveExifPendingEdit?.item === item) _flushLiveExifEdit();
   _abortGlobalExportForMutation();
   if (!item.exif) item.exif = {};
   item.exif.latitude = latitude;

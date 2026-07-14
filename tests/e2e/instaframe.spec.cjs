@@ -5745,6 +5745,40 @@ test('device location stays bound to the photo that requested it', async ({ page
   await expect(page.locator('#live-exif-location')).toHaveValue('');
 });
 
+test('a pending EXIF edit cannot overwrite a newly resolved device location', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.route('https://nominatim.openstreetmap.org/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ address: { city: 'Resolved City', country: 'Japan' } }),
+  }));
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = success => {
+      window.__resolvePendingEditLocation = success;
+    };
+  });
+  await uploadJpegs(page);
+
+  await page.locator('#live-exif-make').fill('Edited during location lookup');
+  await page.locator('#getDeviceLocationBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__resolvePendingEditLocation)).toBe('function');
+  await page.evaluate(() => window.__resolvePendingEditLocation({
+    coords: { latitude: 35.0116, longitude: 135.7681 },
+  }));
+
+  await expect(page.locator('#live-exif-location')).toHaveValue('Resolved City, Japan');
+  await page.waitForTimeout(150);
+  await expect(page.locator('#live-exif-make')).toHaveValue('Edited during location lookup');
+  await expect(page.locator('#live-exif-location')).toHaveValue('Resolved City, Japan');
+  await expect.poll(() => page.evaluate(() => {
+    const exif = eval('state.items[0].exif');
+    return [exif.latitude, exif.longitude];
+  })).toEqual([35.0116, 135.7681]);
+});
+
 test('an older device-location callback cannot overwrite an explicit map choice', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
