@@ -60,6 +60,9 @@ let itemIdCounter = 0;
 let previewZoom   = 1.0;
 let previewPan    = { x: 0, y: 0 };
 let _pendingLoadedMediaFocus = false;
+let _loadedMediaFocusRetryId = null;
+let _loadedMediaFocusRetryCount = 0;
+const LOADED_MEDIA_FOCUS_RETRY_LIMIT = 4;
 const SETTINGS_HISTORY_LIMIT = 80;
 const _settingsUndoStack = [];
 const _settingsRedoStack = [];
@@ -1395,17 +1398,39 @@ function _tryFocusLoadedMediaTarget() {
   return document.activeElement === target;
 }
 
+function _clearLoadedMediaFocusRequest() {
+  _pendingLoadedMediaFocus = false;
+  if (_loadedMediaFocusRetryId !== null) cancelAnimationFrame(_loadedMediaFocusRetryId);
+  _loadedMediaFocusRetryId = null;
+  _loadedMediaFocusRetryCount = 0;
+}
+
 function _requestLoadedMediaFocus() {
+  _clearLoadedMediaFocusRequest();
   _pendingLoadedMediaFocus = true;
-  if (_tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
+  if (_tryFocusLoadedMediaTarget()) _clearLoadedMediaFocusRequest();
 }
 
 function _queueLoadedMediaFocus() {
+  _clearLoadedMediaFocusRequest();
   _pendingLoadedMediaFocus = true;
 }
 
 function _settleLoadedMediaFocus() {
-  if (_pendingLoadedMediaFocus && _tryFocusLoadedMediaTarget()) _pendingLoadedMediaFocus = false;
+  if (!_pendingLoadedMediaFocus || _loadedMediaFocusRetryId !== null) return;
+  if (_tryFocusLoadedMediaTarget()) {
+    _clearLoadedMediaFocusRequest();
+    return;
+  }
+  if (_loadedMediaFocusRetryCount >= LOADED_MEDIA_FOCUS_RETRY_LIMIT) {
+    _clearLoadedMediaFocusRequest();
+    return;
+  }
+  _loadedMediaFocusRetryCount += 1;
+  _loadedMediaFocusRetryId = requestAnimationFrame(() => {
+    _loadedMediaFocusRetryId = null;
+    _settleLoadedMediaFocus();
+  });
 }
 
 // ─── Frame Generation ─────────────────────────────────────────────────────────
@@ -4257,7 +4282,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
-    _pendingLoadedMediaFocus = false;
+    _clearLoadedMediaFocusRequest();
     _disposeLiveVideoSource();
     const dropZone = document.getElementById('dropZone');
     if (dropZone) {
@@ -5666,6 +5691,7 @@ function setupCardSize() {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 function _releasePageResources() {
   _pageResourcesReleased = true;
+  _clearLoadedMediaFocusRequest();
   // Commit the user's last debounced EXIF keystroke before freezing the page.
   // applyLiveExifEdit schedules a preview render, which is cancelled below so
   // released Canvas and Blob resources cannot be recreated while suspended.
