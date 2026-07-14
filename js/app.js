@@ -3170,6 +3170,8 @@ async function confirmMapLocation() {
     return;
   }
   const lat = _mapPickerLat, lon = _mapPickerLon;
+  const targetItemId = getSelectedPreviewItem()?.id || null;
+  if (targetItemId) _cancelLocationOperations(targetItemId);
   const modal = document.getElementById('mapPickerModal');
   const locationRequestId = _mapPickerLocationRequestId;
   const controller = new AbortController();
@@ -3183,12 +3185,9 @@ async function confirmMapLocation() {
     if (controller.signal.aborted || locationRequestId !== _mapPickerLocationRequestId || !modal?.classList.contains('open')) return;
     const locStr = name || InstaFrameCore.formatCoordinateLabel(lat, lon);
 
-    // Update live EXIF panel input
-    const locInput = document.getElementById('live-exif-location');
-    if (locInput) locInput.value = locStr;
-
-    // Store lat/lon on the current item's exif and apply
-    const item = getSelectedPreviewItem();
+    // Store the selection on the item that owned this confirmation. A late
+    // device-location callback cannot overwrite this explicit map choice.
+    const item = state.items.find(candidate => candidate.id === targetItemId);
     if (item) _applyResolvedLocation(item, lat, lon, locStr);
 
     _mapPickerConfirmController = null;
