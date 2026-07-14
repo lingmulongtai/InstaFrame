@@ -1579,6 +1579,15 @@ test('history focus follows the remaining undo or redo action', async ({ page })
 
 test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    window.__exportProgressValues = [];
+    const meter = document.getElementById('exportProgressMeter');
+    const nativeSetAttribute = meter.setAttribute.bind(meter);
+    meter.setAttribute = (name, value) => {
+      if (name === 'aria-valuenow') window.__exportProgressValues.push(Number(value));
+      return nativeSetAttribute(name, value);
+    };
+  });
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#downloadAllBtn').click();
   const download = await downloadPromise;
@@ -1587,6 +1596,10 @@ test('batch export creates a ZIP for multiple JPEG files', async ({ page }) => {
   expect(filePath).toBeTruthy();
   const bytes = await fs.readFile(filePath);
   expect([...bytes.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  const progressValues = await page.evaluate(() => window.__exportProgressValues);
+  expect(progressValues.length).toBeGreaterThan(2);
+  expect(progressValues.at(-1)).toBe(100);
+  expect(progressValues.every((value, index) => index === 0 || value >= progressValues[index - 1])).toBe(true);
 });
 
 test('batch export keeps case-insensitive duplicate filenames as separate ZIP entries', async ({ page }) => {
