@@ -5924,6 +5924,11 @@ test('short mobile consent modal respects safe areas and keeps actions reachable
   }
   expect(layout.bodyOverflowY).toBe('auto');
   expect(layout.bodyScrollHeight).toBeGreaterThan(layout.bodyClientHeight);
+  await page.locator('.privacy-modal-body').focus();
+  await expect(page.locator('.privacy-modal-body')).toBeFocused();
+  await page.keyboard.press('PageDown');
+  await expect.poll(() => page.locator('.privacy-modal-body').evaluate(body => body.scrollTop))
+    .toBeGreaterThan(0);
   await expect(page.locator('#locationPrivacyOnceBtn')).toBeVisible();
   await page.locator('#locationPrivacyOnceBtn').focus();
   await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
