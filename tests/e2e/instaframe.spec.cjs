@@ -1691,6 +1691,36 @@ test('undo restores JPEG quality controls after a PNG history state', async ({ p
   await expect(page.locator('#photoQualityRange')).toBeEnabled();
 });
 
+test('output setting changes create a new undo branch', async ({ page }) => {
+  await uploadJpegs(page);
+  const undo = page.locator('#undoEditBtn');
+  const redo = page.locator('#redoEditBtn');
+  const initialPhotoQuality = await page.locator('#photoQualityRange').inputValue();
+
+  await page.locator('label[for="bg-blur"]').click();
+  await undo.click();
+  await expect(redo).toBeEnabled();
+
+  await page.locator('label[for="fmt-png"]').click();
+  await expect(redo).toBeDisabled();
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(page.locator('#fmt-jpeg')).toBeChecked();
+
+  await page.locator('#photoQualityRange').evaluate(input => {
+    input.value = '80';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(redo).toBeDisabled();
+  await undo.click();
+  await expect(page.locator('#photoQualityRange')).toHaveValue(initialPhotoQuality);
+
+  await page.locator('label[for="vbr-16"]').click();
+  await expect(redo).toBeDisabled();
+  await undo.click();
+  await expect(page.locator('#vbr-8')).toBeChecked();
+});
+
 test('history focus follows the remaining undo or redo action', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="bg-blur"]').click();

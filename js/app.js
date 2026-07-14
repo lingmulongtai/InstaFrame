@@ -221,6 +221,17 @@ function _settingsSnapshotsEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function _recordSettingsHistory(before) {
+  if (_historyLocked) return false;
+  const after = _createSettingsSnapshot();
+  if (_settingsSnapshotsEqual(before, after)) return false;
+  _settingsUndoStack.push(before);
+  if (_settingsUndoStack.length > SETTINGS_HISTORY_LIMIT) _settingsUndoStack.shift();
+  _settingsRedoStack.length = 0;
+  updateHistoryButtons();
+  return true;
+}
+
 function _isPreviewViewModified() {
   const q = loadPrefs().previewQuality || 'auto';
   return (
@@ -2543,15 +2554,7 @@ function applySettings() {
   // Mark all done items as pending (frame settings changed → need re-render)
   markDoneItemsPending();
 
-  if (!_historyLocked) {
-    const after = _createSettingsSnapshot();
-    if (!_settingsSnapshotsEqual(before, after)) {
-      _settingsUndoStack.push(before);
-      if (_settingsUndoStack.length > SETTINGS_HISTORY_LIMIT) _settingsUndoStack.shift();
-      _settingsRedoStack.length = 0;
-      updateHistoryButtons();
-    }
-  }
+  _recordSettingsHistory(before);
 
   saveSettings();
   updateUI();
@@ -4915,10 +4918,12 @@ function initVideoFormatOptions() {
 }
 
 function onVideoExportSettingChange() {
+  const before = _createSettingsSnapshot();
   const r = document.querySelector('input[name="exportVideoFormat"]:checked');
   state.settings.exportVideoFormat = r ? r.value : '';
   const vbr = document.querySelector('input[name="exportVideoBitrate"]:checked');
   state.settings.exportVideoBitrate = vbr ? parseInt(vbr.value, 10) : 8;
+  _recordSettingsHistory(before);
   saveSettings();
   // Video format change requires re-encoding → mark video items as pending
   markItemsPending(item => item.isVideo);
@@ -5509,12 +5514,14 @@ function setupSettingsListeners() {
   // ── Export: photo format + quality ───────────────────────────────────────
   document.querySelectorAll('input[name="exportPhotoFormat"]').forEach(r => {
     r.addEventListener('change', () => {
+      const before = _createSettingsSnapshot();
       _syncPhotoQualityAvailability(r.value);
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       const nextFormat = pFmt ? pFmt.value : 'jpeg';
       if (state.settings.exportPhotoFormat !== nextFormat) _abortGlobalExportForMutation();
       state.settings.exportPhotoFormat = nextFormat;
+      _recordSettingsHistory(before);
       saveSettings();
     });
   });
@@ -5524,9 +5531,11 @@ function setupSettingsListeners() {
     'photoQualityRangeVal',
     v => v + '%',
     v => {
+      const before = _createSettingsSnapshot();
       const nextQuality = parseInt(v, 10);
       if (state.settings.exportPhotoQuality !== nextQuality) _abortGlobalExportForMutation();
       state.settings.exportPhotoQuality = nextQuality;
+      _recordSettingsHistory(before);
       saveSettings();
     },
     '%'
