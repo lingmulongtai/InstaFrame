@@ -1277,6 +1277,7 @@ const FrameEngine = (() => {
       video.muted   = true;   // must be muted for autoplay; source audio is captured separately
       video.preload = 'auto';
       let audioContext = null;
+      let audioTrack = null;
       let outputStream = null;
       let sourceStream = null;
       let canvas = null;
@@ -1313,8 +1314,13 @@ const FrameEngine = (() => {
         video.removeAttribute('src');
         video.load();
         URL.revokeObjectURL(url);
-        if (outputStream) outputStream.getTracks().forEach(track => track.stop());
-        if (sourceStream) sourceStream.getTracks().forEach(track => track.stop());
+        const mediaTracks = new Set();
+        try { outputStream?.getTracks().forEach(track => mediaTracks.add(track)); } catch (_) {}
+        try { sourceStream?.getTracks().forEach(track => mediaTracks.add(track)); } catch (_) {}
+        if (audioTrack) mediaTracks.add(audioTrack);
+        for (const track of mediaTracks) {
+          try { track.stop(); } catch (_) {}
+        }
         if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
         if (canvas) { canvas.width = 0; canvas.height = 0; }
         if (baseCanvas) { baseCanvas.width = 0; baseCanvas.height = 0; }
@@ -1395,7 +1401,6 @@ const FrameEngine = (() => {
         if (!ctx) { fail(new Error('Canvas rendering is unavailable')); return; }
 
         // ── Preserve the source audio without playing it on the page ──
-        let audioTrack = null;
         try {
           const capture = video.captureStream || video.mozCaptureStream;
           if (capture && sourceHasAudio !== false) {
