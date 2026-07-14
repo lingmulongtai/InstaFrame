@@ -5511,7 +5511,9 @@ function setupSettingsListeners() {
       _syncPhotoQualityAvailability(r.value);
       // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
-      state.settings.exportPhotoFormat = pFmt ? pFmt.value : 'jpeg';
+      const nextFormat = pFmt ? pFmt.value : 'jpeg';
+      if (state.settings.exportPhotoFormat !== nextFormat) _abortGlobalExportForMutation();
+      state.settings.exportPhotoFormat = nextFormat;
       saveSettings();
     });
   });
@@ -5521,7 +5523,9 @@ function setupSettingsListeners() {
     'photoQualityRangeVal',
     v => v + '%',
     v => {
-      state.settings.exportPhotoQuality = parseInt(v, 10);
+      const nextQuality = parseInt(v, 10);
+      if (state.settings.exportPhotoQuality !== nextQuality) _abortGlobalExportForMutation();
+      state.settings.exportPhotoQuality = nextQuality;
       saveSettings();
     },
     '%'
