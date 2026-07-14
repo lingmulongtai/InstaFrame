@@ -2363,6 +2363,34 @@ test('duplicate photo exports are coalesced and removal discards stale output', 
   }))).toEqual({ calls: 1, width: 0, height: 0 });
 });
 
+test('removing media aborts a global export before stale output can download', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__staleExportDownloads = 0;
+    HTMLAnchorElement.prototype.click = () => { window.__staleExportDownloads += 1; };
+    window.FrameEngine.loadImage = (file, options = {}) => {
+      window.__staleExportSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('Export cancelled', 'AbortError'));
+        }, { once: true });
+      });
+    };
+    window.__staleExportPromise = window.downloadAll();
+  });
+  await expect.poll(() => page.evaluate(() => !!window.__staleExportSignal)).toBe(true);
+
+  await page.evaluate(() => window.removeItem(1, { skipConfirm: true }));
+  await page.evaluate(() => window.__staleExportPromise);
+
+  expect(await page.evaluate(() => ({
+    aborted: window.__staleExportSignal.aborted,
+    downloads: window.__staleExportDownloads,
+  }))).toEqual({ aborted: true, downloads: 0 });
+  await expect(page.locator('#item-1')).toHaveCount(0);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+});
+
 test('batch generation can be cancelled while keeping pending items', async ({ page }) => {
   await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
