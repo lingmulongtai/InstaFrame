@@ -2239,8 +2239,17 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
 
 test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
   await page.evaluate(() => {
-    window.__thumbnailExportOrder = { started: false, settled: false, encoderSawSettled: false };
-    window.FrameEngine.captureVideoFrame = (_file, _time, options) => new Promise((resolve, reject) => {
+    window.__thumbnailExportOrder = { captureCalls: 0, started: false, settled: false, encoderSawSettled: false };
+    window.FrameEngine.captureVideoFrame = (_file, _time, options) => {
+      window.__thumbnailExportOrder.captureCalls += 1;
+      if (window.__thumbnailExportOrder.captureCalls > 1) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 96;
+        canvas.height = 64;
+        canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+        return Promise.resolve(canvas);
+      }
+      return new Promise((resolve, reject) => {
       window.__thumbnailExportOrder.started = true;
       options.signal.addEventListener('abort', () => {
         queueMicrotask(() => {
@@ -2248,7 +2257,9 @@ test('video export waits for thumbnail decoder cleanup before encoding', async (
           reject(new DOMException('Thumbnail cancelled', 'AbortError'));
         });
       }, { once: true });
-    });
+      });
+    };
+    window.FrameEngine.renderFrameWhenReady = async source => source;
     window.FrameEngine.renderVideoFrameWhenReady = async () => {
       window.__thumbnailExportOrder.encoderSawSettled = window.__thumbnailExportOrder.settled;
       return new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' });
@@ -2264,7 +2275,10 @@ test('video export waits for thumbnail decoder cleanup before encoding', async (
   await page.locator('#generateAllBtn').click();
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.captureCalls)).toBe(2);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
   expect(await page.evaluate(() => window.__thumbnailExportOrder)).toEqual({
+    captureCalls: 2,
     started: true,
     settled: true,
     encoderSawSettled: true,
