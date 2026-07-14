@@ -1365,11 +1365,13 @@ const FrameEngine = (() => {
       }
     }
 
-    // ── MediaRecorder fallback (includes audio) ────────────────────────────────
+    // ── MediaRecorder fallback (can include source audio) ─────────────────────
     // Pre-load fonts (same as photo path)
     await loadFrameFonts(settings, signal);
 
-    const sourceHasAudio = await _fileHasAudioTrackHint(file, signal);
+    const sourceHasAudio = preserveAudio
+      ? await _fileHasAudioTrackHint(file, signal)
+      : false;
 
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
