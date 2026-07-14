@@ -322,7 +322,7 @@ let _videoPreviewBaseCanvas = null;
 
 // ─── Location privacy consent ─────────────────────────────────────────────────
 let _sessionLocationNetworkConsent = false;
-let _locationConsentResolver = null;
+const _locationConsentResolvers = new Set();
 let _locationPrivacyPreviousFocus = null;
 let _liveDeviceLocationRequestId = 0;
 let _liveDeviceLocationItemId = null;
@@ -572,28 +572,24 @@ function _finishLocationConsent(allowed, persist = false) {
   savePrefs(prefs);
   _closeLocationPrivacyModal();
   updateLocationPrivacyStatus();
-  if (_locationConsentResolver) {
-    const resolve = _locationConsentResolver;
-    _locationConsentResolver = null;
-    resolve(!!allowed);
-  }
+  const resolvers = [..._locationConsentResolvers];
+  _locationConsentResolvers.clear();
+  resolvers.forEach(resolve => resolve(!!allowed));
 }
 
 function _cancelLocationConsent() {
   _closeLocationPrivacyModal();
-  if (_locationConsentResolver) {
-    const resolve = _locationConsentResolver;
-    _locationConsentResolver = null;
-    resolve(false);
-  }
+  const resolvers = [..._locationConsentResolvers];
+  _locationConsentResolvers.clear();
+  resolvers.forEach(resolve => resolve(false));
 }
 
 function requestLocationNetworkConsent() {
   if (hasLocationNetworkConsent()) return Promise.resolve(true);
   const modal = document.getElementById('locationPrivacyModal');
   if (!modal) return Promise.resolve(false);
-  _openLocationPrivacyModal();
-  return new Promise(resolve => { _locationConsentResolver = resolve; });
+  if (!modal.classList.contains('open')) _openLocationPrivacyModal();
+  return new Promise(resolve => { _locationConsentResolvers.add(resolve); });
 }
 
 function openLocationPrivacyManager() {
