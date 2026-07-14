@@ -183,6 +183,29 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
 });
 
+test('the editor remains usable when browser storage is unavailable', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    const rejectStorage = () => { throw new DOMException('Storage is unavailable', 'SecurityError'); };
+    Object.defineProperties(Storage.prototype, {
+      getItem: { configurable: true, value: rejectStorage },
+      setItem: { configurable: true, value: rejectStorage },
+    });
+  });
+  await page.reload();
+
+  await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  const initialLang = await page.locator('html').getAttribute('lang');
+  await page.locator('#langToggleBtn').click();
+  await expect(page.locator('html')).not.toHaveAttribute('lang', initialLang);
+
+  await page.locator('#customizeBtn').click();
+  await page.locator('label:has(input[name="themeChoice"][value="dark"])').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(pageErrors).toEqual([]);
+});
+
 test('in-page language changes refresh generated form control names', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();

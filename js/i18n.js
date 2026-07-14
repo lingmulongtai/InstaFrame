@@ -533,7 +533,10 @@ const I18N = {
 const LANG_STORAGE_KEY = 'instaframe_lang';
 
 function detectInitialLang() {
-  const saved = localStorage.getItem(LANG_STORAGE_KEY);
+  let saved = null;
+  try {
+    saved = localStorage.getItem(LANG_STORAGE_KEY);
+  } catch {}
   if (saved === 'en' || saved === 'ja') return saved;
 
   const langCandidates = [];
@@ -581,7 +584,9 @@ function tf(key, values = {}) {
 
 function setLang(lang) {
   currentLang = (lang === 'ja') ? 'ja' : 'en';
-  localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+  try {
+    localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+  } catch {}
   document.documentElement.setAttribute('lang', currentLang);
   applyTranslations();
   document.dispatchEvent(new CustomEvent('instaframe:languagechange', { detail: { lang: currentLang } }));
