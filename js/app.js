@@ -3417,11 +3417,41 @@ function _syncPreviewZoomControl() {
   if (zoomIn) zoomIn.disabled = previewZoom >= maxZoom;
 }
 
-function setPreviewZoom(zoom) {
-  previewZoom = Math.min(
+function _clampPreviewZoom(zoom) {
+  return Math.min(
     Math.max(zoom, InstaFrameCore.MIN_PREVIEW_ZOOM || 0.5),
     InstaFrameCore.MAX_PREVIEW_ZOOM || 12
   );
+}
+
+function _getPreviewTransformCenter() {
+  const canvas = document.getElementById('livePreviewCanvas');
+  const bounds = canvas?.getBoundingClientRect();
+  if (!bounds?.width || !bounds?.height) return null;
+  return {
+    x: bounds.left + bounds.width / 2 - previewPan.x,
+    y: bounds.top + bounds.height / 2 - previewPan.y,
+  };
+}
+
+function setPreviewZoom(zoom, focalPoint = null) {
+  const nextZoom = _clampPreviewZoom(zoom);
+  const center = focalPoint && _getPreviewTransformCenter();
+  if (center && Number.isFinite(focalPoint.x) && Number.isFinite(focalPoint.y)) {
+    previewPan = InstaFrameCore.getPreviewPanForZoomFocus(
+      previewPan.x,
+      previewPan.y,
+      previewZoom,
+      nextZoom,
+      focalPoint.x,
+      focalPoint.y,
+      focalPoint.x,
+      focalPoint.y,
+      center.x,
+      center.y
+    );
+  }
+  previewZoom = nextZoom;
   applyPreviewTransform();
   _syncPreviewZoomControl();
   updatePreviewViewModifiedState();
@@ -4658,7 +4688,7 @@ function setupDropZone() {
     if (e.deltaY === 0) return;
     e.preventDefault();
     const factor = InstaFrameCore.getPreviewWheelZoomFactor(e.deltaY, e.deltaMode);
-    setPreviewZoom(previewZoom * factor);
+    setPreviewZoom(previewZoom * factor, { x: e.clientX, y: e.clientY });
   }, { passive: false });
 
   // Zoom slider
@@ -4718,9 +4748,19 @@ function setupDropZone() {
   let _pinching  = false;
   let _pinchDist = 0;
   let _pinchZoom = 1.0;
+  let _pinchPan = { x: 0, y: 0 };
+  let _pinchMidpoint = { x: 0, y: 0 };
+  let _pinchCenter = { x: 0, y: 0 };
 
   function _touchDist(t) {
     return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  }
+
+  function _touchMidpoint(t) {
+    return {
+      x: (t[0].clientX + t[1].clientX) / 2,
+      y: (t[0].clientY + t[1].clientY) / 2,
+    };
   }
 
   zone.addEventListener('touchstart', e => {
@@ -4733,6 +4773,9 @@ function setupDropZone() {
       _pinching    = true;
       _pinchDist   = _touchDist(e.touches);
       _pinchZoom   = previewZoom;
+      _pinchPan    = { ...previewPan };
+      _pinchMidpoint = _touchMidpoint(e.touches);
+      _pinchCenter = _getPreviewTransformCenter() || _pinchMidpoint;
       e.preventDefault();
     } else if (e.touches.length === 1 && !_pinching) {
       // One finger → pan
@@ -4748,7 +4791,21 @@ function setupDropZone() {
     if (e.touches.length === 2 && _pinching) {
       const dist  = _touchDist(e.touches);
       const scale = dist / _pinchDist;
-      setPreviewZoom(_pinchZoom * scale);
+      const nextZoom = _clampPreviewZoom(_pinchZoom * scale);
+      const midpoint = _touchMidpoint(e.touches);
+      previewPan = InstaFrameCore.getPreviewPanForZoomFocus(
+        _pinchPan.x,
+        _pinchPan.y,
+        _pinchZoom,
+        nextZoom,
+        _pinchMidpoint.x,
+        _pinchMidpoint.y,
+        midpoint.x,
+        midpoint.y,
+        _pinchCenter.x,
+        _pinchCenter.y
+      );
+      setPreviewZoom(nextZoom);
       e.preventDefault();
     } else if (e.touches.length === 1 && _panDragging) {
       previewPan.x = _panOrigin.x + (e.touches[0].clientX - _panStart.x);

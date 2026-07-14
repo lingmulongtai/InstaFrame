@@ -3253,6 +3253,52 @@ test('zoom controls keep the same visual rate at low and high magnification', as
   await expect(page.locator('#zoomInBtn')).toBeEnabled();
 });
 
+test('wheel and pinch zoom keep the focused image point in place', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.evaluate(() => window.setPreviewZoom(1));
+  const canvas = page.locator('#livePreviewCanvas');
+  const beforeWheel = await canvas.boundingBox();
+  const wheelPoint = {
+    x: beforeWheel.x + beforeWheel.width * 0.75,
+    y: beforeWheel.y + beforeWheel.height * 0.35,
+  };
+  await page.locator('#dropZone').dispatchEvent('wheel', {
+    deltaY: -100,
+    clientX: wheelPoint.x,
+    clientY: wheelPoint.y,
+  });
+  const afterWheel = await canvas.boundingBox();
+  expect((wheelPoint.x - afterWheel.x) / afterWheel.width).toBeCloseTo(0.75, 3);
+  expect((wheelPoint.y - afterWheel.y) / afterWheel.height).toBeCloseTo(0.35, 3);
+
+  await page.evaluate(() => window.resetPreviewView());
+  const beforePinch = await canvas.boundingBox();
+  const startMidpoint = {
+    x: beforePinch.x + beforePinch.width * 0.7,
+    y: beforePinch.y + beforePinch.height * 0.4,
+  };
+  const nextMidpoint = { x: startMidpoint.x + 20, y: startMidpoint.y + 12 };
+  await page.locator('#dropZone').evaluate((zone, points) => {
+    const dispatchTouches = (type, touches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', { value: touches });
+      zone.dispatchEvent(event);
+    };
+    dispatchTouches('touchstart', [
+      { clientX: points.start.x - 40, clientY: points.start.y },
+      { clientX: points.start.x + 40, clientY: points.start.y },
+    ]);
+    dispatchTouches('touchmove', [
+      { clientX: points.next.x - 80, clientY: points.next.y },
+      { clientX: points.next.x + 80, clientY: points.next.y },
+    ]);
+    dispatchTouches('touchend', []);
+  }, { start: startMidpoint, next: nextMidpoint });
+  const afterPinch = await canvas.boundingBox();
+  expect((nextMidpoint.x - afterPinch.x) / afterPinch.width).toBeCloseTo(0.7, 3);
+  expect((nextMidpoint.y - afterPinch.y) / afterPinch.height).toBeCloseTo(0.4, 3);
+});
+
 test('large preview downscaling stays lossless and avoids a JPEG round-trip', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const source = document.createElement('canvas');
