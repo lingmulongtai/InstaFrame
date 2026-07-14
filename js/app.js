@@ -1754,30 +1754,42 @@ async function generateAll() {
   _activeExportController = controller;
   setGlobalBusy(true);
   const total = pending.length;
+  let cancelled = false;
+  let failedCount = 0;
+  let unexpectedError = null;
+  let finishedOwnedExport = false;
 
-  for (let idx = 0; idx < total; idx++) {
-    if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
-    const item     = pending[idx];
-    const basePct  = idx / total;
-    const itemSlot = 1 / total;
-    const prefix   = `${idx + 1} / ${total}`;
+  try {
+    for (let idx = 0; idx < total; idx++) {
+      if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
+      const item     = pending[idx];
+      const basePct  = idx / total;
+      const itemSlot = 1 / total;
+      const prefix   = `${idx + 1} / ${total}`;
 
-    _showOwnedExportProgress(controller,
-      `${prefix}  —  ${item.isVideo ? '▶ ' : ''}${item.file.name}`,
-      basePct
-    );
+      _showOwnedExportProgress(controller,
+        `${prefix}  —  ${item.isVideo ? '▶ ' : ''}${item.file.name}`,
+        basePct
+      );
 
-    await generateItem(item, p => {
-      const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
-      _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
-    }, controller.signal);
+      await generateItem(item, p => {
+        const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
+        _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
+      }, controller.signal);
+    }
+  } catch (error) {
+    unexpectedError = error;
+  } finally {
+    if (_ownsGlobalExport(controller)) {
+      cancelled = controller.signal.aborted;
+      failedCount = pending.filter(item => item.status === 'error').length;
+      finishedOwnedExport = _finishOwnedGlobalExport(controller);
+    }
   }
 
-  if (!_ownsGlobalExport(controller)) return;
-  const cancelled = controller.signal.aborted;
-  const failedCount = pending.filter(item => item.status === 'error').length;
-  if (!_finishOwnedGlobalExport(controller)) return;
+  if (!finishedOwnedExport) return;
   if (cancelled) showToast(t('msgExportCancelled'), 'warn');
+  else if (unexpectedError) showToast(t('msgExportFailed'), 'error');
   else if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
   else showToast(t('msgDone'), 'success');
 }
@@ -1791,15 +1803,26 @@ async function regenerateItem(id) {
   const controller = new AbortController();
   _activeExportController = controller;
   _showOwnedExportProgress(controller, `${item.isVideo ? '▶ ' : ''}${item.file.name}`, 0);
-  await generateItem(
-    item,
-    p => _showOwnedExportProgress(controller, `${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
-    controller.signal
-  );
-  if (!_ownsGlobalExport(controller)) return;
-  const cancelled = controller.signal.aborted;
-  if (!_finishOwnedGlobalExport(controller)) return;
+  let cancelled = false;
+  let unexpectedError = null;
+  let finishedOwnedExport = false;
+  try {
+    await generateItem(
+      item,
+      p => _showOwnedExportProgress(controller, `${item.file.name}  ${item.isVideo ? Math.round(p * 100) + '%' : ''}`, p),
+      controller.signal
+    );
+  } catch (error) {
+    unexpectedError = error;
+  } finally {
+    if (_ownsGlobalExport(controller)) {
+      cancelled = controller.signal.aborted;
+      finishedOwnedExport = _finishOwnedGlobalExport(controller);
+    }
+  }
+  if (!finishedOwnedExport) return;
   if (cancelled) showToast(t('msgExportCancelled'), 'warn');
+  else if (unexpectedError) showToast(t('msgExportFailed'), 'error');
 }
 
 // Apply frame (if needed) then download — used by per-item Download button
@@ -4594,15 +4617,24 @@ function updateItemPreview(item) {
       }
       const maxW = 400, maxH = 400;
       const scale = Math.min(maxW / item.canvas.width, maxH / item.canvas.height);
-      _resizeCanvasBackingStore(
-        existing,
-        Math.round(item.canvas.width * scale),
-        Math.round(item.canvas.height * scale)
-      );
-      existing.getContext('2d').drawImage(item.canvas, 0, 0, existing.width, existing.height);
-
+      let framedPreviewReady = false;
+      try {
+        _resizeCanvasBackingStore(
+          existing,
+          Math.round(item.canvas.width * scale),
+          Math.round(item.canvas.height * scale)
+        );
+        const context = existing.getContext('2d');
+        if (!context) throw new Error('Canvas rendering is unavailable');
+        context.drawImage(item.canvas, 0, 0, existing.width, existing.height);
+        framedPreviewReady = true;
+      } catch (_) {
+        _resizeCanvasBackingStore(existing, 0, 0);
+        existing.remove();
+        if (sourceCanvas) sourceCanvas.style.display = '';
+      }
       const origThumb = previewDiv.querySelector('img.thumb-orig');
-      if (origThumb) origThumb.style.display = 'none';
+      if (origThumb) origThumb.style.display = framedPreviewReady || sourceCanvas ? 'none' : '';
     }
     if (dlBtn) dlBtn.disabled = false;
   } else {

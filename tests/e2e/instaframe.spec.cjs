@@ -1805,6 +1805,42 @@ test('batch encoding failure restores controls and reports the error', async ({ 
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
+test('an unexpected post-export UI failure cannot leave batch controls locked', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.updateItemPreview = () => { throw new Error('simulated post-export UI failure'); };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
+  await expect(page.locator('#toast')).toHaveText(expectedError);
+  expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
+  expect(pageErrors).toEqual([]);
+});
+
+test('an unexpected post-regenerate UI failure cannot leave controls locked', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await page.evaluate(() => {
+    window.updateItemPreview = () => { throw new Error('simulated post-regenerate UI failure'); };
+  });
+
+  await page.evaluate(() => window.regenerateItem(1));
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
+  await expect(page.locator('#toast')).toHaveText(expectedError);
+  expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
+  expect(pageErrors).toEqual([]);
+});
+
 test('single export keeps every export action locked through final encoding', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
@@ -3500,6 +3536,28 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
     expect(result.dimensions.length).toBeGreaterThan(0);
     expect(result.dimensions.every(([width, height]) => width === 0 && height === 0)).toBe(true);
   }
+});
+
+test('a failed generated card canvas falls back to the bounded source thumbnail', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await uploadJpegs(page);
+  await expect(page.locator('canvas.thumb-source')).toBeVisible();
+  await page.evaluate(() => {
+    const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function guardedContext(...args) {
+      if (this.classList.contains('thumb-framed')) return null;
+      return nativeGetContext.apply(this, args);
+    };
+  });
+
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('canvas.thumb-framed')).toHaveCount(0);
+  await expect(page.locator('canvas.thumb-source')).toBeVisible();
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  expect(pageErrors).toEqual([]);
 });
 
 test('successful photo export releases its full-resolution decoder', async ({ page }) => {
