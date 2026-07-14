@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const core = require('../../js/core-utils.js');
 
 test('preview quality changes backing density without changing a layout input', () => {
@@ -123,6 +124,14 @@ test('the repository ships without an unrestricted Mapbox token', () => {
   const config = fs.readFileSync(path.resolve(__dirname, '../../js/config.js'), 'utf8');
   assert.match(config, /publicToken:\s*''/);
   assert.doesNotMatch(config, /publicToken:\s*'pk\./);
+  const sandbox = { window: {} };
+  vm.runInNewContext(config, sandbox, { filename: 'js/config.js' });
+  const mapbox = sandbox.window.INSTAFRAME_CONFIG.mapbox;
+  assert.equal(mapbox.publicToken, '');
+  assert.deepEqual([...mapbox.allowedOrigins], ['https://lingmulongtai.github.io']);
+  assert.equal(mapbox.dailyRequestLimitPerDevice, 100);
+  assert.equal(mapbox.monthlyRequestLimitPerDevice, 1000);
+  assert.equal(Object.isFrozen(mapbox), true);
 });
 
 test('the published page has a self-only CSP with no inline handlers or styles', () => {
