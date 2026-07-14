@@ -5063,6 +5063,8 @@ for (const { extension, mimeType } of [
     });
     await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
     await expect(page.locator('#toast')).toContainText(/decode|デコード/i);
+    await expect(page.locator('#livePreviewError')).toBeVisible();
+    await expect(page.locator('[role="alert"]:visible')).toHaveCount(1);
     await expect(page.locator('.preview-empty-format-note')).toContainText(/HEIC/i);
   });
 }
@@ -5080,6 +5082,8 @@ test('a broken later photo becomes an explicit item and preview error', async ({
   await page.locator('#preview-2').click();
   await expect(page.locator('#livePreviewError')).toBeVisible();
   await expect(page.locator('#livePreviewError')).toContainText('broken.png');
+  await expect(page.locator('[role="alert"]:visible')).toHaveCount(1);
+  await expect(page.locator('#toast')).not.toHaveAttribute('role', 'alert');
   await expect(badge.locator('.status-dot')).not.toHaveClass(/pending/);
 });
 

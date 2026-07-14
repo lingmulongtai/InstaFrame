@@ -1331,7 +1331,7 @@ async function _addFiles(accepted, reservation) {
             _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: file.name });
           }
           updateItemStatus(item);
-          showToast(item.errorMsg, 'error');
+          showToast(item.errorMsg, 'error', { announce: false });
         }
       }
     }
@@ -3715,6 +3715,11 @@ function _setLivePreviewError(message = '') {
   if (message) {
     error.hidden = false;
     error.textContent = message;
+    const toast = document.getElementById('toast');
+    if (toast?.textContent === message && toast.getAttribute('role') === 'alert') {
+      toast.removeAttribute('role');
+      toast.removeAttribute('aria-live');
+    }
     return;
   }
   error.hidden = true;
@@ -4169,8 +4174,9 @@ function _startPhotoThumbnail(item) {
         item.status = 'error';
         const message = _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
         updateItemStatus(item);
-        if (state.selectedItemId === item.id) _setLivePreviewError(message);
-        showToast(message, 'error');
+        const selected = state.selectedItemId === item.id;
+        if (selected) _setLivePreviewError(message);
+        showToast(message, 'error', { announce: !selected });
       }
     })
     .finally(() => {
