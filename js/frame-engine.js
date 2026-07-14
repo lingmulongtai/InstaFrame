@@ -11,6 +11,7 @@ const FrameEngine = (() => {
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
   const IMAGE_ENCODE_GUARD_MS = 60_000;
+  const _canvasEncodeLocks = new WeakMap();
   const VIDEO_METADATA_GUARD_MS = 15_000;
   const VIDEO_PROGRESS_GUARD_MS = 60_000;
   const VIDEO_RECORDER_FLUSH_DELAY_MS = 120;
@@ -763,7 +764,7 @@ const FrameEngine = (() => {
     return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   }
 
-  function canvasToBlob(canvas, {
+  async function canvasToBlob(canvas, {
     format = 'jpeg',
     quality = 0.92,
     signal = null,
@@ -774,6 +775,38 @@ const FrameEngine = (() => {
                :                     'image/jpeg';
     // PNG is lossless — no quality arg
     assertNotAborted(signal);
+    const priorEncode = _canvasEncodeLocks.get(canvas);
+    if (priorEncode) {
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => signal?.removeEventListener('abort', abort);
+        const finish = callback => value => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          callback(value);
+        };
+        const succeed = finish(resolve);
+        const fail = finish(reject);
+        const abort = () => fail(new DOMException('Export cancelled', 'AbortError'));
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+        else priorEncode.then(succeed, fail);
+      });
+      assertNotAborted(signal);
+    }
+
+    let releaseNativeEncode;
+    const nativeEncode = new Promise(resolve => { releaseNativeEncode = resolve; });
+    let nativeEncodeSettled = false;
+    const finishNativeEncode = () => {
+      if (nativeEncodeSettled) return;
+      nativeEncodeSettled = true;
+      if (_canvasEncodeLocks.get(canvas) === nativeEncode) _canvasEncodeLocks.delete(canvas);
+      releaseNativeEncode();
+    };
+    _canvasEncodeLocks.set(canvas, nativeEncode);
+
     return new Promise((resolve, reject) => {
       let settled = false;
       let timeoutId = null;
@@ -803,6 +836,7 @@ const FrameEngine = (() => {
       }, resolveGuardTimeout(timeoutMs, IMAGE_ENCODE_GUARD_MS));
       try {
         canvas.toBlob(async blob => {
+          finishNativeEncode();
           if (settled) return;
           if (!blob) { fail(new Error('Image encoding failed')); return; }
           try {
@@ -817,6 +851,7 @@ const FrameEngine = (() => {
           }
         }, mime, format === 'png' ? undefined : quality);
       } catch (error) {
+        finishNativeEncode();
         fail(error);
       }
     });
