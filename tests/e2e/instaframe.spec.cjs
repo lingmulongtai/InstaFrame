@@ -2338,6 +2338,61 @@ test('concurrent imports share the aggregate item limit', async ({ page }) => {
   expect(await page.evaluate(() => window.__importLimitStats.largeBatchWarnings)).toBe(1);
 });
 
+test('batch actions wait until every accepted import is materialized', async ({ page }) => {
+  const jpegBase64 = createJpeg().toString('base64');
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    let releaseSecondMetadata;
+    const secondMetadata = new Promise(resolve => { releaseSecondMetadata = resolve; });
+    window.__completeImportStats = { parseCalls: 0, renderCalls: 0, downloads: 0 };
+    window.exifr = {
+      parse: () => {
+        window.__completeImportStats.parseCalls += 1;
+        return window.__completeImportStats.parseCalls === 2
+          ? secondMetadata.then(() => null)
+          : Promise.resolve(null);
+      },
+    };
+    const render = window.FrameEngine.renderFrameWhenReady;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      window.__completeImportStats.renderCalls += 1;
+      return render(...args);
+    };
+    HTMLAnchorElement.prototype.click = () => {
+      window.__completeImportStats.downloads += 1;
+    };
+    window.__releaseCompleteImport = releaseSecondMetadata;
+    window.__completeImport = window.addFiles([
+      new File([bytes], 'first-ready.jpg', { type: 'image/jpeg' }),
+      new File([bytes], 'second-waiting.jpg', { type: 'image/jpeg' }),
+    ]);
+  }, jpegBase64);
+
+  await expect.poll(() => page.evaluate(() => window.__completeImportStats.parseCalls)).toBe(2);
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#downloadAllBtn')).toBeDisabled();
+
+  const rendersBeforeBatchActions = await page.evaluate(() => window.__completeImportStats.renderCalls);
+  await page.evaluate(async () => {
+    await Promise.all([window.generateAll(), window.downloadAll()]);
+  });
+  expect(await page.evaluate(() => window.__completeImportStats)).toEqual({
+    parseCalls: 2,
+    renderCalls: rendersBeforeBatchActions,
+    downloads: 0,
+  });
+  await expect(page.locator('#exportProgress')).toBeHidden();
+
+  await page.evaluate(async () => {
+    window.__releaseCompleteImport();
+    await window.__completeImport;
+  });
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+});
+
 test('overflow imports are rejected before a stalled batch can retain them', async ({ page }) => {
   const jpegBase64 = createJpeg().toString('base64');
   await page.evaluate(base64 => {

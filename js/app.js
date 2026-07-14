@@ -1777,7 +1777,7 @@ function _finishOwnedGlobalExport(controller) {
 }
 
 async function generateAll() {
-  if (_globalExportBusy) return;
+  if (_globalExportBusy || _reservedImportItems > 0) return;
   const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
   if (!candidates.length && state.items.length === 0) {
     showToast(t('msgNoImages'), 'warn');
@@ -2020,7 +2020,7 @@ function _generateZipBlob(zip, signal, onUpdate) {
 }
 
 async function downloadAll() {
-  if (_globalExportBusy) return;
+  if (_globalExportBusy || _reservedImportItems > 0) return;
   if (!state.items.length) {
     showToast(t('msgNoImages'), 'warn');
     return;
@@ -4730,8 +4730,8 @@ function updateUI() {
   const dlBtn   = document.getElementById('downloadAllBtn');
   const clrBtn  = document.getElementById('clearAllBtn');
 
-  if (genBtn)  genBtn.disabled  = _globalExportBusy || !hasItems;
-  if (dlBtn)   dlBtn.disabled   = _globalExportBusy || !hasItems;
+  if (genBtn)  genBtn.disabled  = _globalExportBusy || hasPendingImports || !hasItems;
+  if (dlBtn)   dlBtn.disabled   = _globalExportBusy || hasPendingImports || !hasItems;
   if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasWorkspaceItems;
   updateImageCounter();
 
