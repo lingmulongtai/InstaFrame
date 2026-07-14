@@ -4721,6 +4721,14 @@ function updateItemStatus(item) {
   }
 }
 
+function _canExportItem(item) {
+  return !!item && (!item.isVideo || !!item.videoBlob || !!resolveVideoMime(state.settings.exportVideoFormat));
+}
+
+function _hasExportableItems() {
+  return state.items.some(_canExportItem);
+}
+
 function updateItemPreview(item) {
   const previewDiv = document.getElementById(`preview-${item.id}`);
   const dlBtn      = document.getElementById(`dl-btn-${item.id}`);
@@ -4763,7 +4771,7 @@ function updateItemPreview(item) {
       const origThumb = previewDiv.querySelector('img.thumb-orig');
       if (origThumb) origThumb.style.display = framedPreviewReady || sourceCanvas ? 'none' : '';
     }
-    if (dlBtn) dlBtn.disabled = false;
+    if (dlBtn) dlBtn.disabled = !_canExportItem(item);
   } else {
     const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
     const sourceCanvas = previewDiv.querySelector('canvas.thumb-source');
@@ -4779,8 +4787,8 @@ function updateItemPreview(item) {
       if (sourceCanvas) sourceCanvas.style.display = '';
       if (origThumb) origThumb.style.display = sourceCanvas ? 'none' : '';
     }
-    // Download button stays enabled — clicking it will auto-generate then download
-    if (dlBtn) dlBtn.disabled = (item.status === 'processing');
+    // Download stays actionable when this browser can generate the item.
+    if (dlBtn) dlBtn.disabled = item.status === 'processing' || !_canExportItem(item);
   }
 }
 
@@ -4796,6 +4804,7 @@ function updateUI() {
   const hasItems = state.items.length > 0;
   const hasPendingImports = _reservedImportItems > 0;
   const hasWorkspaceItems = hasItems || hasPendingImports;
+  const hasExportableItems = _hasExportableItems();
   const fileInput = document.getElementById('fileInput');
   if (fileInput) {
     fileInput.tabIndex = hasItems ? -1 : 0;
@@ -4813,8 +4822,8 @@ function updateUI() {
   const dlBtn   = document.getElementById('downloadAllBtn');
   const clrBtn  = document.getElementById('clearAllBtn');
 
-  if (genBtn)  genBtn.disabled  = _globalExportBusy || hasPendingImports || !hasItems;
-  if (dlBtn)   dlBtn.disabled   = _globalExportBusy || hasPendingImports || !hasItems;
+  if (genBtn)  genBtn.disabled  = _globalExportBusy || hasPendingImports || !hasExportableItems;
+  if (dlBtn)   dlBtn.disabled   = _globalExportBusy || hasPendingImports || !hasExportableItems;
   if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasWorkspaceItems;
   updateImageCounter();
 
@@ -4855,10 +4864,10 @@ function updateUI() {
     updatePreviewViewModifiedState();
   }
 
-  // Per-item download buttons: always enabled (auto-generate on click)
+  // Per-item download buttons auto-generate only when this browser can export the media.
   state.items.forEach(item => {
     const dlBtn = document.getElementById(`dl-btn-${item.id}`);
-    if (dlBtn) dlBtn.disabled = _globalExportBusy || item.status === 'processing';
+    if (dlBtn) dlBtn.disabled = _globalExportBusy || item.status === 'processing' || !_canExportItem(item);
   });
 }
 
@@ -4868,13 +4877,14 @@ function setGlobalBusy(busy) {
     const activeElement = document.activeElement;
     if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
   }
-  document.getElementById('generateAllBtn').disabled = busy;
-  document.getElementById('downloadAllBtn').disabled = busy;
+  const hasExportableItems = _hasExportableItems();
+  document.getElementById('generateAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
+  document.getElementById('downloadAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
   const clrBtn = document.getElementById('clearAllBtn');
   if (clrBtn) clrBtn.disabled = busy || state.items.length === 0;
   state.items.forEach(item => {
     const itemDownload = document.getElementById(`dl-btn-${item.id}`);
-    if (itemDownload) itemDownload.disabled = busy || item.status === 'processing';
+    if (itemDownload) itemDownload.disabled = busy || item.status === 'processing' || !_canExportItem(item);
   });
 }
 

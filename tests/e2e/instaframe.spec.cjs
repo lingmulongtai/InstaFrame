@@ -2288,6 +2288,34 @@ test('video export controls disappear when MediaRecorder supports no output MIME
   expect(disabledBitrates).toBe(allBitrates);
 });
 
+test('unsupported video export disables only actions that have no exportable media', async ({ page }) => {
+  await page.evaluate(() => {
+    window.MediaRecorder.isTypeSupported = () => false;
+    window.initVideoFormatOptions();
+    window.updateUI();
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'unsupported-export.webm',
+    mimeType: 'video/webm',
+    buffer: createWebm(),
+  });
+
+  await expect(page.locator('#dl-btn-1')).toBeDisabled();
+  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#downloadAllBtn')).toBeDisabled();
+
+  await page.locator('#fileInput').setInputFiles({
+    name: 'exportable-photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: createJpeg(),
+  });
+
+  await expect(page.locator('#dl-btn-1')).toBeDisabled();
+  await expect(page.locator('#dl-btn-2')).toBeEnabled();
+  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+});
+
 test('generic WebM remains selectable when codec-specific recorder MIME types are unavailable', async ({ page }) => {
   await page.evaluate(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', {
