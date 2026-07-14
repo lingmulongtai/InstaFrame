@@ -341,11 +341,17 @@ test('in-page language changes refresh generated form control names', async ({ p
   await page.reload();
   await expect(page.locator('#thicknessRange')).toHaveAccessibleName('Frame Thickness');
   await expect(page.locator('#fontFamily')).toHaveAccessibleName('Font');
+  await expect(page.locator('#thicknessRangeVal')).toHaveAccessibleName('Edit Frame Thickness value');
+  const englishValueNames = await page.locator('.range-val-editable').evaluateAll(elements => (
+    elements.map(element => element.getAttribute('aria-label'))
+  ));
+  expect(new Set(englishValueNames).size).toBe(englishValueNames.length);
 
   await page.locator('#langToggleBtn').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#thicknessRange')).toHaveAccessibleName('フレームの太さ');
   await expect(page.locator('#fontFamily')).toHaveAccessibleName('フォント');
+  await expect(page.locator('#thicknessRangeVal')).toHaveAccessibleName('フレームの太さの値を編集');
 });
 
 test('empty import focus is visible and leaves the tab order after media is added', async ({ page }) => {
