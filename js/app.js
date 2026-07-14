@@ -1354,6 +1354,7 @@ async function removeItem(id, options = {}) {
   const item = state.items.find(candidate => candidate.id === id);
   if (!item) return false;
   if (!skipConfirm && !await requestDestructiveConfirmation({ filename: item.file?.name })) return false;
+  _activeExportController?.abort();
   _cancelLocationOperations(id);
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
