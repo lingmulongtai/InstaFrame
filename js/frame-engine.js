@@ -957,9 +957,17 @@ const FrameEngine = (() => {
       if (signal?.aborted) { abort(); return; }
 
       video.onloadedmetadata = () => {
-        const duration = Number.isFinite(video.duration) ? video.duration : 0;
-        const t = Math.min(atSecond, Math.max(0, duration - 0.05));
-        video.currentTime = t;
+        try {
+          const sourceW = video.videoWidth;
+          const sourceH = video.videoHeight;
+          if (!sourceW || !sourceH) throw new Error('Invalid video dimensions');
+          assertSafeCanvasSize(sourceW, sourceH);
+          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+          const t = Math.min(atSecond, Math.max(0, duration - 0.05));
+          video.currentTime = t;
+        } catch (error) {
+          fail(error);
+        }
       };
 
       video.onseeked = () => {

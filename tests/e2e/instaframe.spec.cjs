@@ -3075,6 +3075,55 @@ test('a hung browser video decoder exits pending state through the app-level gua
   await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /decode|デコード/i);
 });
 
+test('video thumbnails reject oversized dimensions before seeking and release their source', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    let seekCalls = 0;
+    let sourceRemoved = false;
+    let loadCalls = 0;
+
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        duration: 2,
+        videoWidth: 20_000,
+        videoHeight: 10_000,
+        pause() {},
+        removeAttribute(name) { if (name === 'src') sourceRemoved = true; },
+        load() {
+          loadCalls += 1;
+          if (loadCalls === 1) queueMicrotask(() => this.onloadedmetadata?.());
+        },
+        set currentTime(_value) { seekCalls += 1; },
+      };
+    };
+
+    const errorCode = await window.FrameEngine.captureVideoFrame(
+      new File(['video'], 'oversized-thumbnail.webm', { type: 'video/webm' })
+    ).then(() => 'NO_ERROR', error => error.code || error.name);
+    return { errorCode, seekCalls, sourceRemoved, activeUrls: activeUrls.size };
+  });
+
+  expect(result).toEqual({
+    errorCode: 'MEDIA_RESOURCE_LIMIT',
+    seekCalls: 0,
+    sourceRemoved: true,
+    activeUrls: 0,
+  });
+});
+
 test('thumbnail cancellation ignores a late canvas encoder callback without leaking a Blob URL', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const nativeCreateElement = document.createElement.bind(document);
