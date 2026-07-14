@@ -1862,13 +1862,17 @@ async function downloadAll() {
 
   // Auto-generate any pending items first
   const pending = state.items.filter(i => i.status === 'pending');
+  const generationWeight = pending.length ? 0.55 : 0;
+  const packingWeight = pending.length ? 0.25 : 0.7;
+  const packingStart = generationWeight;
+  const zipStart = packingStart + packingWeight;
   if (pending.length) {
     const total = pending.length;
     for (let idx = 0; idx < total; idx++) {
       if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
       const item    = pending[idx];
-      const basePct = idx / total;
-      const slot    = 1 / total;
+      const basePct = generationWeight * (idx / total);
+      const slot    = generationWeight / total;
       const prefix  = `${idx + 1} / ${total}`;
       _showOwnedExportProgress(controller, `${prefix}  —  ${item.file.name}`, basePct);
       await generateItem(item, p => {
@@ -1892,7 +1896,7 @@ async function downloadAll() {
     return;
   }
 
-  _showOwnedExportProgress(controller, t('progressPreparing'), 0);
+  _showOwnedExportProgress(controller, t('progressPreparing'), packingStart);
 
   let JSZipCtor;
   try {
@@ -1942,7 +1946,7 @@ async function downloadAll() {
       _showOwnedExportProgress(
         controller,
         tf('progressPacking', { current: i + 1, total, name: item.file.name }),
-        (i / total) * 0.7
+        packingStart + (i / total) * packingWeight
       );
 
       if (item.isVideo && item.videoBlob) {
@@ -1975,7 +1979,7 @@ async function downloadAll() {
   let zipBlob;
   try {
     zipBlob = await _generateZipBlob(zip, controller.signal, meta => {
-      _showOwnedExportProgress(controller, t('progressZip'), 0.7 + 0.3 * (meta.percent / 100));
+      _showOwnedExportProgress(controller, t('progressZip'), zipStart + (1 - zipStart) * (meta.percent / 100));
     });
     const actualPeak = InstaFrameCore.estimateZipPeakBytes(
       retainedBytes,
@@ -2001,6 +2005,7 @@ async function downloadAll() {
     showToast(t('msgExportCancelled'), 'warn');
     return;
   }
+  _showOwnedExportProgress(controller, t('progressZip'), 1);
   try {
     triggerDownload(zipBlob, 'instaframe_export.zip');
   } catch (_) {
