@@ -1591,15 +1591,23 @@ input[type="range"]:focus-visible {
   display: none;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  padding:
+    max(12px, var(--safe-area-top))
+    max(12px, var(--safe-area-right))
+    max(12px, var(--safe-area-bottom))
+    max(12px, var(--safe-area-left));
 }
 .map-modal.open { display: flex; }
 
-.privacy-modal-content { width: min(620px, calc(100vw - 28px)); }
+.privacy-modal-content { width: min(620px, 100%); }
 .privacy-modal-body {
+  min-height: 0;
   padding: 18px 20px 10px;
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
+  overflow-y: auto;
 }
 .privacy-modal-body ul { margin: 12px 0 12px 20px; }
 .privacy-modal-body li { margin-bottom: 5px; }
@@ -1613,6 +1621,7 @@ input[type="range"]:focus-visible {
 .privacy-modal-actions {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   flex-wrap: wrap;
   gap: 7px;
   padding: 12px 20px 18px;
@@ -1625,8 +1634,10 @@ input[type="range"]:focus-visible {
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  width: min(680px, 95vw);
-  height: min(520px, 90vh);
+  width: min(680px, 100%);
+  height: min(520px, 100%);
+  max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
 }
 
@@ -1649,10 +1660,11 @@ input[type="range"]:focus-visible {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
-  width: min(430px, calc(100vw - 28px));
+  width: min(430px, 100%);
   height: auto;
+  max-height: 100%;
   padding: 20px;
-  overflow: visible;
+  overflow-y: auto;
 }
 .confirm-modal-icon {
   display: grid;
@@ -1724,8 +1736,10 @@ input[type="range"]:focus-visible {
 
 /* ── Share modal ─────────────────────────────────────────────────────────────── */
 .share-modal-content {
-  width: min(560px, 94vw);
+  width: min(560px, 100%);
   height: auto;
+  max-height: 100%;
+  overflow-y: auto;
 }
 .share-modal-body {
   padding: 14px 16px 16px;

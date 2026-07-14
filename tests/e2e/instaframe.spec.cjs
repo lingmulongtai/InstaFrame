@@ -5758,6 +5758,53 @@ test('mobile controls stay inside simulated top and side safe areas', async ({ p
   expect(layout.sidebar.right).toBeLessThanOrEqual(667 - 20);
 });
 
+test('short mobile consent modal respects safe areas and keeps actions reachable', async ({ page }) => {
+  await page.locator('#customizeBtn').click();
+  await page.locator('#manageLocationPrivacyBtn').click();
+  await page.setViewportSize({ width: 667, height: 240 });
+  await page.evaluate(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--safe-area-top', '24px');
+    root.setProperty('--safe-area-right', '20px');
+    root.setProperty('--safe-area-bottom', '18px');
+    root.setProperty('--safe-area-left', '36px');
+  });
+
+  const layout = await page.locator('#locationPrivacyModal').evaluate(modal => {
+    const content = modal.querySelector('.map-modal-content');
+    const body = modal.querySelector('.privacy-modal-body');
+    const actions = modal.querySelector('.privacy-modal-actions');
+    const rect = element => {
+      const bounds = element.getBoundingClientRect();
+      return { top: bounds.top, right: bounds.right, bottom: bounds.bottom, left: bounds.left };
+    };
+    return {
+      content: rect(content),
+      actions: rect(actions),
+      buttons: [...actions.querySelectorAll('button')].map(rect),
+      bodyClientHeight: body.clientHeight,
+      bodyScrollHeight: body.scrollHeight,
+      bodyOverflowY: getComputedStyle(body).overflowY,
+    };
+  });
+
+  expect(layout.content.top).toBeGreaterThanOrEqual(24);
+  expect(layout.content.left).toBeGreaterThanOrEqual(36);
+  expect(layout.content.right).toBeLessThanOrEqual(667 - 20);
+  expect(layout.content.bottom).toBeLessThanOrEqual(240 - 18);
+  expect(layout.actions.top).toBeGreaterThanOrEqual(layout.content.top);
+  expect(layout.actions.bottom).toBeLessThanOrEqual(layout.content.bottom);
+  for (const button of layout.buttons) {
+    expect(button.top).toBeGreaterThanOrEqual(layout.actions.top);
+    expect(button.bottom).toBeLessThanOrEqual(layout.actions.bottom);
+  }
+  expect(layout.bodyOverflowY).toBe('auto');
+  expect(layout.bodyScrollHeight).toBeGreaterThan(layout.bodyClientHeight);
+  await expect(page.locator('#locationPrivacyOnceBtn')).toBeVisible();
+  await page.locator('#locationPrivacyOnceBtn').focus();
+  await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
+});
+
 test('short mobile Photos view keeps its empty import action visible and scrollable', async ({ page }) => {
   await page.setViewportSize({ width: 667, height: 240 });
   await page.reload();
