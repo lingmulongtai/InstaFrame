@@ -35,6 +35,14 @@
       progress * (PREVIEW_ZOOM_SLIDER_MAX - PREVIEW_ZOOM_SLIDER_MIN);
   }
 
+  function getPreviewWheelZoomFactor(deltaY, deltaMode = 0) {
+    const rawDelta = Number(deltaY) || 0;
+    const mode = Number(deltaMode) || 0;
+    const pixelDelta = rawDelta * (mode === 1 ? 100 / 3 : mode === 2 ? 240 : 1);
+    const boundedDelta = Math.max(-240, Math.min(240, pixelDelta));
+    return Math.pow(1.12, -boundedDelta / 100);
+  }
+
   /**
    * Return backing-store pixels per CSS pixel. Composition is rendered once at
    * a stable logical size; only this density changes between quality choices.
@@ -111,6 +119,7 @@
     normalizePreviewQuality,
     getPreviewZoomForSliderValue,
     getPreviewSliderValueForZoom,
+    getPreviewWheelZoomFactor,
     getPreviewBackingScale,
     getBudgetedPreviewBackingScale,
     estimateZipPeakBytes,
