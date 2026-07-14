@@ -81,6 +81,7 @@ const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_LIVE_PREVIEW_DETAIL_PIXELS = 8_000_000;
+const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 768px), (max-width: 1024px) and (max-height: 500px) and (orientation: landscape)';
 const MAX_ACTIVE_PHOTO_THUMBNAILS = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
@@ -100,6 +101,10 @@ let _reservedImportBytes = 0;
 const _activeImportReservations = new Set();
 let _pageResourcesReleased = false;
 const _pageRestoreWaiters = new Set();
+
+function _usesMobileLayout() {
+  return window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+}
 const APP_ASSET_VERSION = (() => {
   try {
     return new URL(document.currentScript?.src || '', document.baseURI).searchParams.get('v') || '';
@@ -121,7 +126,7 @@ function _getLivePreviewBackingScale(cssWidth, cssHeight) {
     window.devicePixelRatio,
     previewZoom
   );
-  const pixelBudget = window.matchMedia('(max-width: 768px)').matches
+  const pixelBudget = _usesMobileLayout()
     ? MAX_LIVE_PREVIEW_PIXELS_MOBILE
     : MAX_LIVE_PREVIEW_PIXELS_DESKTOP;
   return {
@@ -238,7 +243,7 @@ function _syncPreviewControlAvailability() {
   const hasPreview = zone.classList.contains('has-preview');
   const hasVideo = hasPreview && zone.classList.contains('has-video');
   const viewModified = hasPreview && zone.classList.contains('view-modified');
-  const mobileExifOpen = window.matchMedia('(max-width: 768px)').matches
+  const mobileExifOpen = _usesMobileLayout()
     && document.getElementById('previewExifWrap')?.classList.contains('exif-open');
   const availability = [
     ['previewHistoryWrap', hasPreview],
@@ -336,7 +341,7 @@ function _restoreModalTriggerFocus(target) {
     if (!target.isConnected || document.querySelector('.map-modal.open')) return;
     let fallbackTab = null;
     const panel = target.closest?.('.mobile-tab-panel');
-    if (window.innerWidth <= 768 && panel && (panel.hidden || panel.inert)) {
+    if (_usesMobileLayout() && panel && (panel.hidden || panel.inert)) {
       const tabBar = document.getElementById('mobileTabBar');
       fallbackTab = [...(tabBar?.querySelectorAll('.tab-btn') || [])]
         .find(button => button.getAttribute('aria-controls') === panel.id) || null;
@@ -1539,7 +1544,7 @@ async function clearAllItems(skipConfirm = false) {
 }
 
 function _getEmptyImportFocusTarget() {
-  const mobilePhotosTab = window.innerWidth <= 768
+  const mobilePhotosTab = _usesMobileLayout()
     && document.body.getAttribute('data-mobile-tab') === 'photos';
   return mobilePhotosTab
     ? document.getElementById('mobileAddBtn')
@@ -1547,7 +1552,7 @@ function _getEmptyImportFocusTarget() {
 }
 
 function _getLoadedMediaFocusTarget() {
-  const mobilePreviewTab = window.innerWidth <= 768
+  const mobilePreviewTab = _usesMobileLayout()
     && document.body.getAttribute('data-mobile-tab') === 'preview';
   if (mobilePreviewTab) {
     const hasVideo = document.getElementById('dropZone')?.classList.contains('has-video');
@@ -3542,7 +3547,7 @@ function applyPreviewTransform() {
 }
 
 function _isHorizontalPreviewZoomControl() {
-  return window.matchMedia('(max-width: 768px) and (max-height: 480px)').matches;
+  return window.matchMedia('(max-width: 1024px) and (max-height: 480px) and (orientation: landscape)').matches;
 }
 
 function _syncPreviewZoomControl() {
@@ -3644,7 +3649,7 @@ function selectItem(id) {
     el.querySelector('.card-preview')?.setAttribute('aria-pressed', 'true');
   }
   // On mobile: auto-switch to preview tab so user can see the result
-  if (window.innerWidth <= 768) {
+  if (_usesMobileLayout()) {
     document.body.setAttribute('data-mobile-tab', 'preview');
     _setMobileTabState(document.getElementById('mobileTabBar'), 'preview');
     // The Photos panel becomes inert immediately. Wait for the newly selected
@@ -4727,7 +4732,7 @@ function updateUI() {
   const resizeHandle = document.getElementById('mainResizeHandle');
   if (resizeHandle) {
     resizeHandle.style.display = hasItems ? 'block' : 'none';
-    resizeHandle.tabIndex = hasItems && window.innerWidth > 768 ? 0 : -1;
+    resizeHandle.tabIndex = hasItems && !_usesMobileLayout() ? 0 : -1;
   }
 
   // Update mobile tap-to-import overlay
@@ -6010,14 +6015,14 @@ function _setMobileTabState(tabBar, tab) {
     btn.setAttribute('aria-selected', String(selected));
     btn.tabIndex = selected ? 0 : -1;
   });
-  _syncMobileTabPanels(tabBar, tab, window.innerWidth <= 768);
+  _syncMobileTabPanels(tabBar, tab, _usesMobileLayout());
 }
 
 function setupMobileTabs() {
   const tabBar = document.getElementById('mobileTabBar');
   if (!tabBar) return;
 
-  function isMobile() { return window.innerWidth <= 768; }
+  function isMobile() { return _usesMobileLayout(); }
   let mobileLayoutActive = isMobile();
   let lastFocusedMobileTab = null;
   let lastFocusedResizeHandleTab = null;

@@ -6668,6 +6668,87 @@ test('short landscape preview exposes a horizontal zoom control without clipping
   await expect(zoom).toHaveAttribute('aria-valuenow', '1200');
 });
 
+test('wide phone landscapes keep mobile tabs, media controls, and safe areas usable', async ({ page }) => {
+  for (const height of [393, 240]) {
+    await page.setViewportSize({ width: 852, height });
+    await page.reload();
+    await page.evaluate(() => {
+      const root = document.documentElement.style;
+      root.setProperty('--safe-area-top', '0px');
+      root.setProperty('--safe-area-right', '47px');
+      root.setProperty('--safe-area-bottom', '21px');
+      root.setProperty('--safe-area-left', '47px');
+    });
+
+    await expect(page.locator('#mobileTabBar')).toBeVisible();
+    await expect(page.locator('body')).toHaveAttribute('data-mobile-tab', 'preview');
+    await page.locator('#fileInput').setInputFiles([
+      { name: `wide-photo-${height}.jpg`, mimeType: 'image/jpeg', buffer: createJpeg() },
+      { name: `wide-video-${height}.webm`, mimeType: 'video/webm', buffer: createWebm() },
+    ]);
+    await page.locator('#tabPhotosBtn').click();
+    await page.locator('#preview-2').click();
+    await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
+    await expect(page.locator('#previewVideoBar')).toBeVisible();
+    await page.locator('.preview-exif-drawer-header').click();
+    await expect(page.locator('#zoomRange')).toHaveAttribute('aria-orientation', 'horizontal');
+
+    const previewLayout = await page.evaluate(() => {
+      const rect = selector => {
+        const bounds = document.querySelector(selector).getBoundingClientRect();
+        return { top: bounds.top, right: bounds.right, bottom: bounds.bottom, left: bounds.left };
+      };
+      return {
+        preview: rect('#dropZone'),
+        zoom: rect('#previewZoomBar'),
+        video: rect('#previewVideoBar'),
+        firstTab: rect('#tabPreviewBtn'),
+        lastTab: rect('#tabSettingsBtn'),
+      };
+    });
+    for (const control of [
+      previewLayout.preview,
+      previewLayout.zoom,
+      previewLayout.video,
+      previewLayout.firstTab,
+      previewLayout.lastTab,
+    ]) {
+      expect(control.left, `${height}px-high landscape left safe area`).toBeGreaterThanOrEqual(47);
+      expect(control.right, `${height}px-high landscape right safe area`).toBeLessThanOrEqual(852 - 47);
+    }
+    expect(previewLayout.preview.bottom).toBeLessThanOrEqual(height - 77);
+    expect(previewLayout.zoom.top).toBeGreaterThanOrEqual(previewLayout.preview.top);
+    expect(previewLayout.zoom.bottom).toBeLessThanOrEqual(previewLayout.preview.bottom);
+    expect(previewLayout.video.top).toBeGreaterThanOrEqual(previewLayout.preview.top);
+    expect(previewLayout.video.bottom).toBeLessThanOrEqual(previewLayout.preview.bottom);
+    const controlsOverlap = !(
+      previewLayout.zoom.right <= previewLayout.video.left ||
+      previewLayout.zoom.left >= previewLayout.video.right ||
+      previewLayout.zoom.bottom <= previewLayout.video.top ||
+      previewLayout.zoom.top >= previewLayout.video.bottom
+    );
+    expect(controlsOverlap, `${height}px-high landscape zoom/video overlap`).toBe(false);
+
+    await page.locator('#tabPhotosBtn').click();
+    await expect(page.locator('#photosPanel')).toBeVisible();
+    const photos = await page.locator('#photosPanel').boundingBox();
+    expect(photos.width).toBeGreaterThan(0);
+    expect(photos.height).toBeGreaterThan(0);
+    expect(photos.x).toBeGreaterThanOrEqual(47);
+    expect(photos.x + photos.width).toBeLessThanOrEqual(852 - 47);
+    expect(photos.y + photos.height).toBeLessThanOrEqual(height - 77);
+
+    await page.locator('#tabSettingsBtn').click();
+    await expect(page.locator('.sidebar')).toBeVisible();
+    const sidebar = await page.locator('.sidebar').boundingBox();
+    expect(sidebar.width).toBeGreaterThan(0);
+    expect(sidebar.height).toBeGreaterThan(0);
+    expect(sidebar.x).toBeGreaterThanOrEqual(47);
+    expect(sidebar.x + sidebar.width).toBeLessThanOrEqual(852 - 47);
+    expect(sidebar.y + sidebar.height).toBeLessThanOrEqual(height - 77);
+  }
+});
+
 test('short mobile consent modal respects safe areas and keeps actions reachable', async ({ page }) => {
   await page.locator('#customizeBtn').click();
   await page.locator('#manageLocationPrivacyBtn').click();

@@ -2391,7 +2391,8 @@ input[type="range"]:focus-visible {
 }
 
 /* ── Mobile: tab-bar layout ──────────────────────────────────────────────────── */
-@media (max-width: 768px) {
+@media (max-width: 768px),
+       (max-width: 1024px) and (max-height: 500px) and (orientation: landscape) {
   :root { --tab-bar-h: calc(56px + var(--safe-area-bottom)); }
 
   /* Keep tab targets clear of the home indicator and landscape notches. */
@@ -2748,7 +2749,7 @@ input[type="range"]:focus-visible {
   }
 }
 
-@media (max-width: 768px) and (max-height: 480px) {
+@media (max-width: 1024px) and (max-height: 480px) and (orientation: landscape) {
   .preview-zoom-bar {
     right: 50%;
     top: auto;
