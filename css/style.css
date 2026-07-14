@@ -1134,6 +1134,11 @@ input[type="range"]:focus-visible {
   font-family: inherit;
 }
 .zoom-btn:hover { background: rgba(255,255,255,0.28); }
+.zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.zoom-btn:disabled:hover { background: rgba(255,255,255,0.14); }
 
 #zoomRange {
   /* Vertical slider */
@@ -1148,15 +1153,22 @@ input[type="range"]:focus-visible {
 #zoomRange::-moz-range-thumb { background: white; border: none; }
 
 .zoom-label {
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 5px;
+  background: rgba(255,255,255,0.12);
   font-size: 10px;
-  color: rgba(255,255,255,0.65);
-  min-width: 28px;
+  color: rgba(255,255,255,0.92);
+  min-width: 40px;
   text-align: center;
+  font-family: inherit;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   user-select: none;
   writing-mode: horizontal-tb;
 }
+.zoom-label:hover { background: rgba(255,255,255,0.22); }
 
 /* ── Preview Quality Button ───────────────────────────────────────────────────── */
 .preview-quality-wrap {

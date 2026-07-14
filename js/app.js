@@ -3311,6 +3311,8 @@ function applyPreviewTransform() {
 
 function _syncPreviewZoomControl() {
   const percent = Math.round(previewZoom * 100);
+  const minZoom = InstaFrameCore.MIN_PREVIEW_ZOOM || 0.5;
+  const maxZoom = InstaFrameCore.MAX_PREVIEW_ZOOM || 12;
   const range = document.getElementById('zoomRange');
   if (range) {
     range.value = Math.round(InstaFrameCore.getPreviewSliderValueForZoom(previewZoom));
@@ -3318,6 +3320,10 @@ function _syncPreviewZoomControl() {
   }
   const label = document.getElementById('zoomLabel');
   if (label) label.textContent = `${percent}%`;
+  const zoomOut = document.getElementById('zoomOutBtn');
+  const zoomIn = document.getElementById('zoomInBtn');
+  if (zoomOut) zoomOut.disabled = previewZoom <= minZoom;
+  if (zoomIn) zoomIn.disabled = previewZoom >= maxZoom;
 }
 
 function setPreviewZoom(zoom) {
