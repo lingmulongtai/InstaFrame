@@ -1266,6 +1266,32 @@ test('share dialog supports axe, Escape, and focus return', async ({ page }) => 
   await page.keyboard.press('Escape');
 });
 
+test('legacy share copying reports failure and removes its temporary control', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'en');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    });
+    document.execCommand = () => false;
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    });
+    document.execCommand = () => false;
+  });
+
+  await page.locator('#shareAppBtn').click();
+  await page.locator('#copyShareUrlBtn').click();
+
+  await expect(page.locator('#shareModalStatus')).toContainText(/could not copy/i);
+  await expect(page.locator('#shareAppModal textarea')).toHaveCount(0);
+  await expect(page.locator('#toast')).not.toHaveAttribute('role', /.+/);
+});
+
 test('a late clipboard result cannot update a newly reopened share dialog', async ({ page }) => {
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', {
