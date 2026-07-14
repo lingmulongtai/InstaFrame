@@ -81,6 +81,28 @@ test('browser contract runs against the allowlisted release artifact', async ({ 
   ]);
 });
 
+test('cross-origin media requests expose only the deployment origin as referrer', async ({ page }) => {
+  await page.route('https://api.mapbox.com/**', route => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: Buffer.alloc(0),
+  }));
+  await page.goto('/?local-setting=must-not-leak');
+  const requestPromise = page.waitForRequest(request => request.url() === 'https://api.mapbox.com/referrer-check.png');
+  await page.evaluate(() => new Promise(resolve => {
+    const image = new Image();
+    image.onload = resolve;
+    image.onerror = resolve;
+    image.src = 'https://api.mapbox.com/referrer-check.png';
+  }));
+  const request = await requestPromise;
+  const referrer = new URL(request.headers().referer);
+  const pageUrl = new URL(page.url());
+  expect(referrer.origin).toBe(pageUrl.origin);
+  expect(referrer.pathname).toBe('/');
+  expect(referrer.search).toBe('');
+});
+
 test('video audio routing keeps native, Mozilla, and Web Audio fallbacks portable', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const file = new File([new Uint8Array(2 * 1024 * 1024 + 64)], 'portable-audio.mp4', {

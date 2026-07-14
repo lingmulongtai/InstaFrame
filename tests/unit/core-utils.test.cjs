@@ -127,6 +127,7 @@ test('the repository ships without an unrestricted Mapbox token', () => {
 
 test('the published page has a self-only CSP with no inline handlers or styles', () => {
   const index = fs.readFileSync(path.resolve(__dirname, '../../index.html'), 'utf8');
+  assert.match(index, /<meta name="referrer" content="strict-origin-when-cross-origin">/);
   assert.match(index, /Content-Security-Policy/);
   assert.match(index, /script-src 'self'/);
   assert.match(index, /style-src 'self'; font-src 'self'/);
