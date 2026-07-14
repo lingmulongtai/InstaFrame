@@ -5688,7 +5688,9 @@ function _isTypingTarget(target) {
 }
 
 function _isInteractiveShortcutTarget(target) {
-  return !!target?.closest?.('button, a, [role="button"], [role="radio"], [role="tab"], [role="menuitem"]');
+  return !!target?.closest?.(
+    'button, a, [role="button"], [role="radio"], [role="tab"], [role="menuitem"], [role="slider"], [role="separator"]'
+  );
 }
 
 function setupKeyboardShortcuts() {

@@ -8332,6 +8332,24 @@ test('custom delete confirmation supports cancel, Escape, focus, and clear all',
   await expect(page.locator('#fileInput')).toBeFocused();
 });
 
+test('Delete shortcuts ignore ARIA sliders and separators but work from the workspace', async ({ page }) => {
+  await uploadJpegs(page);
+  const confirmModal = page.locator('#destructiveConfirmModal');
+
+  await page.locator('#zoomRange').focus();
+  await page.keyboard.press('Delete');
+  await expect(confirmModal).not.toHaveClass(/open/);
+
+  await page.locator('#sidebarResizeHandle').focus();
+  await page.keyboard.press('Backspace');
+  await expect(confirmModal).not.toHaveClass(/open/);
+  await expect(page.locator('.image-card')).toHaveCount(1);
+
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Delete');
+  await expect(confirmModal).toHaveClass(/open/);
+});
+
 test('WebM input exports a decodable framed video', async ({ page }) => {
   test.skip(process.platform === 'win32', 'Headless Chromium on Windows intermittently crashes while recording canvas video');
   await page.locator('#fileInput').setInputFiles({
