@@ -5705,6 +5705,59 @@ test('device location stays bound to the photo that requested it', async ({ page
   await expect(page.locator('#live-exif-location')).toHaveValue('');
 });
 
+test('an older device-location callback cannot overwrite an explicit map choice', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+  });
+  await page.reload();
+  await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\//, route => route.abort());
+  await page.route('https://nominatim.openstreetmap.org/**', route => {
+    const latitude = Number(new URL(route.request().url()).searchParams.get('lat'));
+    const city = latitude < 35 ? 'Old Device City' : 'Explicit Map City';
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ address: { city, country: 'Japan' } }),
+    });
+  });
+  await page.evaluate(() => {
+    window.__deviceLocationReverseCalls = 0;
+    const fetch = window.fetch;
+    window.fetch = (input, options) => {
+      const url = String(input);
+      if (url.startsWith('https://nominatim.openstreetmap.org/reverse')) {
+        const latitude = Number(new URL(url).searchParams.get('lat'));
+        if (latitude < 35) window.__deviceLocationReverseCalls += 1;
+      }
+      return fetch(input, options);
+    };
+    let geolocationCalls = 0;
+    navigator.geolocation.getCurrentPosition = success => {
+      geolocationCalls += 1;
+      if (geolocationCalls === 1) window.__resolveOldDeviceLocation = success;
+    };
+  });
+  await uploadJpegs(page);
+
+  await page.locator('#getDeviceLocationBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__resolveOldDeviceLocation)).toBe('function');
+  await page.locator('#openMapPickerBtn').click();
+  await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
+  await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#selectMapCenterBtn').click();
+  await page.locator('#confirmMapLocationBtn').click();
+  await expect(page.locator('#mapPickerModal')).not.toHaveClass(/open/);
+  await expect(page.locator('#live-exif-location')).toHaveValue('Explicit Map City, Japan');
+
+  await page.evaluate(() => window.__resolveOldDeviceLocation({
+    coords: { latitude: 34.6937, longitude: 135.5023 },
+  }));
+  await page.waitForTimeout(100);
+
+  await expect(page.locator('#live-exif-location')).toHaveValue('Explicit Map City, Japan');
+  expect(await page.evaluate(() => window.__deviceLocationReverseCalls)).toBe(0);
+});
+
 test('removing a photo aborts its in-flight place-name lookup', async ({ page }) => {
   await uploadJpegs(page, 1, true);
   await page.evaluate(() => {
