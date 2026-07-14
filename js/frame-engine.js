@@ -1198,9 +1198,9 @@ const FrameEngine = (() => {
       if (file.size > sampleSize) {
         samples.push(await _readBlobBytesWithSignal(file.slice(Math.max(0, file.size - sampleSize)), signal));
       }
-      if (isWebM) return samples.some(bytes => contains(bytes, [0x83, 0x81, 0x02])); // EBML TrackType = audio
-      if (isMp4) return samples.some(bytes => contains(bytes, [0x73, 0x6f, 0x75, 0x6e])); // MP4 handler "soun"
-      return samples.some(bytes => contains(bytes, [0x61, 0x75, 0x64, 0x73])); // AVI stream "auds"
+      if (isWebM) return samples.some(bytes => contains(bytes, [0x83, 0x81, 0x02])) || null; // EBML TrackType = audio
+      if (isMp4) return samples.some(bytes => contains(bytes, [0x73, 0x6f, 0x75, 0x6e])) || null; // MP4 handler "soun"
+      return samples.some(bytes => contains(bytes, [0x61, 0x75, 0x64, 0x73])) || null; // AVI stream "auds"
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       return null;
@@ -1375,11 +1375,9 @@ const FrameEngine = (() => {
 
         // ── Preserve the source audio without playing it on the page ──
         let audioTrack = null;
-        let captureStreamAvailable = false;
         try {
           const capture = video.captureStream || video.mozCaptureStream;
           if (capture && sourceHasAudio !== false) {
-            captureStreamAvailable = true;
             sourceStream = capture.call(video);
             audioTrack = sourceStream.getAudioTracks()[0] || null;
           }
@@ -1387,7 +1385,7 @@ const FrameEngine = (() => {
 
         // Older browsers without HTMLMediaElement.captureStream use Web Audio.
         try {
-          if (!audioTrack && !captureStreamAvailable && sourceHasAudio !== false) {
+          if (!audioTrack && sourceHasAudio !== false) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             audioContext.resume().catch(() => {});
             const src  = audioContext.createMediaElementSource(video);

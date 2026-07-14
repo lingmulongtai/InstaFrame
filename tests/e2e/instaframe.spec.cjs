@@ -2750,6 +2750,84 @@ test('large preview downscaling stays lossless and avoids a JPEG round-trip', as
   expect(result.dimensions.width).toBeLessThan(60);
 });
 
+test('uncertain audio hints use native capture and Web Audio fallback', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const file = new File([new Uint8Array(2 * 1024 * 1024 + 64)], 'sparse-audio.mp4', { type: 'video/mp4' });
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCanvasCapture = HTMLCanvasElement.prototype.captureStream;
+    const NativeMediaRecorder = window.MediaRecorder;
+    const NativeAudioContext = window.AudioContext;
+    const captureCalls = { native: 0, fallback: 0 };
+    const addedTracks = { native: 0, fallback: 0 };
+    let audioContextCreations = 0;
+    let mode = 'native';
+
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      const capturedTrack = { kind: 'audio', stop() {} };
+      return {
+        videoWidth: 320,
+        videoHeight: 180,
+        duration: 1,
+        currentTime: 0,
+        ended: false,
+        paused: true,
+        src: '',
+        captureStream() {
+          captureCalls[mode] += 1;
+          const tracks = mode === 'native' ? [capturedTrack] : [];
+          return { getAudioTracks() { return tracks; }, getTracks() { return tracks; } };
+        },
+        pause() { this.paused = true; },
+        removeAttribute(name) { if (name === 'src') this.src = ''; },
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({
+      addTrack() { addedTracks[mode] += 1; },
+      getTracks() { return []; },
+    });
+    window.AudioContext = class FakeAudioContext {
+      constructor() { audioContextCreations += 1; this.state = 'running'; }
+      resume() { return Promise.resolve(); }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+      createMediaElementSource() { return { connect() {} }; }
+      createMediaStreamDestination() {
+        return { stream: { getAudioTracks() { return [{ kind: 'audio', stop() {} }]; } } };
+      }
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { throw new Error('stop after audio setup'); }
+    };
+
+    const run = async nextMode => {
+      mode = nextMode;
+      try {
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+      } catch (error) {
+        if (error.message !== 'stop after audio setup') throw error;
+      }
+    };
+    try {
+      await run('native');
+      await run('fallback');
+    } finally {
+      document.createElement = nativeCreateElement;
+      HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
+      window.MediaRecorder = NativeMediaRecorder;
+      window.AudioContext = NativeAudioContext;
+    }
+    return { captureCalls, addedTracks, audioContextCreations };
+  });
+
+  expect(result).toEqual({
+    captureCalls: { native: 1, fallback: 1 },
+    addedTracks: { native: 1, fallback: 1 },
+    audioContextCreations: 1,
+  });
+});
+
 test('MediaRecorder setup exceptions reject and revoke their source URL', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
