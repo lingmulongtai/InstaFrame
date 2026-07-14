@@ -274,6 +274,33 @@ test('dynamic color and location controls expose localized group names', async (
   await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('マップアイコン');
 });
 
+test('saved map overlay is normalized off when no valid token is configured', async ({ page }) => {
+  const mapboxRequests = [];
+  page.on('request', request => {
+    if (request.url().startsWith('https://api.mapbox.com/')) mapboxRequests.push(request.url());
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
+    localStorage.setItem('instaframe_settings', JSON.stringify({
+      showLocation: true,
+      showMapOverlay: true,
+    }));
+  });
+  await page.reload();
+
+  await expect(page.locator('#showLocation')).toBeChecked();
+  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
+  await expect(page.locator('#mapOverlayPositionRow')).toHaveClass(/is-hidden/);
+  expect(await page.evaluate(() => ({
+    token: window.getMapboxToken(),
+    savedEnabled: JSON.parse(localStorage.getItem('instaframe_settings')).showMapOverlay,
+  }))).toEqual({ token: null, savedEnabled: false });
+
+  await uploadJpegs(page, 1, true);
+  expect(mapboxRequests).toEqual([]);
+});
+
 test('radio choices expose their localized setting group names', async ({ page }) => {
   const expectGroups = async names => {
     for (const name of names) {
