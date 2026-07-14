@@ -85,6 +85,7 @@ const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 768px), (max-width: 1024px) and (
 const MAX_ACTIVE_PHOTO_DECODES = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
 const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
+const PHOTO_THUMBNAIL_RETRY_LIMIT = 1;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const LIVE_VIDEO_PREVIEW_GUARD_MS = 15_000;
 const METADATA_READ_GUARD_MS = 15_000;
@@ -1430,6 +1431,7 @@ async function _addFiles(accepted, reservation) {
       photoThumbnailController: null,
       photoThumbnailPromise: null,
       photoThumbnailNeedsRestart: false,
+      photoThumbnailRetryCount: 0,
       thumbnailController: null,
       thumbnailPromise: null,
       thumbnailNeedsRestart: false,
@@ -4501,6 +4503,7 @@ function _compactCardPhotoThumbnail(card, thumbnail) {
     if (!context) throw new Error('Canvas rendering is unavailable');
     context.drawImage(thumbnail, 0, 0, canvas.width, canvas.height);
     card.querySelector('.card-preview')?.insertBefore(canvas, thumbnail);
+    card.querySelector('.card-preview')?.classList.remove('thumbnail-unavailable');
     thumbnail.style.display = 'none';
     _releaseCardThumbnailUrl(card);
     thumbnail.removeAttribute('src');
@@ -4525,13 +4528,18 @@ function _startPhotoThumbnail(item) {
   item.photoThumbnailController = controller;
   item.photoThumbnailNeedsRestart = false;
   let thumbnailGuard = null;
+  let thumbnailTimedOut = false;
+  let retryAfterTimeout = false;
 
   const thumbnailPromise = _queuePhotoDecode(item, signal, () => new Promise((resolve, reject) => {
     if (signal.aborted || !state.items.includes(item) || !card.isConnected) {
       reject(new DOMException('Thumbnail cancelled', 'AbortError'));
       return;
     }
-    thumbnailGuard = setTimeout(() => controller.abort(), PHOTO_THUMBNAIL_GUARD_MS);
+    thumbnailGuard = setTimeout(() => {
+      thumbnailTimedOut = true;
+      controller.abort();
+    }, PHOTO_THUMBNAIL_GUARD_MS);
     const objectUrl = URL.createObjectURL(item.file);
     thumbnail._objectUrl = objectUrl;
     let settled = false;
@@ -4553,6 +4561,7 @@ function _startPhotoThumbnail(item) {
         failed();
         return;
       }
+      item.photoThumbnailRetryCount = 0;
       finish(resolve, undefined, 'compact');
     };
     const failed = () => {
@@ -4580,7 +4589,26 @@ function _startPhotoThumbnail(item) {
     }
   }))
     .catch(error => {
-      if (error?.name === 'AbortError' || !state.items.includes(item)) return;
+      if (!state.items.includes(item)) return;
+      if (error?.name === 'AbortError') {
+        if (!thumbnailTimedOut) return;
+        _discardCardPhotoThumbnail(card, thumbnail);
+        if ((item.photoThumbnailRetryCount || 0) < PHOTO_THUMBNAIL_RETRY_LIMIT
+            && !_pageResourcesReleased) {
+          item.photoThumbnailRetryCount = (item.photoThumbnailRetryCount || 0) + 1;
+          item.photoThumbnailNeedsRestart = true;
+          retryAfterTimeout = true;
+          return;
+        }
+        _imgFailed.add(item.id);
+        item.status = 'error';
+        const message = _setLocalizedItemError(item, 'msgImageDecodeTimeout');
+        updateItemStatus(item);
+        const selected = state.selectedItemId === item.id;
+        if (selected) _setLivePreviewError(message);
+        showToast(message, 'error', { announce: !selected });
+        return;
+      }
       _discardCardPhotoThumbnail(card, thumbnail);
       if (error?.code === 'IMAGE_DECODE_FAILED') {
         _imgFailed.add(item.id);
@@ -4596,6 +4624,7 @@ function _startPhotoThumbnail(item) {
       clearTimeout(thumbnailGuard);
       if (item.photoThumbnailController === controller) item.photoThumbnailController = null;
       if (item.photoThumbnailPromise === thumbnailPromise) item.photoThumbnailPromise = null;
+      if (retryAfterTimeout) _restartInterruptedPhotoThumbnail(item);
     });
   item.photoThumbnailPromise = thumbnailPromise;
   return thumbnailPromise;
