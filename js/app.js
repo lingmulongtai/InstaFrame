@@ -3305,7 +3305,10 @@ function scheduleLivePreview() {
   // reinsert a large canvas into the preview cache.
   _renderSeq += 1;
   // HTML preview updates are near-instant; canvas still needs debounce
-  _livePreviewTimer = setTimeout(renderLivePreview, 80);
+  _livePreviewTimer = setTimeout(() => {
+    _livePreviewTimer = null;
+    renderLivePreview().catch(_handleLivePreviewRenderFailure);
+  }, 80);
 }
 
 // ─── Video Preview Bar ────────────────────────────────────────────────────────
@@ -3788,10 +3791,19 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
   canvas.dataset.compositionHeight = String(src.height);
   canvas.dataset.previewSourceLimit = src.dataset.previewSourceLimit || '';
 
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas rendering is unavailable');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  } catch (cause) {
+    _resizeCanvasBackingStore(canvas, 0, 0);
+    const error = new Error('Live preview canvas rendering failed');
+    error.code = 'PREVIEW_RENDER_FAILED';
+    error.cause = cause;
+    throw error;
+  }
 
   // Fade in only on first appearance
   const firstShow = canvas.style.display === 'none' || canvas.style.display === '';
@@ -3851,20 +3863,28 @@ function _drawVisiblePreviewDetail(canvas, pane, src) {
   detail.style.borderBottomRightRadius = atRight && atBottom ? `${radius}px` : '0';
   detail.style.borderBottomLeftRadius = atLeft && atBottom ? `${radius}px` : '0';
 
-  const context = detail.getContext('2d');
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(
-    src,
-    plan.sourceX,
-    plan.sourceY,
-    plan.sourceWidth,
-    plan.sourceHeight,
-    0,
-    0,
-    detail.width,
-    detail.height
-  );
+  try {
+    const context = detail.getContext('2d');
+    if (!context) throw new Error('Canvas rendering is unavailable');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(
+      src,
+      plan.sourceX,
+      plan.sourceY,
+      plan.sourceWidth,
+      plan.sourceHeight,
+      0,
+      0,
+      detail.width,
+      detail.height
+    );
+  } catch (_) {
+    // The detail layer is an optional high-zoom enhancement. Keep the base
+    // preview usable and immediately release a failed detail backing store.
+    _clearLivePreviewDetail();
+    return;
+  }
   detail.style.display = 'block';
   canvas.dataset.previewDetailDensity = plan.density.toFixed(3);
   canvas.dataset.previewDetailPixels = String(detail.width * detail.height);
@@ -3962,6 +3982,21 @@ function _setLivePreviewError(message = '') {
   }
   error.hidden = true;
   error.textContent = '';
+}
+
+function _handleLivePreviewRenderFailure(error) {
+  if (error?.name === 'AbortError') return;
+  _clearLivePreviewDetail();
+  const canvas = document.getElementById('livePreviewCanvas');
+  const pane = document.getElementById('dropZone');
+  if (canvas) {
+    _resizeCanvasBackingStore(canvas, 0, 0);
+    canvas.style.display = 'none';
+    canvas.style.opacity = '';
+  }
+  pane?.classList.remove('has-preview');
+  _syncPreviewControlAvailability();
+  _setLivePreviewError(t('msgPreviewUnavailable'));
 }
 
 function _disposeLiveVideoSource() {
@@ -4223,6 +4258,8 @@ async function renderLivePreview() {
   _previewRenderController = controller;
   let previewImage = null;
   let releasePreviewImage = false;
+  let rendered = null;
+  let retainRendered = false;
   try {
     previewImage = await _waitForPreviewResource(_loadPreviewImage(item), signal);
     releasePreviewImage = _imgCache.get(item.id)?.img !== previewImage;
@@ -4234,7 +4271,7 @@ async function renderLivePreview() {
       mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
     }
 
-    const rendered = await FrameEngine.renderFrameWhenReady(
+    rendered = await FrameEngine.renderFrameWhenReady(
       previewImage, item.exif, state.settings,
       { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, mapOverlayImg, signal });
 
@@ -4264,10 +4301,16 @@ async function renderLivePreview() {
     _drawFrameToCanvas(canvas, pane, emptyEl, rendered);
     applyPreviewTransform();
     _drawVisiblePreviewDetail(canvas, pane, rendered);
-    if (renderedPixels <= MAX_FRAME_CACHE_PIXELS) _frameCache.set(hash, rendered);
-    else { rendered.width = 0; rendered.height = 0; }
+    if (renderedPixels <= MAX_FRAME_CACHE_PIXELS) {
+      _frameCache.set(hash, rendered);
+      retainRendered = true;
+    }
   } catch (error) {
     if (error?.name === 'AbortError' || signal.aborted || seq !== _renderSeq) return;
+    if (error?.code === 'PREVIEW_RENDER_FAILED') {
+      _handleLivePreviewRenderFailure(error);
+      return;
+    }
     // Framing, optional map, and isolated live-decoder failures remain
     // non-critical because a fresh export decode may recover. Surface only a
     // failure already confirmed by the independent card decoder, or a hard
@@ -4281,6 +4324,10 @@ async function renderLivePreview() {
       _setLivePreviewError(_getItemErrorMessage(item));
     }
   } finally {
+    if (rendered && !retainRendered) {
+      rendered.width = 0;
+      rendered.height = 0;
+    }
     if (releasePreviewImage) _releaseDecodedImageSource(previewImage);
     if (_previewRenderController === controller) _previewRenderController = null;
   }

@@ -4833,6 +4833,40 @@ test('reused preview canvases release their old bitmap before an aspect flip', a
   expect(samples.allocations).toContain(0);
 });
 
+test('preview canvas failures release backing stores without unhandled errors', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await uploadJpegs(page);
+
+  await page.evaluate(() => {
+    const detail = document.getElementById('livePreviewDetailCanvas');
+    detail.getContext = () => null;
+    const zoom = document.getElementById('zoomRange');
+    zoom.value = zoom.max;
+    zoom.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(() => page.locator('#livePreviewDetailCanvas').evaluate(canvas => ({
+    hidden: canvas.style.display === 'none',
+    width: canvas.width,
+    height: canvas.height,
+  }))).toEqual({ hidden: true, width: 0, height: 0 });
+  await expect(page.locator('#livePreviewCanvas')).toBeVisible();
+
+  await page.evaluate(() => {
+    const canvas = document.getElementById('livePreviewCanvas');
+    canvas.getContext = () => null;
+    window.scheduleLivePreview();
+  });
+  await expect(page.locator('#livePreviewError')).toContainText(/live preview|ライブプレビュー/i);
+  await expect(page.locator('#livePreviewError')).toBeVisible();
+  expect(await page.locator('#livePreviewCanvas').evaluate(canvas => ({
+    hidden: canvas.style.display === 'none',
+    width: canvas.width,
+    height: canvas.height,
+  }))).toEqual({ hidden: true, width: 0, height: 0 });
+  expect(pageErrors).toEqual([]);
+});
+
 test('live video preview keeps the requested ratio and padding after seeking', async ({ page }) => {
   const fixture = await loadAudioVideoFixture();
   await page.locator('#fileInput').setInputFiles({
