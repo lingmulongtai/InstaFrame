@@ -1000,6 +1000,7 @@ input[type="range"]:focus-visible {
   left: 50%;
   z-index: 3;
   width: min(440px, calc(100% - 48px));
+  max-height: calc(100% - 32px);
   padding: 18px 20px;
   transform: translate(-50%, -50%);
   color: #fecaca;
@@ -1009,6 +1010,8 @@ input[type="range"]:focus-visible {
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
   font-size: 13px;
   line-height: 1.55;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   text-align: center;
 }
 .preview-error[hidden] { display: none; }
@@ -2470,6 +2473,19 @@ input[type="range"]:focus-visible {
     min-height: 0;
     max-height: none;
     position: relative;
+  }
+
+  .preview-area:not(.has-preview) {
+    align-items: flex-start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .preview-area:not(.has-preview) .preview-empty {
+    flex: 0 0 auto;
+    margin-block: auto;
+    padding-block: 12px;
   }
 
   /* Image section: fills the main area on photos tab */
