@@ -3240,6 +3240,46 @@ test('live EXIF edits abort an active ZIP before stale photo bytes can download'
   expect(downloads).toBe(0);
 });
 
+test('photo output setting changes abort active ZIP encodes before stale bytes download', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await trackCancellationToasts(page);
+  await page.evaluate(() => {
+    window.__photoSettingZipSignals = [];
+    window.FrameEngine.canvasToBlob = (_canvas, options) => new Promise((resolve, reject) => {
+      window.__photoSettingZipSignals.push(options.signal);
+      options.signal.addEventListener('abort', () => {
+        reject(new DOMException('Export cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  });
+  let downloads = 0;
+  page.on('download', () => { downloads += 1; });
+
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__photoSettingZipSignals.length)).toBe(1);
+  await page.locator('label[for="fmt-png"]').click();
+  await expect.poll(() => page.evaluate(() => window.__photoSettingZipSignals[0]?.aborted)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+
+  await page.locator('label[for="fmt-jpeg"]').click();
+  await page.locator('#downloadAllBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__photoSettingZipSignals.length)).toBe(2);
+  await page.locator('#photoQualityRange').evaluate(input => {
+    input.value = '80';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__photoSettingZipSignals[1]?.aborted)).toBe(true);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#toast')).toContainText(/cancel|キャンセル/i);
+  expect(await page.evaluate(() => window.__cancellationToastCalls)).toBe(2);
+  expect(downloads).toBe(0);
+});
+
 test('resolved device locations abort an active ZIP before stale output can download', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
