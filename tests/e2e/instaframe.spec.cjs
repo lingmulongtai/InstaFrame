@@ -166,6 +166,18 @@ test('every theme keeps dynamic controls and destructive dialogs at WCAG contras
 
 test('every accent choice keeps selected controls at WCAG contrast', async ({ page }) => {
   await page.locator('#customizeBtn').click();
+  const unsafeTransitions = await page.locator([
+    '.icon-btn.active',
+    '.pill-option input:checked + span',
+    '.style-toggle-btn input:checked + label',
+    '.ratio-pill input:checked + label',
+    '.btn-primary',
+    '.mobile-sidebar-toggle',
+  ].join(',')).evaluateAll(elements => elements.filter(element => {
+    const properties = getComputedStyle(element).transitionProperty.split(',').map(value => value.trim());
+    return properties.some(property => ['all', 'background', 'background-color', 'color'].includes(property));
+  }).length);
+  expect(unsafeTransitions).toBe(0);
   const accents = [
     { label: 'blue', selector: '.accent-blue' },
     { label: 'purple', selector: '.accent-purple' },
