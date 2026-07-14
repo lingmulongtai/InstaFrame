@@ -7083,6 +7083,10 @@ test('keyboard card selection moves mobile focus into the selected preview', asy
     { name: 'keyboard-photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
     { name: 'keyboard-video.webm', mimeType: 'video/webm', buffer: createWebm() },
   ]);
+  await expect.poll(() => page.evaluate(() => eval('_reservedImportItems'))).toBe(0);
+  await expect.poll(() => page.evaluate(() => eval(
+    'state.items.length === 2 && state.items[1].isVideo && state.items[1].thumbnailPromise === null'
+  ))).toBe(true);
   await page.evaluate(() => {
     const target = document.getElementById('videoPlayPauseBtn');
     const nativeGetClientRects = target.getClientRects.bind(target);
