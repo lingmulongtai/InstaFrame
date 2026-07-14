@@ -265,8 +265,11 @@ function _syncPreviewControlAvailability() {
 function updateHistoryButtons() {
   const undoBtn = document.getElementById('undoEditBtn');
   const redoBtn = document.getElementById('redoEditBtn');
+  const active = document.activeElement;
   if (undoBtn) undoBtn.disabled = _settingsUndoStack.length === 0;
   if (redoBtn) redoBtn.disabled = _settingsRedoStack.length === 0;
+  if (active === undoBtn && undoBtn.disabled && redoBtn && !redoBtn.disabled) redoBtn.focus();
+  if (active === redoBtn && redoBtn.disabled && undoBtn && !undoBtn.disabled) undoBtn.focus();
 }
 
 // ─── Preview caches ───────────────────────────────────────────────────────────
