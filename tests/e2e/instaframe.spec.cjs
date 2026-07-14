@@ -2815,6 +2815,58 @@ test('thumbnail cancellation ignores a late canvas encoder callback without leak
   expect(result).toEqual({ outcome: 'AbortError', activeUrls: 0 });
 });
 
+test('thumbnail cleanup exceptions do not mask decoder failures or leak source URLs', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreateElement = document.createElement.bind(document);
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    let pauseCalls = 0;
+    let removeCalls = 0;
+    let loadCalls = 0;
+
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        pause() { pauseCalls += 1; },
+        removeAttribute() {
+          removeCalls += 1;
+          throw new Error('simulated source removal failure');
+        },
+        load() {
+          loadCalls += 1;
+          if (loadCalls === 1) queueMicrotask(() => this.onerror?.());
+        },
+      };
+    };
+
+    const outcome = await Promise.race([
+      window.FrameEngine.captureVideoFrame(
+        new File(['video'], 'cleanup-failure.webm', { type: 'video/webm' })
+      ).then(() => 'resolved', error => error.message),
+      new Promise(resolve => setTimeout(() => resolve('stalled'), 500)),
+    ]);
+    return { outcome, activeUrls: activeUrls.size, pauseCalls, removeCalls, loadCalls };
+  });
+
+  expect(result).toEqual({
+    outcome: 'Video load failed',
+    activeUrls: 0,
+    pauseCalls: 1,
+    removeCalls: 1,
+    loadCalls: 2,
+  });
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
@@ -4009,6 +4061,19 @@ test('MediaRecorder drawing failures reject and stop active output resources', a
       revoke(url);
     };
 
+    const createElement = document.createElement.bind(document);
+    let cleanupPauseFailures = 0;
+    document.createElement = (tagName, options) => {
+      const element = createElement(tagName, options);
+      if (String(tagName).toLowerCase() === 'video') {
+        element.pause = () => {
+          cleanupPauseFailures += 1;
+          throw new Error('simulated pause cleanup failure');
+        };
+      }
+      return element;
+    };
+
     const outputTrack = { stopped: false, stop() { this.stopped = true; } };
     const outputStream = {
       addTrack() {},
@@ -4029,20 +4094,19 @@ test('MediaRecorder drawing failures reject and stop active output resources', a
       }
     };
 
-    let message = '';
-    try {
-      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+    const message = await Promise.race([
+      window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
         preserveAudio: true,
         onProgress: () => { throw new Error('simulated draw loop failure'); },
-      });
-    } catch (error) {
-      message = error.message;
-    }
+      }).then(() => 'resolved', error => error.message),
+      new Promise(resolve => setTimeout(() => resolve('stalled'), 500)),
+    ]);
     return {
       message,
       activeUrls: activeUrls.size,
       recorderStates: recorders.map(recorder => recorder.state),
       outputTrackStopped: outputTrack.stopped,
+      cleanupPauseFailures,
     };
   }, { base64: createWebm().toString('base64') });
 
@@ -4051,6 +4115,7 @@ test('MediaRecorder drawing failures reject and stop active output resources', a
     activeUrls: 0,
     recorderStates: ['inactive'],
     outputTrackStopped: true,
+    cleanupPauseFailures: 1,
   });
 });
 
@@ -4368,6 +4433,53 @@ test('WebCodecs video success closes its encoder and releases temporary media', 
   expect(result.canvasSizes).toEqual([[0, 0]]);
   expect(result.videoSources).toEqual([false]);
   expect(result.closedFrames).toBeGreaterThan(0);
+});
+
+test('WebCodecs cleanup exceptions still release its encoder and temporary media', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64 }) => {
+    const createElement = document.createElement.bind(document);
+    let cleanupLoadFailures = 0;
+    document.createElement = (tagName, options) => {
+      const element = createElement(tagName, options);
+      if (String(tagName).toLowerCase() === 'video') {
+        const load = element.load.bind(element);
+        element.load = function () {
+          if (!this.hasAttribute('src')) {
+            cleanupLoadFailures += 1;
+            throw new Error('simulated load cleanup failure');
+          }
+          return load();
+        };
+      }
+      return element;
+    };
+
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'webcodecs-cleanup-failure.webm', { type: 'video/webm' });
+    const outcome = await Promise.race([
+      window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false })
+        .then(blob => blob.type, error => error.message),
+      new Promise(resolve => setTimeout(() => resolve('stalled'), 500)),
+    ]);
+    const resources = window.__webCodecsResources;
+    return {
+      outcome,
+      cleanupLoadFailures,
+      activeUrls: resources.activeUrls.size,
+      encoderStates: resources.encoders.map(encoder => encoder.state),
+      canvasSizes: resources.canvases.map(canvas => [canvas.width, canvas.height]),
+    };
+  }, { base64: fixture.buffer.toString('base64') });
+
+  expect(result).toEqual({
+    outcome: 'video/webm',
+    cleanupLoadFailures: 1,
+    activeUrls: 0,
+    encoderStates: ['closed'],
+    canvasSizes: [[0, 0]],
+  });
 });
 
 test('WebCodecs drains a saturated encoder queue before admitting another frame', async ({ page }) => {
