@@ -1797,6 +1797,26 @@ test('photo export refuses a browser MIME fallback instead of mislabelling the f
   expect(downloadCount).toBe(0);
 });
 
+test('photo export corrects a wrong Blob MIME when the requested signature is valid', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.toBlob = callback => callback(new Blob([
+      new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]),
+    ], { type: 'image/png' }));
+    const blob = await window.FrameEngine.canvasToBlob(canvas, { format: 'webp' });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    return {
+      type: blob.type,
+      riff: String.fromCharCode(...bytes.slice(0, 4)),
+      webp: String.fromCharCode(...bytes.slice(8, 12)),
+    };
+  });
+  expect(result).toEqual({ type: 'image/webp', riff: 'RIFF', webp: 'WEBP' });
+});
+
 test('video export controls disappear when MediaRecorder supports no output MIME', async ({ page }) => {
   await page.evaluate(() => {
     window.MediaRecorder.isTypeSupported = () => false;
