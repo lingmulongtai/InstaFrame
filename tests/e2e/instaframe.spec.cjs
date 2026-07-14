@@ -5518,6 +5518,10 @@ test('keyboard card selection moves mobile focus into the selected preview', asy
   await page.evaluate(() => {
     const target = document.getElementById('videoPlayPauseBtn');
     const nativeGetClientRects = target.getClientRects.bind(target);
+    window.__nativeFocusRequestAnimationFrame = window.requestAnimationFrame;
+    window.__nativeFocusCancelAnimationFrame = window.cancelAnimationFrame;
+    window.requestAnimationFrame = () => 1;
+    window.cancelAnimationFrame = () => {};
     window.__videoFocusRectChecks = 0;
     target.getClientRects = () => {
       window.__videoFocusRectChecks += 1;
@@ -5532,6 +5536,10 @@ test('keyboard card selection moves mobile focus into the selected preview', asy
   await expect(page.locator('#videoPlayPauseBtn')).toBeFocused();
   expect(await page.evaluate(() => window.__videoFocusRectChecks)).toBeGreaterThanOrEqual(2);
   expect(await page.evaluate(() => document.activeElement.closest('[inert]'))).toBeNull();
+  await page.evaluate(() => {
+    window.requestAnimationFrame = window.__nativeFocusRequestAnimationFrame;
+    window.cancelAnimationFrame = window.__nativeFocusCancelAnimationFrame;
+  });
 
   await page.locator('#tabPhotosBtn').click();
   await page.locator('#preview-1').focus();
