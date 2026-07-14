@@ -1556,6 +1556,26 @@ test('privacy consent changes expose a focused polite status update', async ({ p
   await expect(status).toContainText(/off|オフ/i);
 });
 
+test('concurrent location consent requests share one decision and focus return', async ({ page }) => {
+  await uploadJpegs(page);
+  const trigger = page.locator('#openMapPickerBtn');
+  await trigger.focus();
+  await page.evaluate(() => {
+    window.__concurrentConsent = [
+      window.requestLocationNetworkConsent(),
+      window.requestLocationNetworkConsent(),
+    ];
+  });
+
+  await expect(page.locator('#locationPrivacyModal')).toHaveClass(/open/);
+  await expect(page.locator('#locationPrivacyOnceBtn')).toBeFocused();
+  await page.locator('#locationPrivacyOnceBtn').click();
+
+  expect(await page.evaluate(() => Promise.all(window.__concurrentConsent))).toEqual([true, true]);
+  await expect(page.locator('#locationPrivacyModal')).not.toHaveClass(/open/);
+  await expect(trigger).toBeFocused();
+});
+
 test('location consent wording matches its browser-session lifetime', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
