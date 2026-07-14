@@ -4889,6 +4889,76 @@ test('uncertain audio hints use native capture and Web Audio fallback', async ({
   });
 });
 
+test('an audio-disabled WebCodecs fallback does not add a source audio track', async ({ page }) => {
+  await installFakeWebCodecs(page);
+  const fixture = await loadAudioVideoFixture();
+  const result = await page.evaluate(async ({ base64, mimeType }) => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const file = new File([bytes], 'audio-disabled-fallback.webm', { type: mimeType });
+    const nativeVideoCapture = HTMLMediaElement.prototype.captureStream;
+    const nativeCanvasCapture = HTMLCanvasElement.prototype.captureStream;
+    const NativeMediaRecorder = window.MediaRecorder;
+    const audioTrack = { stops: 0, stop() { this.stops += 1; } };
+    const videoTrack = { stops: 0, stop() { this.stops += 1; } };
+    let sourceCaptureCalls = 0;
+    let addedAudioTracks = 0;
+    let recorderConstructions = 0;
+
+    HTMLMediaElement.prototype.captureStream = function () {
+      sourceCaptureCalls += 1;
+      return {
+        getAudioTracks() { return [audioTrack]; },
+        getTracks() { return [audioTrack]; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({
+      addTrack() { addedAudioTracks += 1; },
+      getTracks() { return [videoTrack]; },
+    });
+    window.VideoEncoder.prototype.configure = function () {
+      throw new Error('force MediaRecorder fallback');
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() {
+        recorderConstructions += 1;
+        throw new Error('stop after fallback stream setup');
+      }
+    };
+
+    let message = '';
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+    } catch (error) {
+      message = error.message;
+    } finally {
+      HTMLMediaElement.prototype.captureStream = nativeVideoCapture;
+      HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
+      window.MediaRecorder = NativeMediaRecorder;
+    }
+    return {
+      message,
+      sourceCaptureCalls,
+      addedAudioTracks,
+      recorderConstructions,
+      audioTrackStops: audioTrack.stops,
+      videoTrackStops: videoTrack.stops,
+    };
+  }, {
+    base64: fixture.buffer.toString('base64'),
+    mimeType: fixture.mimeType,
+  });
+
+  expect(result).toEqual({
+    message: 'stop after fallback stream setup',
+    sourceCaptureCalls: 0,
+    addedAudioTracks: 0,
+    recorderConstructions: 1,
+    audioTrackStops: 0,
+    videoTrackStops: 1,
+  });
+});
+
 test('Web Audio fallback stops its track when canvas capture setup fails', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const file = new File([new Uint8Array(2 * 1024 * 1024 + 64)], 'failed-audio-route.mp4', {
