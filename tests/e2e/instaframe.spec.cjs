@@ -2936,6 +2936,97 @@ test('initial video load exceptions reject without retaining pipeline Blob URLs'
   });
 });
 
+test('thumbnail encoder setup failures settle immediately and release every temporary resource', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreateElement = document.createElement.bind(document);
+    const NativeImage = window.Image;
+    const nativeCreateUrl = URL.createObjectURL.bind(URL);
+    const nativeRevokeUrl = URL.revokeObjectURL.bind(URL);
+    const activeUrls = new Set();
+    const canvases = [];
+    let mode = 'encoder';
+    let createdUrls = 0;
+    let revokedUrls = 0;
+
+    URL.createObjectURL = value => {
+      const url = nativeCreateUrl(value);
+      createdUrls += 1;
+      activeUrls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = url => {
+      revokedUrls += 1;
+      activeUrls.delete(url);
+      nativeRevokeUrl(url);
+    };
+    document.createElement = (tagName, options) => {
+      const normalized = String(tagName).toLowerCase();
+      if (normalized === 'canvas') {
+        const canvas = nativeCreateElement(tagName, options);
+        canvases.push(canvas);
+        return canvas;
+      }
+      if (normalized !== 'video') return nativeCreateElement(tagName, options);
+      return {
+        duration: 1,
+        videoWidth: 320,
+        videoHeight: 180,
+        pause() {},
+        removeAttribute() {},
+        load() { queueMicrotask(() => this.onloadedmetadata?.()); },
+        set currentTime(value) {
+          this._currentTime = value;
+          queueMicrotask(() => this.onseeked?.());
+        },
+      };
+    };
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    HTMLCanvasElement.prototype.toBlob = function (callback) {
+      if (mode === 'encoder') throw new Error('simulated thumbnail encoder setup failure');
+      callback(new Blob(['thumbnail'], { type: 'image/jpeg' }));
+    };
+    window.Image = class FailingThumbnailImage {
+      removeAttribute() {}
+      set src(_value) { throw new Error('simulated thumbnail image setup failure'); }
+    };
+
+    try {
+      const file = new File(['video'], 'thumbnail-setup-failure.webm', { type: 'video/webm' });
+      const outcomes = [];
+      for (const currentMode of ['encoder', 'image']) {
+        mode = currentMode;
+        outcomes.push(await Promise.race([
+          window.FrameEngine.captureVideoFrame(file).then(
+            () => 'resolved',
+            error => error.message
+          ),
+          new Promise(resolve => setTimeout(() => resolve('stalled'), 500)),
+        ]));
+      }
+      return {
+        outcomes,
+        createdUrls,
+        revokedUrls,
+        activeUrls: activeUrls.size,
+        canvasesReleased: canvases.every(canvas => canvas.width === 0 && canvas.height === 0),
+      };
+    } finally {
+      window.Image = NativeImage;
+    }
+  });
+
+  expect(result).toEqual({
+    outcomes: [
+      'simulated thumbnail encoder setup failure',
+      'simulated thumbnail image setup failure',
+    ],
+    createdUrls: 3,
+    revokedUrls: 3,
+    activeUrls: 0,
+    canvasesReleased: true,
+  });
+});
+
 test('duplicate photo exports are coalesced and removal discards stale output', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
