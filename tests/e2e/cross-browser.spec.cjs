@@ -193,9 +193,15 @@ test('self-hosted fonts and initial UI are accessible without Google requests', 
     'Josefin Sans', 'Oswald', 'Work Sans', 'Playfair Display', 'Cormorant Garamond',
     'EB Garamond', 'Libre Baskerville', 'Cinzel', 'Source Serif 4',
   ];
+  const fontRequests = [];
   const externalFontRequests = [];
   page.on('request', request => {
-    if (/fonts\.(?:googleapis|gstatic)\.com/.test(request.url())) externalFontRequests.push(request.url());
+    const requestUrl = new URL(request.url());
+    if (requestUrl.pathname.endsWith('.woff2')) fontRequests.push(requestUrl.href);
+    if (/fonts\.(?:googleapis|gstatic)\.com/.test(requestUrl.href) ||
+        (requestUrl.pathname.endsWith('.woff2') && requestUrl.origin !== new URL(page.url()).origin)) {
+      externalFontRequests.push(requestUrl.href);
+    }
   });
   await page.reload();
   const fontResults = await page.evaluate(async expectedFamilies => Promise.all(
@@ -205,6 +211,8 @@ test('self-hosted fonts and initial UI are accessible without Google requests', 
     })
   ), families);
   expect(fontResults).toEqual(families.map(family => ({ family, count: 1, loaded: true })));
+  expect(new Set(fontRequests).size).toBeGreaterThanOrEqual(families.length);
+  expect(fontRequests.every(url => new URL(url).origin === new URL(page.url()).origin)).toBe(true);
   expect(externalFontRequests).toEqual([]);
   await assertNoAxeViolations(page);
 });
