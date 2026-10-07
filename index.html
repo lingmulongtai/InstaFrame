@@ -5,7 +5,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#e8e5df">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
@@ -13,13 +13,16 @@
   <meta property="og:description" content="Add beautiful EXIF frames to your photos in batch. Free, local, private.">
   <meta property="og:type" content="website">
 
+  <!-- Applies saved theme and hides the UI until app.js has translated it. -->
+  <script src="js/boot.js"></script>
+
   <!-- Pinned frame fonts generated from @fontsource packages. -->
   <link rel="stylesheet" href="vendor/fonts/fonts.css">
 
   <link rel="stylesheet" href="css/style.css">
 
 </head>
-<body>
+<body data-mobile-tab="preview" data-workspace="empty">
 <div class="app-shell">
 
   <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
@@ -30,11 +33,11 @@
          data-i18n="resizeSettingsPanel" data-i18n-attr="aria-label"></div>
     <div class="sidebar-header">
       <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
         <span class="logo">
           <span class="logo-main" data-i18n="appTitleMain">InstaFrame</span>
           <span class="logo-by" data-i18n="appTitleBy">by lingmulongtai</span>
         </span>
-        <span class="logo-sub" data-i18n="appSubtitle">EXIF photo frame generator</span>
       </div>
       <div class="sidebar-actions">
         <button id="customizeBtn" class="icon-btn" aria-expanded="false" aria-controls="customizePanel" data-i18n-attr="title,aria-label" data-i18n="customize" title="Customize">
@@ -692,24 +695,87 @@
       <input type="file" id="fileInput" multiple
              data-i18n="emptyChooseMedia" data-i18n-attr="aria-label"
              accept="image/jpeg,image/png,image/heic,image/heif,image/webp,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,video/3gpp,video/x-m4v,.jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.webm,.avi,.mkv,.3gp,.m4v">
-      <canvas id="livePreviewCanvas"></canvas>
-      <canvas id="livePreviewDetailCanvas" class="live-preview-detail" aria-hidden="true"></canvas>
+      <canvas id="livePreviewCanvas" width="0" height="0"></canvas>
+      <canvas id="livePreviewDetailCanvas" class="live-preview-detail" width="0" height="0" aria-hidden="true"></canvas>
       <video id="livePreviewVideo" class="live-preview-video" playsinline></video>
       <div class="preview-error" id="livePreviewError" role="alert" aria-atomic="true" hidden></div>
 
       <div class="preview-empty" id="previewEmpty">
-        <div class="preview-empty-eyebrow" data-i18n="emptyLocalBadge">LOCAL · PRIVATE · NO UPLOADS</div>
-        <div class="preview-empty-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.4-2h7.2l1.4 2h3a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9.5a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13.5" r="4"/><path d="M18.5 10h.01"/></svg>
-        </div>
-        <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here or click</div>
-        <div class="preview-empty-sub" data-i18n="dropZoneSubtext">JPEG · PNG · WebP · MP4 · WebM</div>
-        <div class="preview-empty-cta"><span aria-hidden="true">＋</span><span data-i18n="emptyChooseMedia">Choose photos or videos</span></div>
-        <div class="preview-empty-format-note" data-i18n="formatSupportNote">Conditional browser formats: HEIC/HEIF · MOV/M4V · AVI/MKV/3GP. Decoding depends on container and codec support.</div>
-        <div class="preview-empty-trust" aria-hidden="true">
-          <span data-i18n="emptyTrustExif">Local EXIF</span>
-          <span data-i18n="emptyTrustAudio">Original audio</span>
-          <span data-i18n="emptyTrustBatch">Batch ZIP</span>
+        <!-- Decorative sample print: shows what an export looks like before any media is added. -->
+        <figure class="sample-print" id="samplePrint" aria-hidden="true">
+          <div class="sample-print-photo">
+            <svg viewBox="0 0 600 400" preserveAspectRatio="xMidYMid slice" focusable="false">
+              <defs>
+                <linearGradient id="sampleSky" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#1c2550"/>
+                  <stop offset="0.38" stop-color="#5b4a86"/>
+                  <stop offset="0.62" stop-color="#c9728a"/>
+                  <stop offset="0.8" stop-color="#f29a6b"/>
+                  <stop offset="1" stop-color="#ffd29a"/>
+                </linearGradient>
+                <radialGradient id="sampleSun" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stop-color="#fffaf0"/>
+                  <stop offset="0.55" stop-color="#ffe1a8"/>
+                  <stop offset="1" stop-color="#ffbe7a"/>
+                </radialGradient>
+                <radialGradient id="sampleGlow" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stop-color="#ffd9a0" stop-opacity="0.75"/>
+                  <stop offset="1" stop-color="#ffb27a" stop-opacity="0"/>
+                </radialGradient>
+                <linearGradient id="sampleLake" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#f3a77a"/>
+                  <stop offset="0.35" stop-color="#9a5d78"/>
+                  <stop offset="1" stop-color="#1d1a35"/>
+                </linearGradient>
+                <linearGradient id="sampleFar" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#b9708a"/>
+                  <stop offset="1" stop-color="#c98a8c"/>
+                </linearGradient>
+                <linearGradient id="sampleMid" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#6d4a78"/>
+                  <stop offset="1" stop-color="#8a5a7c"/>
+                </linearGradient>
+                <linearGradient id="sampleNear" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#2e2347"/>
+                  <stop offset="1" stop-color="#3d2c52"/>
+                </linearGradient>
+              </defs>
+              <rect width="600" height="400" fill="url(#sampleSky)"/>
+              <circle cx="392" cy="186" r="128" fill="url(#sampleGlow)"/>
+              <circle cx="392" cy="182" r="28" fill="url(#sampleSun)"/>
+              <path d="M0 236 L58 204 L104 222 L168 178 L226 214 L282 190 L330 220 L400 196 L452 214 L520 182 L600 214 L600 268 L0 268Z" fill="url(#sampleFar)" opacity="0.85"/>
+              <path d="M0 252 L46 230 L92 246 L150 206 L196 238 L250 222 L300 248 L362 226 L426 252 L488 218 L548 244 L600 232 L600 274 L0 274Z" fill="url(#sampleMid)"/>
+              <path d="M0 270 L70 244 L118 262 L176 236 L238 268 L600 268 L600 280 L0 280Z" fill="url(#sampleNear)"/>
+              <path d="M600 262 L548 240 L498 260 L460 250 L420 270 L600 272Z" fill="url(#sampleNear)"/>
+              <rect y="270" width="600" height="130" fill="url(#sampleLake)"/>
+              <g fill="#ffe7bf" opacity="0.55">
+                <rect x="360" y="282" width="64" height="2.4" rx="1.2"/>
+                <rect x="372" y="292" width="40" height="2" rx="1"/>
+                <rect x="352" y="303" width="80" height="1.6" rx="0.8" opacity="0.7"/>
+                <rect x="380" y="315" width="26" height="1.6" rx="0.8" opacity="0.6"/>
+                <rect x="366" y="328" width="52" height="1.2" rx="0.6" opacity="0.45"/>
+              </g>
+              <path d="M0 400 L0 330 Q60 316 120 334 T240 350 Q300 360 330 400Z" fill="#14111f"/>
+              <g fill="#14111f">
+                <path d="M34 336 L46 288 L58 336Z"/>
+                <path d="M52 340 L68 270 L84 340Z"/>
+                <path d="M80 344 L92 300 L104 344Z"/>
+                <path d="M548 400 L600 352 L600 400Z"/>
+              </g>
+            </svg>
+          </div>
+          <figcaption class="sample-print-caption">
+            <span class="sample-print-camera"><span class="sample-print-label">Shot on</span> X-T5 <span class="sample-print-make">FUJIFILM</span></span>
+            <span class="sample-print-exif"><span>XF35mmF1.4 R</span><span>35mm</span><span>f/1.4</span><span>1/250s</span><span>ISO 400</span></span>
+          </figcaption>
+        </figure>
+        <div class="preview-empty-copy">
+          <div class="preview-empty-text" data-i18n="dropZoneText">Drop photos here</div>
+          <div class="preview-empty-cta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span data-i18n="emptyChooseMedia">Choose photos or videos</span>
+          </div>
+          <div class="preview-empty-sub" data-i18n="emptyPrivacyNote">Processed on this device. Nothing is uploaded.</div>
         </div>
       </div>
       <div class="preview-history-wrap" id="previewHistoryWrap" inert aria-hidden="true">
@@ -825,36 +891,15 @@
 
     <div class="photos-panel mobile-tab-panel" id="photosPanel">
     <input type="file" id="mobileFileInput" multiple hidden tabindex="-1">
-    <!-- Empty hint (shown when no files are loaded) -->
+    <!-- Empty hint (Photos tab on mobile when no files are loaded) -->
     <div class="empty-hint" id="emptyHint">
       <div class="empty-hint-inner">
-        <div class="empty-hint-heading">
-          <div class="empty-hint-title" data-i18n="emptyFeaturesTitle">A complete frame workflow, right in your browser</div>
-          <div class="empty-hint-subtitle" data-i18n="emptyFeaturesSub">From metadata to export, your files stay on this device.</div>
-          <button type="button" class="btn btn-primary mobile-add-btn" id="mobileAddBtn" data-i18n="emptyChooseMedia">Choose photos or videos</button>
+        <div class="empty-hint-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="15.5" cy="8.5" r="1.5"/></svg>
         </div>
-        <div class="empty-hint-grid">
-        <div class="empty-hint-card">
-          <div class="empty-hint-emoji">📷</div>
-          <div class="empty-hint-card-title" data-i18n="emptyFeatureExifTitle">EXIF-aware frames</div>
-          <div class="empty-hint-card-desc" data-i18n="emptyFeatureExifDesc">Camera, lens and exposure details</div>
-        </div>
-        <div class="empty-hint-card">
-          <div class="empty-hint-emoji">🎬</div>
-          <div class="empty-hint-card-title" data-i18n="emptyFeatureVideoTitle">Photo + video</div>
-          <div class="empty-hint-card-desc" data-i18n="emptyFeatureVideoDesc">Preserves supported source audio</div>
-        </div>
-        <div class="empty-hint-card">
-          <div class="empty-hint-emoji">⚡</div>
-          <div class="empty-hint-card-title" data-i18n="emptyFeatureBatchTitle">Batch workflow</div>
-          <div class="empty-hint-card-desc" data-i18n="emptyFeatureBatchDesc">Process many files and export a ZIP</div>
-        </div>
-        <div class="empty-hint-card">
-          <div class="empty-hint-emoji">🔒</div>
-          <div class="empty-hint-card-title" data-i18n="emptyFeaturePrivateTitle">Private by default</div>
-          <div class="empty-hint-card-desc" data-i18n="emptyFeaturePrivateDesc">Media processing stays on-device</div>
-        </div>
-        </div>
+        <div class="empty-hint-title" data-i18n="emptyPhotosTitle">No photos yet</div>
+        <button type="button" class="btn btn-primary btn-lg mobile-add-btn" id="mobileAddBtn" data-i18n="emptyChooseMedia">Choose photos or videos</button>
+        <div class="empty-hint-subtitle" data-i18n="emptyPrivacyNote">Processed on this device. Nothing is uploaded.</div>
       </div>
     </div>
 
@@ -862,19 +907,32 @@
     <div class="image-section is-hidden" id="imageSection">
 
       <div class="section-header">
-        <span class="section-title" data-i18n="imagesTitle">Images</span>
-        <div class="section-header-right">
-          <div class="card-size-bar" id="cardSizeBar" data-i18n="cardSize" data-i18n-attr="title" title="Photo card size">
-            <svg viewBox="0 0 14 14" width="11" height="11" fill="currentColor" opacity=".5">
-              <rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="7" height="7" rx="1"/>
-            </svg>
-            <input type="range" id="cardSizeRange" min="120" max="320" step="20" value="200" data-i18n="cardSize" data-i18n-attr="aria-label">
-          </div>
+        <div class="section-title-group">
+          <span class="section-title" data-i18n="imagesTitle">Images</span>
           <span class="section-counter" id="imageCounter">
             <span id="imageCounterVisual" aria-hidden="true"></span>
             <span class="sr-only" id="imageCounterStatus" role="status" aria-live="polite" aria-atomic="true"></span>
           </span>
-          <button class="btn btn-secondary btn-sm" id="addMoreBtn" data-i18n="addMore">+ Add</button>
+        </div>
+        <div class="section-header-right">
+          <div class="card-size-bar" id="cardSizeBar" data-i18n="cardSize" data-i18n-attr="title" title="Photo card size">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+              <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+            </svg>
+            <input type="range" id="cardSizeRange" min="120" max="320" step="20" value="200" data-i18n="cardSize" data-i18n-attr="aria-label">
+          </div>
+          <button type="button" class="btn btn-ghost" id="clearAllBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l.8 12.5h9.4l.8-12.5"/></svg>
+            <span data-i18n="clearAll">Clear All</span>
+          </button>
+          <button type="button" class="btn btn-secondary" id="addMoreBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span data-i18n="addMore">Add</span>
+          </button>
+          <button type="button" class="btn btn-primary" id="downloadAllBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>
+            <span id="downloadAllLabel">Download All</span>
+          </button>
         </div>
       </div>
 
@@ -890,27 +948,7 @@
         </div>
       </div>
 
-      <div class="batch-bar">
-        <button class="btn btn-primary btn-lg" id="generateAllBtn" disabled>
-          <span>▶</span>
-          <span data-i18n="generateAll">Apply to All</span>
-        </button>
-        <button class="btn btn-secondary btn-lg" id="downloadAllBtn" disabled>
-          <span>⬇</span>
-          <span data-i18n="downloadAll">Download All</span>
-        </button>
-        <button class="btn btn-danger btn-lg" id="clearAllBtn" disabled>
-          <span>🗑</span>
-          <span data-i18n="clearAll">Clear All</span>
-        </button>
-      </div>
-
       <div id="imageGrid"></div>
-
-      <div class="notice">
-        <span>🔒</span>
-        <span data-i18n="localProcessing">All processing is done locally. Your photos are never uploaded.</span>
-      </div>
 
     </div>
     </div><!-- /photos-panel -->
