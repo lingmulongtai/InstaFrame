@@ -1052,7 +1052,7 @@ async function readExif(file, signal = null) {
       lensModel:    cleanStr(raw.LensModel || ''),
       focalLength:  raw.FocalLength ? String(Math.round(raw.FocalLength)) : '',
       fNumber:      raw.FNumber     ? formatFNumber(raw.FNumber) : '',
-      exposureTime: raw.ExposureTime ? String(raw.ExposureTime) : '',
+      exposureTime: raw.ExposureTime ? InstaFrameCore.formatExposureTime(raw.ExposureTime) : '',
       iso:          raw.ISO || raw.ISOSpeedRatings || '',
       location,
       latitude,
@@ -1785,6 +1785,8 @@ function _finishOwnedGlobalExport(controller) {
   return true;
 }
 
+// Renders every pending item without downloading. The UI exports on demand
+// through downloadAll; this remains the batch renderer for automation.
 async function generateAll() {
   if (_globalExportBusy || _reservedImportItems > 0) return;
   const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
@@ -2032,6 +2034,11 @@ async function downloadAll() {
   if (_globalExportBusy || _reservedImportItems > 0) return;
   if (!state.items.length) {
     showToast(t('msgNoImages'), 'warn');
+    return;
+  }
+  // Rendering happens on demand, so a lone item skips the ZIP and saves directly.
+  if (state.items.length === 1) {
+    await applyAndDownloadSingle(state.items[0].id);
     return;
   }
 
@@ -2767,7 +2774,19 @@ function updateLiveExifPanel() {
 function toggleLiveExifPanel() {
   const wrap = document.getElementById('previewExifWrap');
   if (!wrap) return;
-  const open = wrap.classList.toggle('exif-open');
+  const open = !wrap.classList.contains('exif-open');
+  setLiveExifPanelOpen(open);
+  if (!_usesMobileLayout()) {
+    const prefs = loadPrefs();
+    prefs.exifEditorOpen = open;
+    savePrefs(prefs);
+  }
+}
+
+function setLiveExifPanelOpen(open) {
+  const wrap = document.getElementById('previewExifWrap');
+  if (!wrap) return;
+  wrap.classList.toggle('exif-open', open);
   document.querySelector('.preview-exif-drawer-header')?.setAttribute('aria-expanded', String(open));
   const content = document.getElementById('previewExifContent');
   if (content) {
@@ -4661,7 +4680,7 @@ function renderItem(item) {
     <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}" aria-describedby="status-badge-${item.id}">
       ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
       <img class="thumb-orig" alt="">
-      <div class="card-status" id="status-badge-${item.id}">
+      <div class="card-status" id="status-badge-${item.id}" data-status="pending">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
       </div>
@@ -4669,11 +4688,11 @@ function renderItem(item) {
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}">
-          <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
+        <button type="button" class="card-icon-btn" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}" title="${escHtml(t('downloadSingle'))}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>
         </button>
-        <button class="btn btn-sm btn-danger" data-action="remove" aria-label="${escHtml(tf('removeNamed', { name: item.file.name }))}">
-          <span data-i18n="remove">${t('remove')}</span>
+        <button type="button" class="card-icon-btn" data-action="remove" aria-label="${escHtml(tf('removeNamed', { name: item.file.name }))}" title="${escHtml(t('remove'))}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l.8 12.5h9.4l.8-12.5"/></svg>
         </button>
       </div>
     </div>
@@ -4704,6 +4723,7 @@ function updateItemStatus(item) {
   const text = badge.querySelector('.status-text');
 
   dot.className = `status-dot ${item.status}`;
+  badge.dataset.status = item.status;
   const errorMessage = item.status === 'error' ? _getItemErrorMessage(item) : '';
   if (errorMessage) {
     item.errorMsg = errorMessage;
@@ -4796,8 +4816,56 @@ function updateImageCounter() {
   const count = state.items.length;
   const visual = document.getElementById('imageCounterVisual');
   const status = document.getElementById('imageCounterStatus');
-  if (visual) visual.textContent = count ? `(${count})` : '';
+  if (visual) visual.textContent = count ? String(count) : '';
   if (status) status.textContent = count ? tf('imageCount', { count }) : '';
+}
+
+// The empty-state sample print mirrors the main frame settings, so the look
+// can be tuned before any media is added. Fonts stay lazy: it uses UI type.
+function _syncSamplePrint() {
+  const print = document.getElementById('samplePrint');
+  if (!print) return;
+  const s = state.settings;
+  const blur = s.frameBackground === 'blur';
+  const frameColor = InstaFrameCore.normalizeHexColor(s.frameColor, '#F0F0F0');
+  let tone = s.textColorMode;
+  if (tone !== 'light' && tone !== 'dark' && tone !== 'custom') {
+    tone = blur || FrameEngine.isColorDark(frameColor) ? 'light' : 'dark';
+  }
+  print.style.setProperty('--sample-frame', frameColor);
+  print.style.setProperty('--sample-thickness', String(Number(s.thicknessScale) || 1));
+  print.style.setProperty('--sample-text-custom', InstaFrameCore.normalizeHexColor(s.textColor, '#FFFFFF'));
+  print.dataset.background = blur ? 'blur' : 'color';
+  print.dataset.frame = !blur && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
+  print.dataset.tone = tone;
+  print.classList.toggle('hide-shot-on', s.showShotOn === false);
+  print.classList.toggle('hide-exif', s.showExifInfo === false);
+  print.classList.toggle('camera-bold', !!s.cameraNameBold);
+  print.classList.toggle('camera-italic', !!s.cameraNameItalic);
+  print.classList.toggle('exif-italic', !!s.exifItalic);
+}
+
+// Sidebar sliders paint their filled track from this custom property.
+// Ranges that straddle zero (offsets) fill outward from the zero point.
+function _syncRangeFill(input) {
+  const min = Number(input.min) || 0;
+  const max = input.max === '' ? 100 : Number(input.max);
+  const span = max - min;
+  const toPercent = value => (span > 0 ? Math.min(100, Math.max(0, ((value - min) / span) * 100)) : 0);
+  const value = toPercent(Number(input.value));
+  const origin = min < 0 && max > 0 ? toPercent(0) : 0;
+  input.style.setProperty('--range-start', `${Math.min(origin, value)}%`);
+  input.style.setProperty('--range-end', `${Math.max(origin, value)}%`);
+}
+
+function _syncRangeFills() {
+  document.querySelectorAll('.sidebar input[type="range"], #cardSizeRange').forEach(_syncRangeFill);
+}
+
+// One item downloads as its own file; several are packed into a ZIP.
+function _syncDownloadAllLabel() {
+  const label = document.getElementById('downloadAllLabel');
+  if (label) label.textContent = state.items.length > 1 ? t('downloadAllZip') : t('downloadSingle');
 }
 
 function updateUI() {
@@ -4818,14 +4886,16 @@ function updateUI() {
     exifWrap.setAttribute('aria-hidden', String(!hasItems));
   }
 
-  const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
   const clrBtn  = document.getElementById('clearAllBtn');
 
-  if (genBtn)  genBtn.disabled  = _globalExportBusy || hasPendingImports || !hasExportableItems;
   if (dlBtn)   dlBtn.disabled   = _globalExportBusy || hasPendingImports || !hasExportableItems;
   if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasWorkspaceItems;
   updateImageCounter();
+  _syncDownloadAllLabel();
+  _syncSamplePrint();
+  _syncRangeFills();
+  document.body.setAttribute('data-workspace', hasWorkspaceItems ? 'active' : 'empty');
 
   setVisible(document.getElementById('imageSection'), hasWorkspaceItems, 'flex');
   setVisible(document.getElementById('emptyHint'),    !hasWorkspaceItems);
@@ -4878,7 +4948,6 @@ function setGlobalBusy(busy) {
     if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
   }
   const hasExportableItems = _hasExportableItems();
-  document.getElementById('generateAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
   document.getElementById('downloadAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
   const clrBtn = document.getElementById('clearAllBtn');
   if (clrBtn) clrBtn.disabled = busy || state.items.length === 0;
@@ -6014,14 +6083,12 @@ function rerenderCards() {
     const card = document.getElementById(`item-${item.id}`);
     const preview = card?.querySelector('.card-preview');
     preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
-    card?.querySelector('[data-action="download"]')?.setAttribute(
-      'aria-label',
-      tf('downloadSingleNamed', { name: item.file.name })
-    );
-    card?.querySelector('[data-action="remove"]')?.setAttribute(
-      'aria-label',
-      tf('removeNamed', { name: item.file.name })
-    );
+    const downloadBtn = card?.querySelector('[data-action="download"]');
+    downloadBtn?.setAttribute('aria-label', tf('downloadSingleNamed', { name: item.file.name }));
+    downloadBtn?.setAttribute('title', t('downloadSingle'));
+    const removeBtn = card?.querySelector('[data-action="remove"]');
+    removeBtn?.setAttribute('aria-label', tf('removeNamed', { name: item.file.name }));
+    removeBtn?.setAttribute('title', t('remove'));
     updateItemStatus(item);
     if (item.status === 'done') updateItemPreview(item);
   });
@@ -6244,7 +6311,10 @@ function setupMobileTabs() {
   // Default to preview tab on mobile
   if (isMobile()) {
     _setMobileTabState(tabBar, 'preview');
-  } else _syncMobileTabPanels(tabBar, '', false);
+  } else {
+    document.body.removeAttribute('data-mobile-tab');
+    _syncMobileTabPanels(tabBar, '', false);
+  }
 
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
@@ -6409,7 +6479,9 @@ function setupMainResize() {
 
   const getMinHeight = () => Math.max(120, parseFloat(getComputedStyle(preview).minHeight) || 0);
   const getMaxHeight = () => Math.max(getMinHeight(), window.innerHeight - 160);
-  let preferredHeight = preview.offsetHeight;
+  // Mirrors the CSS default (52vh). The empty stage fills the whole workspace,
+  // so its measured height would overshoot once media is added.
+  let preferredHeight = Math.round(window.innerHeight * 0.52);
   const applyHeight = (value, persist = false) => {
     const minHeight = getMinHeight();
     const maxHeight = getMaxHeight();
@@ -6476,9 +6548,11 @@ function setupCardSize() {
   const range = document.getElementById('cardSizeRange');
   if (!range) return;
   const prefs = loadPrefs();
-  if (prefs.cardSize) {
-    range.value = prefs.cardSize;
-    document.documentElement.style.setProperty('--card-min-w', prefs.cardSize + 'px');
+  // Phones default to two columns; a saved size always wins.
+  const initialSize = prefs.cardSize || (_usesMobileLayout() ? 140 : null);
+  if (initialSize) {
+    range.value = initialSize;
+    document.documentElement.style.setProperty('--card-min-w', initialSize + 'px');
   }
   range.addEventListener('input', () => {
     document.documentElement.style.setProperty('--card-min-w', range.value + 'px');
@@ -6619,6 +6693,12 @@ document.addEventListener('DOMContentLoaded', () => {
   setupHistoryControls();
   setupKeyboardShortcuts();
   setupMobileTabs();
+  // On phones the editor would cover the photo, so it starts collapsed. On
+  // larger screens it reopens the way the user last left it.
+  if (_usesMobileLayout() || loadPrefs().exifEditorOpen === false) setLiveExifPanelOpen(false);
+  document.addEventListener('input', event => {
+    if (event.target?.matches?.('.sidebar input[type="range"], #cardSizeRange')) _syncRangeFill(event.target);
+  });
   document.getElementById('langToggleBtn')?.addEventListener('click', () => {
     setLang(currentLang === 'en' ? 'ja' : 'en');
     rerenderCards();
@@ -6628,7 +6708,6 @@ document.addEventListener('DOMContentLoaded', () => {
   updatePreviewViewModifiedState();
   _refreshShareLinks();
 
-  document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
   document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
     _activeExportController?.abort();
@@ -6641,4 +6720,13 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('pageshow', event => {
     if (event.persisted) _restorePageResources();
   });
+});
+
+// boot.js hides the UI until the setup above has translated and laid it out.
+// This separate listener still reveals the page if that setup throws.
+document.addEventListener('DOMContentLoaded', () => {
+  // Resolve the final styles while transitions are still off, so nothing
+  // animates from its markup default once the page is revealed.
+  void document.body.offsetWidth;
+  document.documentElement.classList.remove('is-booting');
 });

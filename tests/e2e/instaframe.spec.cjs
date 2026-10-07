@@ -16,6 +16,12 @@ async function uploadJpegs(page, count = 1, gps = false) {
   await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
 }
 
+// The UI renders on demand when downloading; tests that only need finished
+// frames run the same batch renderer directly, without waiting for it.
+async function renderAllItems(page) {
+  await page.evaluate(() => { void window.generateAll(); });
+}
+
 async function trackCancellationToasts(page) {
   await page.evaluate(() => {
     const nativeShowToast = window.showToast;
@@ -115,8 +121,9 @@ test.beforeEach(async ({ page }) => {
 
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  await expect(page.locator('#samplePrint')).toBeVisible();
   await expect(page.locator('#mobileAddBtn')).toBeHidden();
-  await expect(page.locator('.empty-hint-card')).toHaveCount(4);
+  await expect(page.locator('.photos-panel')).toBeHidden();
   const initial = await new AxeBuilder({ page }).analyze();
   expect(initial.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 
@@ -215,11 +222,10 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
-  await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    'ブラウザ依存の条件付き形式：HEIC/HEIF・MOV/M4V・AVI/MKV/3GP。読み込みにはコンテナとコーデックの対応が必要です。'
-  );
+  await expect(page.locator('.preview-empty-sub')).toHaveText('写真は端末内で処理され、アップロードされません。');
   await uploadJpegs(page);
-  await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
+  await expect(page.locator('#status-badge-1 .status-text')).toHaveText('準備完了');
+  await expect(page.locator('#downloadAllLabel')).toHaveText('ダウンロード');
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', '写真カードの大きさ');
   await expect(page.locator('#undoEditBtn')).toHaveText('戻る');
   await expect(page.locator('#undoEditBtn')).toHaveAttribute('title', '戻る');
@@ -232,9 +238,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#dropZone')).toContainText('Drop photos here');
-  await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    'Conditional browser formats: HEIC/HEIF · MOV/M4V · AVI/MKV/3GP. Decoding depends on container and codec support.'
-  );
+  await expect(page.locator('.preview-empty-sub')).toHaveText('Processed on this device. Nothing is uploaded.');
   await uploadJpegs(page);
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', 'Photo card size');
   await expect(page.locator('#undoEditBtn')).toHaveText('Undo');
@@ -243,6 +247,57 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('#redoEditBtn')).toHaveAttribute('title', 'Redo');
   await page.evaluate(() => window.showProgress('Processing…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
+});
+
+test('first paint stays hidden until translations and saved preferences are applied', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'ja');
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ theme: 'dark', layout: 'right' }));
+    window.__previousDocument = true;
+  });
+  let releaseApp;
+  const appHeld = new Promise(resolve => { releaseApp = resolve; });
+  await page.route('**/js/app.js*', async route => {
+    await appHeld;
+    await route.continue();
+  });
+
+  const navigation = page.goto('/');
+  const readBootState = () => page.evaluate(() => {
+    if (window.__previousDocument || !document.body) return null;
+    return {
+      booting: document.documentElement.classList.contains('is-booting'),
+      theme: document.documentElement.dataset.theme,
+      layout: document.documentElement.dataset.layout,
+      bodyVisibility: getComputedStyle(document.body).visibility,
+      mobileTab: document.body.dataset.mobileTab,
+      workspace: document.body.dataset.workspace,
+    };
+  }).catch(() => null);
+  await expect.poll(readBootState).not.toBeNull();
+  expect(await readBootState()).toEqual({
+    booting: true,
+    theme: 'dark',
+    layout: 'right',
+    bodyVisibility: 'hidden',
+    mobileTab: 'preview',
+    workspace: 'empty',
+  });
+
+  releaseApp();
+  await navigation;
+  await expect(page.locator('html')).not.toHaveClass(/is-booting/);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  await expect(page.locator('body')).toHaveCSS('visibility', 'visible');
+  await expect(page.locator('.preview-empty-text')).toHaveText('ここに写真をドロップ');
+  await expect(page.locator('#livePreviewCanvas')).toBeHidden();
+});
+
+test('the page still reveals itself when the app script cannot load', async ({ page }) => {
+  await page.route('**/js/app.js*', route => route.abort());
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveClass(/is-booting/);
+  await expect(page.locator('body')).toHaveCSS('visibility', 'visible', { timeout: 10_000 });
 });
 
 test('card actions identify their target file in both languages', async ({ page }) => {
@@ -567,7 +622,7 @@ test('a successful export recovers a photo from a transient live preview decode 
   await expect.poll(() => page.evaluate(() => window.__transientPreviewFailureObserved)).toBe(true);
   await page.evaluate(() => window.__restorePreviewImageDecoder());
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('.status-dot.done')).toHaveCount(1);
   await expect(canvas).toBeVisible();
@@ -864,7 +919,7 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
     };
   });
   await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
   await page.evaluate(() => {
@@ -908,9 +963,10 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
 });
 
 test('a failed ZIP download restores export controls without an unhandled rejection', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     const create = URL.createObjectURL.bind(URL);
     const revoke = URL.revokeObjectURL.bind(URL);
@@ -961,9 +1017,10 @@ test('a failed ZIP download restores export controls without an unhandled reject
 });
 
 test('an invalid JSZip global cannot leave export controls locked', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     window.JSZip = {};
     window.__invalidZipUnhandled = [];
@@ -1389,7 +1446,7 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
     );
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(thumbnail).toBeVisible();
 
@@ -1411,7 +1468,7 @@ test('card progress remains described without competing with the export live reg
   await expect(preview).toHaveAttribute('aria-describedby', 'status-badge-1');
   await expect(badge).not.toHaveAttribute('role');
   await expect(badge).not.toHaveAttribute('aria-live');
-  await expect(badge).toContainText(/pending|未適用/i);
+  await expect(badge).toContainText(/ready|準備完了/i);
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('role', 'status');
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('aria-live', 'polite');
 });
@@ -1621,14 +1678,14 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('.pq-option[data-q="draft"]')).toHaveAttribute('aria-checked', 'true');
   await page.evaluate(() => window.setLang('en'));
   await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('Preview quality: Draft');
-  await expect(page.locator('#imageCounterVisual')).toHaveText('(1)');
+  await expect(page.locator('#imageCounterVisual')).toHaveText('1');
   await expect(page.locator('#imageCounterStatus')).toHaveText('Images: 1');
   await page.locator('#previewQualityBtn').press('Enter');
   await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('Preview quality');
   await page.keyboard.press('Escape');
   await page.evaluate(() => window.setLang('ja'));
   await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('プレビュー画質: 下書き');
-  await expect(page.locator('#imageCounterVisual')).toHaveText('(1)');
+  await expect(page.locator('#imageCounterVisual')).toHaveText('1');
   await expect(page.locator('#imageCounterStatus')).toHaveText('画像: 1件');
   await page.locator('#previewQualityBtn').press('Enter');
   await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('プレビュー画質');
@@ -2209,7 +2266,7 @@ test('batch export keeps case-insensitive duplicate filenames as separate ZIP en
 
 test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
   await uploadJpegs(page, 2);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
 
@@ -2301,7 +2358,6 @@ test('unsupported video export disables only actions that have no exportable med
   });
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
 
   await page.locator('#fileInput').setInputFiles({
@@ -2312,7 +2368,6 @@ test('unsupported video export disables only actions that have no exportable med
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
   await expect(page.locator('#dl-btn-2')).toBeEnabled();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
@@ -2449,9 +2504,9 @@ test('an unexpected post-export UI failure cannot leave batch controls locked', 
     window.updateItemPreview = () => { throw new Error('simulated post-export UI failure'); };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
   await expect(page.locator('#toast')).toHaveText(expectedError);
   expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
@@ -2462,7 +2517,7 @@ test('an unexpected post-regenerate UI failure cannot leave controls locked', as
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     window.updateItemPreview = () => { throw new Error('simulated post-regenerate UI failure'); };
@@ -2470,7 +2525,7 @@ test('an unexpected post-regenerate UI failure cannot leave controls locked', as
 
   await page.evaluate(() => window.regenerateItem(1));
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
   await expect(page.locator('#toast')).toHaveText(expectedError);
   expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
@@ -2494,7 +2549,6 @@ test('single export keeps every export action locked through final encoding', as
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
   await expect(page.locator('#dl-btn-2')).toBeDisabled();
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
   await expect(page.locator('#clearAllBtn')).toBeDisabled();
 
@@ -2812,7 +2866,6 @@ test('batch actions wait until every accepted import is materialized', async ({ 
 
   await expect.poll(() => page.evaluate(() => window.__completeImportStats.parseCalls)).toBe(2);
   await expect(page.locator('.image-card')).toHaveCount(1);
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
 
   await page.evaluate(async () => {
@@ -2834,7 +2887,6 @@ test('batch actions wait until every accepted import is materialized', async ({ 
     await window.__completeImport;
   });
   await expect(page.locator('.image-card')).toHaveCount(2);
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
@@ -3248,7 +3300,7 @@ test('video export waits for thumbnail decoder cleanup before encoding', async (
   });
   await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.started)).toBe(true);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.captureCalls)).toBe(2);
@@ -3306,7 +3358,7 @@ test('a successful video export retries one transient thumbnail failure', async 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
@@ -3333,7 +3385,7 @@ test('a failed post-export thumbnail retry does not invalidate the video output 
   });
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#dl-btn-1')).toBeEnabled();
@@ -3746,7 +3798,7 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
       return render(...args);
     };
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#imageSection')).toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('#exportProgressMeter')).toHaveAccessibleName(/.+/);
@@ -3774,7 +3826,7 @@ test('export completion preserves focus when the user moves to another control',
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__focusExportStarted)).toBe(true);
   await expect(page.locator('#cancelExportBtn')).toBeFocused();
   const customize = page.locator('#customizeBtn');
@@ -3812,19 +3864,19 @@ test('a suspended export cannot unlock a newer export after BFCache restore', as
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__oldExportStarted)).toBe(true);
   await page.evaluate(() => {
     window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__newExportStarted)).toBe(true);
   await page.evaluate(() => window.__releaseOldExport());
   await page.waitForTimeout(250);
 
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#downloadAllBtn')).toBeDisabled();
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/processing/);
 
@@ -3845,7 +3897,7 @@ test('changing frame settings aborts active work and invalidates the whole batch
     });
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#thicknessRange').evaluate(input => {
     input.value = '1.1';
@@ -3859,9 +3911,10 @@ test('changing frame settings aborts active work and invalidates the whole batch
 });
 
 test('live EXIF edits abort an active ZIP before stale photo bytes can download', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__exifZipEncodeStarted = false;
@@ -3890,9 +3943,10 @@ test('live EXIF edits abort an active ZIP before stale photo bytes can download'
 });
 
 test('photo output setting changes abort active ZIP encodes before stale bytes download', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__photoSettingZipSignals = [];
@@ -3944,9 +3998,10 @@ test('resolved device locations abort an active ZIP before stale output can down
       coords: { latitude: 35.0116, longitude: 135.7681 },
     });
   });
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__locationZipEncodeStarted = false;
@@ -3976,7 +4031,7 @@ test('resolved device locations abort an active ZIP before stale output can down
 });
 
 test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__photoEncodeStarted = false;
@@ -4008,7 +4063,7 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
 });
 
 test('ZIP cancellation interrupts a pending lazy dependency load', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__zipDependencyLoadStarted = false;
@@ -4029,10 +4084,11 @@ test('ZIP cancellation interrupts a pending lazy dependency load', async ({ page
 });
 
 test('ZIP cancellation pauses active packing and restores the export UI', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
 
@@ -4085,9 +4141,10 @@ test('ZIP cancellation pauses active packing and restores the export UI', async 
 });
 
 test('clearing with the keyboard aborts active ZIP packing before removing items', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(async () => {
     const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
     window.__clearZipState = { started: false, paused: false };
@@ -4208,7 +4265,7 @@ test('batch generation reports failures and retries failed items', async ({ page
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
@@ -4216,7 +4273,7 @@ test('batch generation reports failures and retries failed items', async ({ page
   await expect(page.locator('#toast')).toContainText('Frames that could not be generated: 1');
   await expect(page.locator('#toast')).not.toContainText('All frames generated');
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
   await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
   await expect(page.locator('#toast')).toContainText('All frames generated');
@@ -4233,7 +4290,7 @@ test('batch download retries failed items before building the ZIP', async ({ pag
       return render(...args);
     };
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
 
   const downloadPromise = page.waitForEvent('download');
@@ -4262,7 +4319,7 @@ test('video cancellation propagates an AbortSignal to the active encoder', async
       }, { once: true });
     });
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#cancelExportBtn').click();
   await expect.poll(() => page.evaluate(() => window.__videoAbortObserved)).toBe(true);
@@ -4281,7 +4338,7 @@ test('photo cancellation aborts the active image decoder and restores pending st
       }, { once: true });
     });
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#cancelExportBtn').click();
   await expect.poll(() => page.evaluate(() => window.__photoAbortObserved)).toBe(true);
@@ -4486,11 +4543,11 @@ test('a stalled photo export decoder times out, revokes its URL, and restores co
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /took too long/i);
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   expect(await page.evaluate(() => ({
     activeUrls: window.__stalledExportImageStats.activeUrls.size,
     sourceRemoved: window.__stalledExportImageStats.sourceRemoved,
@@ -4809,12 +4866,12 @@ test('a failed generated card canvas falls back to the bounded source thumbnail'
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(0);
   await expect(page.locator('canvas.thumb-source')).toBeVisible();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   expect(pageErrors).toEqual([]);
 });
 
@@ -5967,7 +6024,7 @@ test('sequential video exports receive only the remaining retained-output budget
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('.status-dot.done')).toHaveCount(2);
   expect(await page.evaluate(() => window.__videoOutputLimits)).toEqual([
     384 * 1024 * 1024,
@@ -6592,7 +6649,7 @@ test('social presets are labelled and enforce portrait composition', async ({ pa
   await page.reload();
   await uploadJpegs(page);
   await expect(page.locator('.ratio-pill-featured')).toContainText('Instagram投稿');
-  await expect(page.locator('label[for="ratio-3-4"]')).toContainText('プロフィールグリッド');
+  await expect(page.locator('label[for="ratio-3-4"]')).toContainText('グリッド');
   await expect(page.locator('label[for="ratio-9-16"]')).toContainText('ストーリー');
 
   for (const [id, expectedRatio] of [['ratio-4-5', 4 / 5], ['ratio-3-4', 3 / 4], ['ratio-9-16', 9 / 16]]) {
@@ -7496,7 +7553,6 @@ for (const { extension, mimeType } of [
     await expect(page.locator('#toast')).toContainText(/decode|デコード/i);
     await expect(page.locator('#livePreviewError')).toBeVisible();
     await expect(page.locator('[role="alert"]:visible')).toHaveCount(1);
-    await expect(page.locator('.preview-empty-format-note')).toContainText(/HEIC/i);
   });
 }
 
@@ -7626,7 +7682,12 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
   const zoomBar = page.locator('#previewZoomBar');
+  // The editor starts collapsed on phones so it does not cover the photo.
   await expect(drawer).toBeVisible();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
+  await expect(zoomBar).toHaveAttribute('aria-hidden', 'false');
+  await page.locator('.preview-exif-drawer-header').click();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'true');
   await expect(zoomBar).toHaveAttribute('aria-hidden', 'true');
   expect(await zoomBar.evaluate(element => element.inert)).toBe(true);
   const [box, historyBox, headerTitleBox] = await Promise.all([
@@ -7733,7 +7794,7 @@ test('short landscape preview exposes a horizontal zoom control without clipping
     root.setProperty('--safe-area-left', '36px');
   });
   await uploadJpegs(page);
-  await page.locator('.preview-exif-drawer-header').click();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
 
   const zoom = page.locator('#zoomRange');
   const zoomBar = page.locator('#previewZoomBar');
@@ -7797,7 +7858,7 @@ test('wide phone landscapes keep mobile tabs, media controls, and safe areas usa
     await page.locator('#preview-2').click();
     await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
     await expect(page.locator('#previewVideoBar')).toBeVisible();
-    await page.locator('.preview-exif-drawer-header').click();
+    await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#zoomRange')).toHaveAttribute('aria-orientation', 'horizontal');
 
     const previewLayout = await page.evaluate(() => {
@@ -7928,6 +7989,8 @@ test('short landscape map picker keeps its map and confirmation actions reachabl
     root.setProperty('--safe-area-left', '36px');
   });
   await uploadJpegs(page);
+  // Phones start with the EXIF editor collapsed so the photo stays visible.
+  await page.locator('.preview-exif-drawer-header').click();
   await page.locator('#openMapPickerBtn').click();
   await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
   await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
