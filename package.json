@@ -8,7 +8,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "check:syntax": "node --check js/core-utils.js && node --check js/config.js && node --check js/i18n.js && node --check js/frame-engine.js && node --check js/app.js",
+    "check:syntax": "node --check js/boot.js && node --check js/core-utils.js && node --check js/config.js && node --check js/i18n.js && node --check js/frame-engine.js && node --check js/app.js",
     "lint": "eslint js tests scripts playwright.config.cjs",
     "prepare:vendor": "node scripts/prepare-vendor.mjs",
     "test:unit": "node --test tests/unit/*.test.cjs",

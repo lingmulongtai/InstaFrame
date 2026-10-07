@@ -190,6 +190,27 @@
     return `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
   }
 
+  /** Parse exposure text such as "1/250", "1/250s", "0.004" or "2s" into seconds. */
+  function parseExposureSeconds(value) {
+    const raw = String(value ?? '').trim().replace(/\s*(?:s|sec|秒)$/i, '');
+    if (!raw) return null;
+    const fraction = raw.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+    const seconds = fraction ? Number(fraction[1]) / Number(fraction[2]) : Number(raw);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  }
+
+  /** Format exposure seconds the way cameras label them: "1/250", "0.3" or "2". */
+  function formatExposureTime(value) {
+    const seconds = parseExposureSeconds(value);
+    if (seconds == null) return String(value ?? '').trim();
+    const trimDecimal = number => String(Math.round(number * 10) / 10);
+    if (seconds >= 1) return trimDecimal(seconds);
+    const denominator = 1 / seconds;
+    const rounded = Math.round(denominator);
+    if (rounded >= 2 && Math.abs(denominator - rounded) / rounded <= 0.02) return `1/${rounded}`;
+    return trimDecimal(seconds);
+  }
+
   function normalizeHexColor(value, fallback = '#111111') {
     const raw = String(value || '').trim();
     if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toUpperCase();
@@ -225,6 +246,8 @@
     getVisiblePreviewDetailPlan,
     estimateZipPeakBytes,
     formatCoordinateLabel,
+    parseExposureSeconds,
+    formatExposureTime,
     normalizeHexColor,
     isAllowedOrigin,
   });
