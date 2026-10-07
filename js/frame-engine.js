@@ -729,10 +729,10 @@ const FrameEngine = (() => {
   }
 
   function formatShutter(val) {
-    const n = parseFloat(val);
-    if (isNaN(n)) return String(val);
-    if (n >= 1) return `${n}s`;
-    return `1/${Math.round(1 / n)}s`;
+    if (typeof InstaFrameCore === 'undefined') return String(val);
+    const seconds = InstaFrameCore.parseExposureSeconds(val);
+    if (seconds == null) return String(val);
+    return `${InstaFrameCore.formatExposureTime(seconds)}s`;
   }
 
   function isColorDark(hex) {

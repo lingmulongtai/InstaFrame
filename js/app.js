@@ -1052,7 +1052,7 @@ async function readExif(file, signal = null) {
       lensModel:    cleanStr(raw.LensModel || ''),
       focalLength:  raw.FocalLength ? String(Math.round(raw.FocalLength)) : '',
       fNumber:      raw.FNumber     ? formatFNumber(raw.FNumber) : '',
-      exposureTime: raw.ExposureTime ? String(raw.ExposureTime) : '',
+      exposureTime: raw.ExposureTime ? InstaFrameCore.formatExposureTime(raw.ExposureTime) : '',
       iso:          raw.ISO || raw.ISOSpeedRatings || '',
       location,
       latitude,
