@@ -27,3 +27,19 @@ The M4V contract reuses `codec-fixture.mp4` with the `.m4v` extension and `video
 SHA-256: `30c623393fb53d487477a6c900797270c71e0fd16bee8ac10b89591da9edea05`
 
 The unit suite verifies all documented hashes before any browser contract uses these files. If a fixture is regenerated, update its description and hash in this document in the same change.
+
+`hevc-10bit.mov` is a one-frame 64×36 solid-colour HEVC Main 10 video in a QuickTime container, tagged `hvc1` like iPhone recordings. Browsers without HEVC decoding use it to verify that a failed video names its codec and how to open it.
+
+```text
+ffmpeg -f lavfi -i "color=c=0x3366aa:s=64x36:r=1" -frames:v 1 -c:v libx265 -pix_fmt yuv420p10le -tag:v hvc1 hevc-10bit.mov
+```
+
+SHA-256: `226772af30769ff1ae924c76f80645cd755d585c280ea31c9f0269522be1cef7`
+
+`heic-plain.heic` is a 96×64 synthetic HEIC (blue stripes with a yellow disc), encoded with pillow-heif 0.22.0 (libheif 1.19.7, x265) at quality 90. It checks that HEIC opens in browsers without native HEIC decoding.
+
+SHA-256: `ca669c14c3bdd9a724049b340a435c5b706984b907e1ab94138cf15737979c7d`
+
+`heic-spatial.heic` is a 160×120 stereo pair shaped like a spatial photo: two HEVC images in a `ster` entity group with camera intrinsics (`cmin`) and extrinsics (`cmex`). The disc sits 4 px right in the left eye and 4 px left in the right eye (8 px of crossed disparity). Each eye was encoded like `heic-plain.heic`, then assembled with `node tests/e2e/make-spatial-fixture.cjs left.heic right.heic heic-spatial.heic`, which uses the app's own HEIF writer.
+
+SHA-256: `6f18ecc570c27ff9213154ffd39f948ddb171a8f9a1e29e61c36d5de71bbfbc0`

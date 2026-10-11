@@ -220,6 +220,89 @@
     return fallback;
   }
 
+  const VIDEO_CODECS = {
+    avc1: 'h264', avc3: 'h264',
+    hvc1: 'hevc', hev1: 'hevc', dvh1: 'hevc', dvhe: 'hevc',
+    av01: 'av1', vp08: 'vp8', vp09: 'vp9',
+    apcn: 'prores', apch: 'prores', apcs: 'prores', apco: 'prores', ap4h: 'prores', ap4x: 'prores',
+    mp4v: 'mpeg4', jpeg: 'mjpeg', mjpa: 'mjpeg',
+  };
+
+  function fourcc(bytes, offset) {
+    return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+  }
+
+  /** Walk ISO BMFF boxes in bytes[start, end) and return {type, start, end, body}. */
+  function listMp4Boxes(bytes, start = 0, end = bytes.length) {
+    const boxes = [];
+    let offset = start;
+    while (offset + 8 <= end) {
+      let size = ((bytes[offset] << 24) >>> 0) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3];
+      const type = fourcc(bytes, offset + 4);
+      let header = 8;
+      if (size === 1) {
+        if (offset + 16 > end) break;
+        size = Number(new DataView(bytes.buffer, bytes.byteOffset + offset + 8, 8).getBigUint64(0));
+        header = 16;
+      } else if (size === 0) {
+        size = end - offset;
+      }
+      if (size < header || offset + size > end) break;
+      boxes.push({ type, start: offset, end: offset + size, body: offset + header });
+      offset += size;
+    }
+    return boxes;
+  }
+
+  /**
+   * Describe the first video track of an MP4/MOV `moov` box: codec family,
+   * sample entry fourcc, HEVC profile (2 = Main 10) and Dolby Vision signalling.
+   */
+  function parseMp4VideoCodec(moov) {
+    const bytes = moov instanceof Uint8Array ? moov : new Uint8Array(moov);
+    const child = (box, type) => listMp4Boxes(bytes, box.body, box.end).find(item => item.type === type);
+    const root = listMp4Boxes(bytes).find(box => box.type === 'moov');
+    if (!root) return null;
+    for (const trak of listMp4Boxes(bytes, root.body, root.end).filter(box => box.type === 'trak')) {
+      const mdia = child(trak, 'mdia');
+      const hdlr = mdia && child(mdia, 'hdlr');
+      if (!hdlr || fourcc(bytes, hdlr.body + 8) !== 'vide') continue;
+      const stbl = mdia && child(mdia, 'minf') && child(child(mdia, 'minf'), 'stbl');
+      const stsd = stbl && child(stbl, 'stsd');
+      if (!stsd) continue;
+      const [entry] = listMp4Boxes(bytes, stsd.body + 8, stsd.end);
+      if (!entry) continue;
+      const info = {
+        fourcc: entry.type,
+        codec: VIDEO_CODECS[entry.type] || 'other',
+        width: entry.body + 26 <= entry.end ? (bytes[entry.body + 24] << 8) + bytes[entry.body + 25] : 0,
+        height: entry.body + 28 <= entry.end ? (bytes[entry.body + 26] << 8) + bytes[entry.body + 27] : 0,
+        profile: null,
+        dolbyVision: entry.type === 'dvh1' || entry.type === 'dvhe',
+      };
+      // VisualSampleEntry fields take 78 bytes before the codec's child boxes.
+      for (const config of listMp4Boxes(bytes, entry.body + 78, entry.end)) {
+        if (config.type === 'hvcC' && config.body + 2 <= config.end) info.profile = bytes[config.body + 1] & 0x1f;
+        if (config.type === 'avcC' && config.body + 2 <= config.end) info.profile = bytes[config.body + 1];
+        if (config.type === 'dvcC' || config.type === 'dvvC') info.dolbyVision = true;
+      }
+      return info;
+    }
+    return null;
+  }
+
+  /** Find the video CodecID in the head of a Matroska/WebM file. */
+  function parseMatroskaVideoCodec(head) {
+    const bytes = head instanceof Uint8Array ? head : new Uint8Array(head);
+    const text = String.fromCharCode(...bytes.subarray(0, Math.min(bytes.length, 256 * 1024)));
+    const ids = [
+      ['V_MPEGH/ISO/HEVC', 'hevc'], ['V_MPEG4/ISO/AVC', 'h264'], ['V_AV1', 'av1'],
+      ['V_VP9', 'vp9'], ['V_VP8', 'vp8'], ['V_PRORES', 'prores'],
+    ];
+    const match = ids.find(([id]) => text.includes(id));
+    return match ? { fourcc: match[0], codec: match[1], profile: null, dolbyVision: false } : null;
+  }
+
   function isAllowedOrigin(origin, allowedOrigins) {
     const value = String(origin || '');
     return (allowedOrigins || []).some(pattern => {
@@ -250,5 +333,8 @@
     formatExposureTime,
     normalizeHexColor,
     isAllowedOrigin,
+    listMp4Boxes,
+    parseMp4VideoCodec,
+    parseMatroskaVideoCodec,
   });
 });
