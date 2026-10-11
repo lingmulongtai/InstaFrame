@@ -2264,7 +2264,43 @@ test('batch export keeps case-insensitive duplicate filenames as separate ZIP en
   ]);
 });
 
-test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
+test('ZIP export splits into numbered parts before browser memory exceeds its safe peak', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    // Each encoded photo reports 160 MiB, so two of them cannot share one archive.
+    window.FrameEngine.canvasToBlob = async () => {
+      const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
+      Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
+      return blob;
+    };
+  });
+  const downloads = [];
+  page.on('download', download => downloads.push(download));
+
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#toast')).toContainText(/3 ZIP|ZIPを3個/);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  await expect.poll(() => downloads.length).toBe(3);
+
+  expect(downloads.map(download => download.suggestedFilename())).toEqual([
+    'instaframe_export_1.zip',
+    'instaframe_export_2.zip',
+    'instaframe_export_3.zip',
+  ]);
+  const entryNames = [];
+  for (const download of downloads) {
+    const archive = await JSZip.loadAsync(await fs.readFile(await download.path()));
+    const names = Object.values(archive.files).filter(entry => !entry.dir).map(entry => entry.name);
+    expect(names).toHaveLength(1);
+    entryNames.push(...names);
+  }
+  expect(entryNames).toEqual(['photo-1_frame.jpg', 'photo-2_frame.jpg', 'photo-3_frame.jpg']);
+  // Packed photos release their full-size frames but keep their card previews.
+  expect(await page.evaluate(() => eval('state.items.filter(item => item.canvas).length'))).toBe(0);
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(3);
+});
+
+test('a single photo larger than the safe ZIP peak stops with a memory warning', async ({ page }) => {
   await uploadJpegs(page, 2);
   await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
@@ -2280,7 +2316,7 @@ test('ZIP creation stops before aggregate browser memory exceeds its safe peak',
     };
     window.FrameEngine.canvasToBlob = async () => {
       const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-      Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
+      Object.defineProperty(blob, 'size', { value: 300 * 1024 * 1024 });
       return blob;
     };
   });
@@ -4300,7 +4336,7 @@ test('batch download retries failed items before building the ZIP', async ({ pag
   const entries = Object.values(archive.files).filter(entry => !entry.dir);
 
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
-  await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(2);
   expect(entries).toHaveLength(2);
 });
 
@@ -4813,7 +4849,8 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
       };
       CanvasRenderingContext2D.prototype.drawImage = function (...args) {
         drawCalls += 1;
-        if (mode !== 'post-process' || drawCalls === 2) throw new Error(`${mode} failure`);
+        // Blur draws the background first; fail on the photo draw that follows.
+        if (mode !== 'blur' || drawCalls === 2) throw new Error(`${mode} failure`);
         return nativeDrawImage.apply(this, args);
       };
       let message = '';
@@ -4823,7 +4860,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
         } else if (mode === 'scale') {
           await window.FrameEngine.renderFrameWhenReady(source, {}, {}, { maxPreviewPx: 50 });
         } else {
-          await window.FrameEngine.renderFrameWhenReady(source, {}, { aspectRatio: '1:1' });
+          await window.FrameEngine.renderFrameWhenReady(source, {}, { aspectRatio: '1:1', frameBackground: 'blur' });
         }
       } catch (error) {
         message = error.message;
@@ -4835,7 +4872,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
     };
 
     try {
-      return [await run('render'), await run('scale'), await run('post-process')];
+      return [await run('render'), await run('scale'), await run('blur')];
     } finally {
       source.width = 0;
       source.height = 0;
@@ -4845,7 +4882,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
   expect(results.map(result => result.message)).toEqual([
     'render failure',
     'scale failure',
-    'post-process failure',
+    'blur failure',
   ]);
   for (const result of results) {
     expect(result.dimensions.length).toBeGreaterThan(0);
@@ -5810,7 +5847,7 @@ test('WebCodecs drains a saturated encoder queue before admitting another frame'
   expect(result.activeUrls).toBe(0);
 });
 
-test('WebCodecs video output uses the post-processed aspect ratio and releases its base canvas', async ({ page }) => {
+test('WebCodecs video output uses the padded aspect ratio and releases its drawing canvas', async ({ page }) => {
   await installFakeWebCodecs(page);
   const fixture = await loadAudioVideoFixture();
   const result = await page.evaluate(async ({ base64 }) => {
@@ -5835,8 +5872,10 @@ test('WebCodecs video output uses the post-processed aspect ratio and releases i
 
   expect(result.config.width / result.config.height).toBeCloseTo(4 / 5, 2);
   expect(result.activeUrls).toBe(0);
-  expect(result.canvasSizes.length).toBeGreaterThanOrEqual(2);
-  expect(result.canvasSizes.slice(0, 2)).toEqual([[0, 0], [0, 0]]);
+  // Frames are drawn in one pass onto the encoder canvas; only the tiny shared
+  // 8×4 contrast sampler may stay allocated.
+  expect(result.canvasSizes[0]).toEqual([0, 0]);
+  expect(result.canvasSizes.every(([width, height]) => width * height <= 32)).toBe(true);
 });
 
 test('WebCodecs video cancellation does not fall through and releases its resources', async ({ page }) => {
@@ -6218,6 +6257,146 @@ test('blur background supports an explicit custom text color', async ({ page }) 
   expect(magentaPixels).toBeGreaterThan(10);
 });
 
+test('blur backgrounds come from the original photo and fill every ratio edge', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const source = document.createElement('canvas');
+    source.width = 400;
+    source.height = 240;
+    const sourceContext = source.getContext('2d');
+    sourceContext.fillStyle = '#808080';
+    sourceContext.fillRect(0, 0, source.width, source.height);
+    const settings = {
+      frameColor: '#2040d0',
+      frameBackground: 'blur',
+      blurRadius: 20,
+      blurBrightness: 100,
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 8,
+      textColorMode: 'custom',
+      textColor: '#ff00ff',
+      showShotOn: true,
+      showExifInfo: true,
+    };
+    const exif = {
+      make: 'Canon', model: 'EOS R5', lensModel: 'RF50mm F1.8 STM',
+      focalLength: 50, fNumber: 1.8, exposureTime: 0.004, iso: 100,
+    };
+    const canvas = window.FrameEngine.renderFrame(source, exif, settings);
+    const layout = window.FrameEngine.computeFrameLayout(source.width, source.height, settings, exif);
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    // Outside the frame rectangle there is only the blurred gray photo: no
+    // magenta caption bleeding in and no transparent fade at the edges.
+    let outside = 0;
+    let wrong = 0;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const inFrame = x >= layout.frameX && x < layout.frameX + layout.baseCanvasW &&
+          y >= layout.frameY && y < layout.frameY + layout.baseCanvasH;
+        if (inFrame) continue;
+        outside += 1;
+        const index = (y * canvas.width + x) * 4;
+        const [r, g, b, a] = pixels.slice(index, index + 4);
+        if (Math.abs(r - 128) > 3 || Math.abs(g - 128) > 3 || Math.abs(b - 128) > 3 || a < 254) wrong += 1;
+      }
+    }
+    const size = [canvas.width, canvas.height];
+    canvas.width = 0;
+    canvas.height = 0;
+    source.width = 0;
+    source.height = 0;
+    return { outside, wrong, size, expected: [layout.canvasW, layout.canvasH] };
+  });
+
+  expect(result.size).toEqual(result.expected);
+  // A landscape photo in a padded portrait 4:5 output.
+  expect(result.size[1]).toBeGreaterThan(result.size[0]);
+  expect(result.outside).toBeGreaterThan(10_000);
+  expect(result.wrong).toBe(0);
+});
+
+test('the preview warns when caption text is cut off and clears once it fits', async ({ page }) => {
+  await uploadJpegs(page);
+  const warning = page.locator('#previewWarning');
+  await expect(warning).toBeHidden();
+
+  await page.locator('#live-exif-lens').fill('Ultra Wide Telephoto Zoom Lens '.repeat(6).trim());
+  await expect(warning).toBeVisible();
+  await expect(page.locator('#previewWarningList li')).toHaveCount(1);
+  await expect(page.locator('#previewWarningList')).toContainText(/cut off|切れ/);
+
+  await page.locator('#live-exif-lens').fill('XF35mm');
+  await expect(warning).toBeHidden();
+});
+
+test('the preview warns when the location runs into the camera name', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('label:has(#showLocation)').click();
+  await page.locator('label[for="locpos-right"]').click();
+  await page.locator('#live-exif-model').fill('Extremely Long Camera Model Name Mark II');
+  await page.locator('#live-exif-location').fill('A Very Long Location Name, Somewhere Far Away');
+  await expect(page.locator('#previewWarning')).toBeVisible();
+  await expect(page.locator('#previewWarningList')).toContainText(/overlaps the camera|カメラ名と重なって/);
+});
+
+test('the export panel shows the output size before download and it matches the file', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  const estimate = page.locator('#outputEstimate');
+  await expect(estimate).toContainText(/\d+ × \d+ px/);
+  await expect(page.locator('#batchEstimate')).toContainText(/total|合計/);
+  await expect(page.locator('#card-meta-1')).toContainText(/\d+×\d+/);
+  await expect(page.locator('#card-meta-2')).toContainText(/\d+×\d+/);
+
+  const sizeOf = async () => {
+    const [, width, height] = (await estimate.textContent()).match(/(\d+) × (\d+) px/);
+    return [Number(width), Number(height)];
+  };
+  const original = await sizeOf();
+  await page.locator('label[for="ratio-1-1"]').click();
+  await expect.poll(sizeOf).not.toEqual(original);
+  const square = await sizeOf();
+  expect(square[0]).toBe(square[1]);
+
+  const jpegText = await estimate.textContent();
+  await page.locator('label[for="fmt-png"]').click();
+  await expect.poll(() => estimate.textContent()).not.toBe(jpegText);
+  await page.locator('label[for="fmt-jpeg"]').click();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const bytes = await fs.readFile(await download.path());
+  const decoded = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const size = [bitmap.width, bitmap.height];
+    bitmap.close();
+    return size;
+  }, bytes.toString('base64'));
+  expect(decoded).toEqual(square);
+});
+
+test('rendering more photos than the output budget evicts older frames instead of failing', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    // Pretend every finished frame is 200 MiB so only one more fits the budget.
+    const items = eval('state.items');
+    window._retainedOutputBytes = exclude => items
+      .filter(item => item !== exclude && !item.isVideo && item.canvas)
+      .length * 200 * 1024 * 1024;
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
+  const retained = await page.evaluate(() => eval('state.items.map(item => !!item.canvas)'));
+  expect(retained).toEqual([false, true, true]);
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(3);
+
+  // A setting change makes the kept card preview stale, so it is dropped.
+  await page.locator('label[for="ratio-1-1"]').click();
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(0);
+});
+
 test('video layouts apply portrait presets and outer padding', async ({ page }) => {
   const result = await page.evaluate(() => {
     const base = {
@@ -6261,24 +6440,20 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
     output.width = drawLayout.canvasW;
     output.height = drawLayout.canvasH;
     const outputContext = output.getContext('2d');
-    const scratch = window.FrameEngine.drawVideoFrameSync(
+    const returned = window.FrameEngine.drawVideoFrameSync(
       outputContext, source, {}, drawSettings, drawLayout
     );
     const corner = [...outputContext.getImageData(0, 0, 1, 1).data];
     const draw = {
       frameX: drawLayout.frameX,
       frameY: drawLayout.frameY,
-      scratchWidth: scratch?.width || 0,
-      scratchHeight: scratch?.height || 0,
-      baseCanvasW: drawLayout.baseCanvasW,
-      baseCanvasH: drawLayout.baseCanvasH,
+      returned: returned ?? null,
       corner,
     };
     source.width = 0;
     source.height = 0;
     output.width = 0;
     output.height = 0;
-    if (scratch) { scratch.width = 0; scratch.height = 0; }
     return { layouts, draw };
   });
 
@@ -6288,18 +6463,19 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
   expect(result.layouts.padded.canvasH).toBe(result.layouts.original.canvasH + expectedPad * 2);
   expect(result.draw.frameX).toBeGreaterThan(0);
   expect(result.draw.frameY).toBeGreaterThan(0);
-  expect(result.draw.scratchWidth).toBe(result.draw.baseCanvasW);
-  expect(result.draw.scratchHeight).toBe(result.draw.baseCanvasH);
-  expect(result.draw.corner[3]).toBeGreaterThan(0);
+  // One pass: no scratch canvas, and the padding corner is the opaque blurred
+  // red source rather than the blue frame color.
+  expect(result.draw.returned).toBeNull();
+  expect(result.draw.corner[3]).toBe(255);
+  expect(result.draw.corner[0]).toBeGreaterThan(result.draw.corner[2] + 80);
 });
 
-test('failed blur video draws release only the scratch canvas they allocate', async ({ page }) => {
+test('blur video draws need no scratch canvas and restore the context after a failure', async ({ page }) => {
   const result = await page.evaluate(() => {
     const source = document.createElement('canvas');
     source.width = 160;
     source.height = 90;
     const output = document.createElement('canvas');
-    const reusable = document.createElement('canvas');
     const settings = {
       thicknessScale: 1,
       frameColor: '#f0f0f0',
@@ -6319,42 +6495,43 @@ test('failed blur video draws release only the scratch canvas they allocate', as
     const outputContext = output.getContext('2d');
     const nativeCreateElement = document.createElement.bind(document);
     const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
-    let allocated = null;
-    let failingCanvas = null;
+    let createdCanvases = 0;
+    let drawCalls = 0;
+    let failAt = 0;
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() === 'canvas') createdCanvases += 1;
+      return nativeCreateElement(tagName, options);
+    };
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
-      if (this.canvas === failingCanvas) throw new Error('simulated scratch draw failure');
+      drawCalls += 1;
+      if (drawCalls === failAt) throw new Error(`draw ${failAt} failed`);
       return nativeDrawImage.apply(this, args);
     };
 
     const outcomes = [];
-    try {
-      try {
-        document.createElement = (tagName, options) => {
-          const element = nativeCreateElement(tagName, options);
-          if (String(tagName).toLowerCase() === 'canvas') {
-            allocated = element;
-            failingCanvas = element;
-          }
-          return element;
-        };
-        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
-      } catch (error) {
-        outcomes.push({ kind: 'allocated', message: error.message, size: [allocated.width, allocated.height] });
-      }
-
-      document.createElement = nativeCreateElement;
-      failingCanvas = reusable;
-      try {
-        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout, reusable);
-      } catch (error) {
-        outcomes.push({ kind: 'reused', message: error.message, size: [reusable.width, reusable.height] });
-      }
-      const transform = reusable.getContext('2d').getTransform();
+    const contextState = () => {
+      const transform = outputContext.getTransform();
       return {
-        outcomes,
-        expectedReusableSize: [layout.baseCanvasW, layout.baseCanvasH],
-        reusableTransform: { a: transform.a, d: transform.d, e: transform.e, f: transform.f },
+        transform: [transform.a, transform.d, transform.e, transform.f],
+        filter: outputContext.filter,
       };
+    };
+    try {
+      window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+      outcomes.push({ message: 'drawn', ...contextState() });
+      // The first frame may create the shared contrast sampler; later frames
+      // allocate nothing. Fail the blurred background draw, then the photo.
+      createdCanvases = 0;
+      for (const failingDraw of [1, 2]) {
+        drawCalls = 0;
+        failAt = failingDraw;
+        try {
+          window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+        } catch (error) {
+          outcomes.push({ message: error.message, ...contextState() });
+        }
+      }
+      return { outcomes, createdCanvases };
     } finally {
       document.createElement = nativeCreateElement;
       CanvasRenderingContext2D.prototype.drawImage = nativeDrawImage;
@@ -6362,22 +6539,16 @@ test('failed blur video draws release only the scratch canvas they allocate', as
       source.height = 0;
       output.width = 0;
       output.height = 0;
-      reusable.width = 0;
-      reusable.height = 0;
     }
   });
 
+  const clean = { transform: [1, 1, 0, 0], filter: 'none' };
   expect(result.outcomes).toEqual([
-    { kind: 'allocated', message: 'simulated scratch draw failure', size: [0, 0] },
-    {
-      kind: 'reused',
-      message: 'simulated scratch draw failure',
-      size: result.expectedReusableSize,
-    },
+    { message: 'drawn', ...clean },
+    { message: 'draw 1 failed', ...clean },
+    { message: 'draw 2 failed', ...clean },
   ]);
-  expect(result.expectedReusableSize[0]).toBeGreaterThan(0);
-  expect(result.expectedReusableSize[1]).toBeGreaterThan(0);
-  expect(result.reusableTransform).toEqual({ a: 1, d: 1, e: 0, f: 0 });
+  expect(result.createdCanvases).toBe(0);
 });
 
 test('blur video frames reuse one automatic-contrast sampler', async ({ page }) => {

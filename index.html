@@ -595,6 +595,14 @@
           <span data-i18n="sectionExport">Export</span>
         </div>
 
+        <!-- Output size of the selected item (pixels and estimated file size) -->
+        <div class="setting-row output-estimate-row">
+          <div class="setting-label" data-i18n="outputSizeLabel">Output size</div>
+          <div class="setting-control">
+            <span class="output-estimate" id="outputEstimate" data-i18n="outputSizeNone">Add a photo to see it</span>
+          </div>
+        </div>
+
         <!-- Photo format -->
         <div class="setting-row">
           <div class="setting-label" id="exportPhotoFormatLabel" data-i18n="exportPhotoLabel">Photo</div>
@@ -699,6 +707,10 @@
       <canvas id="livePreviewDetailCanvas" class="live-preview-detail" width="0" height="0" aria-hidden="true"></canvas>
       <video id="livePreviewVideo" class="live-preview-video" playsinline></video>
       <div class="preview-error" id="livePreviewError" role="alert" aria-atomic="true" hidden></div>
+      <div class="preview-warning" id="previewWarning" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 2.5 20h19L12 3.5Z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>
+        <ul class="preview-warning-list" id="previewWarningList"></ul>
+      </div>
 
       <div class="preview-empty" id="previewEmpty">
         <!-- Decorative sample print: shows what an export looks like before any media is added. -->
@@ -913,6 +925,7 @@
             <span id="imageCounterVisual" aria-hidden="true"></span>
             <span class="sr-only" id="imageCounterStatus" role="status" aria-live="polite" aria-atomic="true"></span>
           </span>
+          <span class="section-estimate" id="batchEstimate"></span>
         </div>
         <div class="section-header-right">
           <div class="card-size-bar" id="cardSizeBar" data-i18n="cardSize" data-i18n-attr="title" title="Photo card size">
