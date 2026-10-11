@@ -5,6 +5,11 @@ const path = require('node:path');
 const JSZip = require('jszip');
 const { createJpeg, createWebm } = require('./fixtures.cjs');
 
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 async function uploadJpegs(page, count = 1, gps = false) {
   const files = Array.from({ length: count }, (_, index) => ({
     name: `photo-${index + 1}.jpg`,
@@ -330,10 +335,20 @@ test('dynamic color and location controls expose localized group names', async (
   await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('マップアイコン');
 });
 
-test('saved map overlay is normalized off when no valid token is configured', async ({ page }) => {
+test('a saved map overlay stays on without a Mapbox token and uses OpenStreetMap', async ({ page }) => {
   const mapboxRequests = [];
+  const tileRequests = [];
   page.on('request', request => {
     if (request.url().startsWith('https://api.mapbox.com/')) mapboxRequests.push(request.url());
+  });
+  await page.route('https://tile.openstreetmap.org/**', async route => {
+    tileRequests.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: ONE_PIXEL_PNG,
+    });
   });
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
@@ -345,16 +360,31 @@ test('saved map overlay is normalized off when no valid token is configured', as
   await page.reload();
 
   await expect(page.locator('#showLocation')).toBeChecked();
-  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
-  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
-  await expect(page.locator('#mapOverlayPositionRow')).toHaveClass(/is-hidden/);
-  expect(await page.evaluate(() => ({
-    token: window.getMapboxToken(),
-    savedEnabled: JSON.parse(localStorage.getItem('instaframe_settings')).showMapOverlay,
-  }))).toEqual({ token: null, savedEnabled: false });
+  await expect(page.locator('#showMapOverlay')).toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).not.toHaveClass(/is-hidden/);
+  expect(await page.evaluate(() => window.getMapboxToken())).toBeNull();
 
   await uploadJpegs(page, 1, true);
+  // The overlay covers the same area as a 400 px map at zoom 13, at 2× density.
+  await expect.poll(() => tileRequests.length).toBeGreaterThan(3);
+  expect(tileRequests.every(url => /^https:\/\/tile\.openstreetmap\.org\/14\/\d+\/\d+\.png$/.test(url))).toBe(true);
+  await expect.poll(() => page.evaluate(() => eval('_mapImgCache.size'))).toBe(1);
   expect(mapboxRequests).toEqual([]);
+});
+
+test('a saved map overlay is normalized off without location consent', async ({ page }) => {
+  const tileRequests = [];
+  page.on('request', request => {
+    if (request.url().includes('tile.openstreetmap.org')) tileRequests.push(request.url());
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_settings', JSON.stringify({ showLocation: true, showMapOverlay: true }));
+  });
+  await page.reload();
+  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
+  await uploadJpegs(page, 1, true);
+  expect(tileRequests).toEqual([]);
 });
 
 test('privacy settings distinguish a site Mapbox token from a device token', async ({ page }) => {
@@ -7379,7 +7409,7 @@ test('concurrent identical Mapbox loads share one cached image and release the d
   });
 });
 
-test('failed Mapbox requests still consume the local safety limit', async ({ page }) => {
+test('failed Mapbox requests still consume the local safety limit before OpenStreetMap takes over', async ({ page }) => {
   await page.evaluate(() => {
     const day = new Date().toISOString().slice(0, 10);
     localStorage.setItem('instaframe_prefs', JSON.stringify({
@@ -7396,11 +7426,13 @@ test('failed Mapbox requests still consume the local safety limit', async ({ pag
   await page.reload();
 
   const result = await page.evaluate(async () => {
-    let requests = 0;
+    let mapboxRequests = 0;
+    let tileRequests = 0;
     window.Image = class FailedMapImage {
       set src(value) {
         this._src = String(value);
-        requests += 1;
+        if (this._src.startsWith('https://api.mapbox.com/')) mapboxRequests += 1;
+        if (this._src.startsWith('https://tile.openstreetmap.org/')) tileRequests += 1;
         queueMicrotask(() => this.onerror?.(new Event('error')));
       }
       get src() { return this._src || ''; }
@@ -7408,21 +7440,28 @@ test('failed Mapbox requests still consume the local safety limit', async ({ pag
     };
 
     const first = await window._fetchMapOverlayImage(35.0116, 135.7681);
+    const tilesAfterFirst = tileRequests;
     const second = await window._fetchMapOverlayImage(35.0117, 135.7682);
     const usage = JSON.parse(localStorage.getItem('instaframe_mb_usage_v2'));
     return {
       first,
       second,
-      requests,
+      mapboxRequests,
+      tilesAfterFirst,
+      fellBackToTiles: tileRequests > 0,
       dayCount: usage.dayCount,
       monthCount: usage.monthCount,
     };
   });
 
+  // The limit blocks further billable Mapbox requests; the overlay then uses
+  // OpenStreetMap tiles (which fail here too, so both calls return null).
   expect(result).toEqual({
     first: null,
     second: null,
-    requests: 1,
+    mapboxRequests: 1,
+    tilesAfterFirst: 0,
+    fellBackToTiles: true,
     dayCount: 100,
     monthCount: 100,
   });
@@ -8887,4 +8926,340 @@ test('video export preserves an input audio track', async ({ page }) => {
   expect(mediaInfo.duration).toBeGreaterThan(0);
   expect(mediaInfo.videoTracks).toBeGreaterThan(0);
   expect(mediaInfo.audioTracks).toBeGreaterThan(0);
+});
+
+// ─── Font picker, text styles, HEIC and spatial photos ─────────────────────────
+
+test('the font picker draws each name in its own typeface and loads faces only when opened', async ({ page }) => {
+  const woff2Requests = [];
+  page.on('request', request => {
+    if (request.url().endsWith('.woff2')) woff2Requests.push(request.url());
+  });
+  const picker = page.locator('#fontFamily');
+  await expect(picker).toHaveAccessibleName('Font');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  expect(woff2Requests).toEqual([]);
+
+  await picker.click();
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  const options = page.locator('#fontFamilyList [role="option"]');
+  await expect(options).toHaveCount(16);
+  const families = await options.evaluateAll(elements => elements.map(element => ({
+    name: element.dataset.value,
+    fontFamily: getComputedStyle(element).fontFamily,
+  })));
+  for (const { name, fontFamily } of families) expect(fontFamily).toContain(name);
+  await expect.poll(() => woff2Requests.length).toBeGreaterThan(4);
+
+  await page.keyboard.press('ArrowDown');
+  const active = await picker.getAttribute('aria-activedescendant');
+  const nextFamily = await page.locator(`#${active}`).getAttribute('data-value');
+  await page.keyboard.press('Enter');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  await expect(picker).toBeFocused();
+  await expect(page.locator('#fontFamilyValue')).toHaveText(nextFamily);
+  expect(await page.evaluate(() => eval('state.settings.fontFamily'))).toBe(nextFamily);
+
+  await picker.press('ArrowDown');
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  expect(await page.evaluate(() => eval('state.settings.fontFamily'))).toBe(nextFamily);
+});
+
+test('each caption part has its own bold and italic switch, and older saves migrate', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_settings', JSON.stringify({ cameraNameBold: true, cameraNameItalic: true }));
+  });
+  await page.reload();
+  const checked = () => page.evaluate(() => Object.fromEntries([
+    'shotOnBold', 'modelBold', 'makerBold', 'exifBold', 'shotOnItalic', 'modelItalic', 'makerItalic', 'exifItalic',
+  ].map(id => [id, document.getElementById(id).checked])));
+  // The old switch bolded "Shot on" and the model; italic covered the camera line.
+  expect(await checked()).toEqual({
+    shotOnBold: true, modelBold: true, makerBold: false, exifBold: false,
+    shotOnItalic: true, modelItalic: true, makerItalic: true, exifItalic: false,
+  });
+  await expect(page.locator('#makerBold')).toHaveAccessibleName(/Maker: Bold/);
+
+  await page.locator('label[for="makerBold"]').click();
+  await page.locator('label[for="modelBold"]').click();
+  expect(await page.evaluate(() => {
+    const s = eval('state.settings');
+    return [s.makerBold, s.modelBold];
+  })).toEqual([true, false]);
+
+  const fonts = await page.evaluate(() => {
+    const calls = [];
+    const nativeFillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...rest) {
+      calls.push([String(text).trim(), this.font]);
+      return nativeFillText.call(this, text, ...rest);
+    };
+    try {
+      const source = document.createElement('canvas');
+      source.width = 600;
+      source.height = 400;
+      const canvas = window.FrameEngine.renderFrame(source, {
+        make: 'MakerCo', model: 'ModelX', lensModel: 'Lens50', fNumber: 2,
+      }, {
+        showShotOn: true, showExifInfo: true,
+        shotOnBold: false, modelBold: false, makerBold: true, exifBold: true, exifItalic: true,
+      });
+      canvas.width = 0;
+      source.width = 0;
+    } finally {
+      CanvasRenderingContext2D.prototype.fillText = nativeFillText;
+    }
+    const byText = Object.fromEntries(calls);
+    return {
+      label: byText['Shot on'],
+      model: byText.ModelX,
+      maker: byText.MakerCo,
+      exif: calls.find(([text]) => text.startsWith('Lens50'))?.[1],
+    };
+  });
+  expect(fonts.label).toMatch(/\b300\b/);
+  expect(fonts.model).toMatch(/\b500\b/);
+  expect(fonts.maker).toMatch(/\b(700|bold)\b/);
+  expect(fonts.exif).toMatch(/^italic\b/);
+  expect(fonts.exif).toMatch(/\b(700|bold)\b/);
+});
+
+test('an undecodable video names its codec and how to open it', async ({ page }) => {
+  const hevcSupported = await page.evaluate(() => {
+    const type = 'video/mp4; codecs="hvc1.2.4.L153.B0"';
+    return !!globalThis.MediaSource?.isTypeSupported?.(type) || document.createElement('video').canPlayType(type) !== '';
+  });
+  test.skip(hevcSupported, 'This browser decodes HEVC, so the file plays normally.');
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_4K60.MOV',
+    mimeType: 'video/quicktime',
+    buffer: await fs.readFile(path.join(__dirname, 'hevc-10bit.mov')),
+  });
+  await expect(page.locator('#status-badge-1')).toHaveAttribute('data-status', 'error', { timeout: 20_000 });
+  const label = page.locator('#status-badge-1');
+  await expect(label).toHaveAttribute('aria-label', /HEVC \(H\.265\) 10-bit/);
+  await expect(label).toHaveAttribute('aria-label', /cannot decode/);
+  await expect(label).toHaveAttribute('aria-label', /Safari/);
+});
+
+test('HEIC photos open without native HEIC support and export as framed JPEGs', async ({ page }) => {
+  const decoderRequests = [];
+  page.on('request', request => {
+    if (request.url().includes('/vendor/libheif/')) decoderRequests.push(new URL(request.url()).pathname);
+  });
+  await expect.poll(() => decoderRequests.length).toBe(0);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_0001.HEIC',
+    mimeType: 'image/heic',
+    buffer: await fs.readFile(path.join(__dirname, 'heic-plain.heic')),
+  });
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+  expect(decoderRequests.some(pathname => pathname.endsWith('/libheif.wasm'))).toBe(true);
+  await expect(page.locator('#outputEstimate')).toContainText(/\d+ × \d+ px/);
+  await expect(page.locator('#preview-1 .spatial-badge')).toHaveCount(0);
+
+  const expected = await page.evaluate(() => window.FrameEngine.computeOutputSize(96, 64, eval('state.settings'), {}));
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_0001_frame.jpg');
+  const bytes = await fs.readFile(await download.path());
+  expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+  const decoded = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return size;
+  }, bytes.toString('base64'));
+  expect(decoded).toEqual(expected);
+});
+
+async function uploadSpatialHeic(page) {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_SPATIAL.HEIC',
+    mimeType: 'image/heic',
+    buffer: await fs.readFile(path.join(__dirname, 'heic-spatial.heic')),
+  });
+  await expect(page.locator('#preview-1 .spatial-badge')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+}
+
+test('spatial photos are detected, preview in 3D, and push the photo behind the frame', async ({ page }) => {
+  await uploadSpatialHeic(page);
+  await expect(page.locator('#spatialExportRow')).not.toHaveClass(/is-hidden/);
+  await expect(page.locator('#spatialDepthRow')).not.toHaveClass(/is-hidden/);
+  const button = page.locator('#spatialPreviewBtn');
+  await expect(button).toBeVisible();
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  // The fixture's disc has 8 px of crossed disparity on a 160 px wide pair.
+  await expect.poll(() => page.evaluate(() => eval('state.items[0].stereoDisparity?.near'))).toBeCloseTo(0.05, 2);
+  const shift = await page.evaluate(() => eval('_spatialEyeShift(state.items[0])'));
+  expect(shift).toBeCloseTo((0.05 + 0.01) / 2, 3);
+
+  // The preview alternates the eyes, so the row through the disc changes.
+  const samples = new Set();
+  for (let index = 0; index < 10 && samples.size < 2; index += 1) {
+    samples.add(await page.locator('#livePreviewCanvas').evaluate(canvas => {
+      const row = canvas.getContext('2d').getImageData(0, Math.floor(canvas.height * 0.4), canvas.width, 1).data;
+      let checksum = 0;
+      for (let offset = 0; offset < row.length; offset += 1) checksum = (checksum * 31 + row[offset] * (offset + 1)) % 1_000_000_007;
+      return checksum;
+    }));
+    await page.waitForTimeout(150);
+  }
+  expect(samples.size).toBe(2);
+
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.evaluate(() => eval('_spatialPreview.timer'))).toBeNull();
+});
+
+test('spatial photos can be saved side by side with the frame in front of the photo', async ({ page }) => {
+  await uploadSpatialHeic(page);
+  await page.locator('label[for="spatial-sbs"]').click();
+  expect(await page.evaluate(() => eval('state.settings.exportSpatialMode'))).toBe('sbs');
+  const expected = await page.evaluate(() => window.FrameEngine.computeOutputSize(160, 120, eval('state.settings'), {}));
+  await expect(page.locator('#outputEstimate')).toContainText(`${expected.width * 2} × ${expected.height} px`);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame_sbs.jpg');
+  const bytes = await fs.readFile(await download.path());
+  const result = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const half = canvas.width / 2;
+    // Centre of the yellow disc in each eye.
+    const discCentre = offset => {
+      const pixels = ctx.getImageData(offset, 0, half, canvas.height).data;
+      let sum = 0;
+      let count = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] > 200 && pixels[index + 1] > 160 && pixels[index + 2] < 90) {
+          sum += (index / 4) % half;
+          count += 1;
+        }
+      }
+      return sum / count;
+    };
+    const size = { width: canvas.width, height: canvas.height, left: discCentre(0), right: discCentre(half) };
+    canvas.width = 0;
+    return size;
+  }, bytes.toString('base64'));
+  expect(result.width).toBe(expected.width * 2);
+  expect(result.height).toBe(expected.height);
+  // Before: the disc sat 8 px further right in the left eye (in front of the
+  // screen). After framing it must not be in front of the frame any more.
+  expect(result.left - result.right).toBeLessThanOrEqual(0.5);
+});
+
+test('spatial photos are written as a spatial HEIC when the browser encodes HEVC', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__hevcEncodes = [];
+    window.VideoEncoder = class FakeHevcEncoder {
+      constructor({ output }) {
+        this.output = output;
+        this.state = 'unconfigured';
+      }
+      configure(config) {
+        this.config = config;
+        this.state = 'configured';
+      }
+      encode(frame, options) {
+        const index = window.__hevcEncodes.length;
+        window.__hevcEncodes.push({
+          codec: this.config.codec,
+          format: this.config.hevc?.format,
+          width: frame.visibleRect?.width ?? frame.displayWidth,
+          height: frame.visibleRect?.height ?? frame.displayHeight,
+          keyFrame: options?.keyFrame === true,
+        });
+        const data = Uint8Array.of(0, 0, 0, 4, 0x26, 0x01, index, 0xff);
+        this.output({ byteLength: data.length, copyTo: target => target.set(data) }, {
+          decoderConfig: {
+            description: Uint8Array.of(1, 1, 0x60, 0, 0, 0, 0x90, 0, 0, 0, 0, 0, 0x5d, 0xf0, 0, 0xfc, 0xfd, 0xf8, 0xf8, 0, 0, 0x0f, 0).buffer,
+            colorSpace: { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: false },
+          },
+        });
+      }
+      async flush() {}
+      close() { this.state = 'closed'; }
+      static async isConfigSupported() { return { supported: true }; }
+    };
+  });
+  await page.reload();
+  await uploadSpatialHeic(page);
+  await expect.poll(() => page.evaluate(() => eval('_spatialHeicSupported'))).toBe(true);
+  await expect(page.locator('#spatialExportNote')).toBeHidden();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame_spatial.heic');
+  const bytes = await fs.readFile(await download.path());
+  const result = await page.evaluate(base64 => {
+    const H = window.InstaFrameHeif;
+    const parsed = H.parseHeif(Uint8Array.from(atob(base64), character => character.charCodeAt(0)));
+    const eye = id => ({
+      type: parsed.items.get(id)?.type,
+      size: H.itemSize(parsed, id),
+      properties: H.itemProperties(parsed, id).map(property => property.type),
+      essentialCodec: H.itemProperties(parsed, id)[0]?.essential,
+      intrinsics: H.parseCameraIntrinsics(H.itemProperty(parsed, id, 'cmin')),
+      dataLength: H.readItemData(parsed, id)?.length,
+    });
+    return {
+      primaryId: parsed.primaryId,
+      pair: H.stereoPair(parsed),
+      left: eye(1),
+      right: eye(2),
+      encodes: window.__hevcEncodes,
+    };
+  }, bytes.toString('base64'));
+
+  expect(result.primaryId).toBe(1);
+  expect(result.pair).toMatchObject({ left: 1, right: 2 });
+  for (const eye of [result.left, result.right]) {
+    expect(eye.type).toBe('hvc1');
+    expect(eye.properties).toEqual(['hvcC', 'ispe', 'pixi', 'colr', 'cmin', 'cmex']);
+    expect(eye.essentialCodec).toBe(true);
+    expect(eye.size.width % 2).toBe(0);
+    expect(eye.size.height % 2).toBe(0);
+    expect(eye.dataLength).toBe(8);
+  }
+  expect(result.encodes).toHaveLength(2);
+  expect(result.encodes.every(encode => encode.keyFrame && encode.format === 'hevc' && encode.codec.startsWith('hvc1.'))).toBe(true);
+  expect(result.encodes[0]).toMatchObject({ width: result.left.size.width, height: result.left.size.height });
+  // The photo moved apart between the eyes, so the principal points differ.
+  expect(result.left.intrinsics.principalPointX).toBeLessThan(result.right.intrinsics.principalPointX);
+  expect(result.left.intrinsics.focalLengthX).toBeCloseTo(result.right.intrinsics.focalLengthX, 6);
+});
+
+test('without HEVC encoding a spatial photo falls back to a 2D photo and says so', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window.VideoEncoder) window.VideoEncoder.isConfigSupported = async () => ({ supported: false });
+  });
+  await page.reload();
+  await uploadSpatialHeic(page);
+  await expect.poll(() => page.evaluate(() => eval('_spatialHeicSupported'))).toBe(false);
+  await expect(page.locator('#spatialExportNote')).toBeVisible();
+  await expect(page.locator('#spatial-heic')).toBeDisabled();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame.jpg');
 });
