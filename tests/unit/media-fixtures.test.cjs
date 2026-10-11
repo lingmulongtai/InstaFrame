@@ -19,6 +19,18 @@ const fixtures = [
     name: 'audio-fixture.webm',
     sha256: '30c623393fb53d487477a6c900797270c71e0fd16bee8ac10b89591da9edea05',
   },
+  {
+    name: 'hevc-10bit.mov',
+    sha256: '226772af30769ff1ae924c76f80645cd755d585c280ea31c9f0269522be1cef7',
+  },
+  {
+    name: 'heic-plain.heic',
+    sha256: 'ca669c14c3bdd9a724049b340a435c5b706984b907e1ab94138cf15737979c7d',
+  },
+  {
+    name: 'heic-spatial.heic',
+    sha256: '6f18ecc570c27ff9213154ffd39f948ddb171a8f9a1e29e61c36d5de71bbfbc0',
+  },
 ];
 
 test('documented browser fixtures match their checked-in SHA-256 hashes', () => {

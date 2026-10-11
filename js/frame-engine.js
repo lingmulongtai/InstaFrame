@@ -108,19 +108,28 @@ const FrameEngine = (() => {
     'Source Serif 4':     "'Source Serif 4', Georgia, serif",
   };
 
+  /**
+   * Font shorthands for each caption part. Each part has its own bold and
+   * italic switch; regular weights keep the light label and EXIF line.
+   */
+  function captionFonts(settings, cameraSize, exifSize, stack) {
+    const font = (italic, bold, regularWeight, size) =>
+      `${italic ? 'italic ' : ''}${bold ? 700 : regularWeight} ${size}px ${stack}`;
+    return {
+      label: font(settings.shotOnItalic, settings.shotOnBold, 300, cameraSize),
+      model: font(settings.modelItalic, settings.modelBold, 500, cameraSize),
+      maker: font(settings.makerItalic, settings.makerBold, 400, cameraSize),
+      exif: font(settings.exifItalic, settings.exifBold, 300, exifSize),
+    };
+  }
+
   async function loadFrameFonts(settings, signal = null) {
     assertNotAborted(signal);
     if (!document.fonts) return;
     const family = settings.fontFamily || 'Inter';
     const fam = `'${family}'`;
-    const cameraStyle = settings.cameraNameItalic ? 'italic ' : '';
-    const exifStyle = settings.exifItalic ? 'italic ' : '';
-    const specs = new Set([
-      `${cameraStyle}${settings.cameraNameBold ? '700' : '300'} 16px ${fam}`,
-      `${cameraStyle}${settings.cameraNameBold ? '700' : '500'} 16px ${fam}`,
-      `${cameraStyle}400 16px ${fam}`,
-      `${exifStyle}300 16px ${fam}`,
-    ]);
+    const fonts = captionFonts(settings, 16, 16, fam);
+    const specs = new Set([fonts.label, fonts.model, fonts.maker, fonts.exif]);
     const loads = [...specs].map(spec => {
       try { return document.fonts.load(spec); }
       catch { return Promise.resolve(); }
@@ -153,7 +162,12 @@ const FrameEngine = (() => {
    * of the same surface, so a blur background is one continuous blur of the
    * source photo instead of a blur of the already framed (captioned) image.
    */
-  function renderFrame(img, exif, settings, mapOverlayImg = null) {
+  /**
+   * eyeShift (stereo eyes only): horizontal offset of the photo behind the
+   * frame's window, as a fraction of the photo width. Opposite signs for the
+   * two eyes place the frame in front of the picture.
+   */
+  function renderFrame(img, exif, settings, mapOverlayImg = null, { eyeShift = 0 } = {}) {
     const W = img.naturalWidth || img.videoWidth || img.width;
     const H = img.naturalHeight || img.videoHeight || img.height;
     const layout = computeFrameLayout(W, H, settings, exif);
@@ -165,7 +179,8 @@ const FrameEngine = (() => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas rendering is unavailable');
       drawFrameBackground(ctx, img, settings, layout);
-      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg);
+      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, eyeShift);
+      canvas.photoPlacement = photoPlacement(layout, eyeShift);
       return canvas;
     } catch (error) {
       canvas.width = 0;
@@ -188,7 +203,7 @@ const FrameEngine = (() => {
    * Draw the photo, its shadow, the map overlay and the caption at the frame's
    * position inside the output. Returns the caption's layout issues.
    */
-  function drawFrameContent(ctx, src, exif, settings, layout, mapOverlayImg = null) {
+  function drawFrameContent(ctx, src, exif, settings, layout, mapOverlayImg = null, eyeShift = 0) {
     const { W, H, sB, imageTop, imageBottom, bB, isPortrait, frameColor } = layout;
     const issues = [];
     ctx.save();
@@ -198,7 +213,8 @@ const FrameEngine = (() => {
       ctx.beginPath();
       ctx.rect(0, 0, layout.baseCanvasW, layout.baseCanvasH);
       ctx.clip();
-      drawImageAtY(ctx, src, sB, imageTop, W, H);
+      if (eyeShift) drawWindowedPhoto(ctx, src, sB, imageTop, W, H, eyeShift * W);
+      else drawImageAtY(ctx, src, sB, imageTop, W, H);
       drawInnerShadow(ctx, sB, imageTop, W, H);
       if (mapOverlayImg && settings.showMapOverlay) {
         drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageTop, W, H });
@@ -260,14 +276,16 @@ const FrameEngine = (() => {
    * Pass maxPreviewPx to scale the image down for fast live preview.
    * Pass mapOverlayImg (HTMLImageElement) to draw a Passage-style map overlay.
    */
-  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null, signal = null } = {}) {
+  async function renderFrameWhenReady(img, exif, settings, {
+    maxPreviewPx = null, mapOverlayImg = null, signal = null, eyeShift = 0,
+  } = {}) {
     assertNotAborted(signal);
     await loadFrameFonts(settings, signal);
     assertNotAborted(signal);
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx, signal) : img;
     try {
-      const result = renderFrame(renderImg, exif, settings, mapOverlayImg);
+      const result = renderFrame(renderImg, exif, settings, mapOverlayImg, { eyeShift });
       if (signal?.aborted) {
         result.width = 0;
         result.height = 0;
@@ -305,6 +323,112 @@ const FrameEngine = (() => {
 
   function drawImageAtY(ctx, src, x, y, w, h) {
     ctx.drawImage(src, x, y, w, h);
+  }
+
+  /** Where the photo lands for a given eye shift: scale and top-left offset. */
+  function photoPlacement(layout, eyeShift = 0) {
+    const shift = eyeShift * layout.W;
+    const depth = Math.abs(shift);
+    const scale = depth ? (layout.W + depth * 2) / layout.W : 1;
+    const drawW = layout.W * scale;
+    const drawH = layout.H * scale;
+    return {
+      scale,
+      x: layout.frameX + layout.sB - depth + shift,
+      y: layout.frameY + layout.imageTop + (layout.H - drawH) / 2,
+      width: drawW,
+      height: drawH,
+    };
+  }
+
+  /**
+   * Draw the photo as if seen through the frame's window: zoomed just enough
+   * that shifting it sideways by `shift` pixels never uncovers the window.
+   */
+  function drawWindowedPhoto(ctx, src, x, y, w, h, shift) {
+    const depth = Math.abs(shift);
+    const scale = (w + depth * 2) / w;
+    const drawW = w * scale;
+    const drawH = h * scale;
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      ctx.drawImage(src, x - depth + shift, y + (h - drawH) / 2, drawW, drawH);
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Estimate horizontal disparities of a stereo pair from downscaled greyscale
+   * block matching. Positive values mean the left eye sees a point further
+   * right (it appears in front of the screen). Returns fractions of the width.
+   */
+  function estimateStereoDisparity(left, right, { sampleWidth = 320 } = {}) {
+    const sourceW = left.naturalWidth || left.width;
+    const sourceH = left.naturalHeight || left.height;
+    if (!(sourceW > 0 && sourceH > 0)) return null;
+    const width = Math.min(sampleWidth, sourceW);
+    const height = Math.max(8, Math.round(sourceH * (width / sourceW)));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+      const grey = image => {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
+        const data = ctx.getImageData(0, 0, width, height).data;
+        const out = new Float32Array(width * height);
+        for (let index = 0; index < out.length; index += 1) {
+          out[index] = data[index * 4] * 0.299 + data[index * 4 + 1] * 0.587 + data[index * 4 + 2] * 0.114;
+        }
+        return out;
+      };
+      const L = grey(left);
+      const R = grey(right);
+      const block = 12;
+      const range = Math.round(width * 0.08);
+      const found = [];
+      for (let by = 0; by + block <= height; by += block) {
+        for (let bx = range; bx + block + range <= width; bx += block) {
+          let mean = 0;
+          for (let y = 0; y < block; y += 1) {
+            for (let x = 0; x < block; x += 1) mean += L[(by + y) * width + bx + x];
+          }
+          mean /= block * block;
+          let variance = 0;
+          for (let y = 0; y < block; y += 1) {
+            for (let x = 0; x < block; x += 1) variance += (L[(by + y) * width + bx + x] - mean) ** 2;
+          }
+          if (variance / (block * block) < 40) continue; // flat block: no reliable match
+          let best = Infinity;
+          let bestShift = 0;
+          let total = 0;
+          for (let d = -range; d <= range; d += 1) {
+            let sad = 0;
+            for (let y = 0; y < block; y += 1) {
+              const row = (by + y) * width;
+              for (let x = 0; x < block; x += 1) sad += Math.abs(L[row + bx + x] - R[row + bx + x - d]);
+            }
+            total += sad;
+            if (sad < best) { best = sad; bestShift = d; }
+          }
+          // Keep distinct minima only; repetitive texture matches everywhere.
+          if (best < (total / (range * 2 + 1)) * 0.6) found.push(bestShift);
+        }
+      }
+      if (found.length < 3) return { near: 0, far: 0, samples: found.length };
+      found.sort((a, b) => a - b);
+      const pick = q => found[Math.min(found.length - 1, Math.max(0, Math.round((found.length - 1) * q)))];
+      return { near: pick(0.92) / width, far: pick(0.08) / width, samples: found.length };
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
   }
 
   /**
@@ -353,10 +477,13 @@ const FrameEngine = (() => {
     const pos = ['bottom-right', 'top-right', 'top-left', 'bottom-left'].includes(posRaw)
       ? posRaw : 'bottom-right';
 
-    // Target size: ~28% of the shorter side, capped at 320px
+    // Target size: about a quarter of the photo's shorter side
     const shortSide = Math.min(W, H);
-    const ovW = Math.min(320, Math.round(shortSide * 0.28));
-    const ovH = Math.round(ovW * (mapImg.naturalHeight / mapImg.naturalWidth));
+    const mapW = mapImg.naturalWidth || mapImg.width;
+    const mapH = mapImg.naturalHeight || mapImg.height;
+    if (!(mapW > 0 && mapH > 0)) return;
+    const ovW = Math.round(shortSide * 0.26);
+    const ovH = Math.round(ovW * (mapH / mapW));
 
     // Position: corner with a small inset
     const inset = Math.round(shortSide * 0.025);
@@ -395,9 +522,6 @@ const FrameEngine = (() => {
       exifFontScale    = 1.0,
       textOffsetY      = 0,
       lineGapScale     = 1.0,
-      cameraNameBold   = false,
-      cameraNameItalic = false,
-      exifItalic       = false,
       showShotOn       = true,
       showExifInfo     = true,
       showLocation     = false,
@@ -433,15 +557,13 @@ const FrameEngine = (() => {
     const centerX = canvasW / 2;
 
     // Build font strings — CSS shorthand: [style] [weight] [size] [family]
-    const labelWeight = cameraNameBold ? '700' : '300';
-    const camWeight   = cameraNameBold ? '700' : '500';
-    const camStyle    = cameraNameItalic ? 'italic ' : '';
-    const labelFont   = `${camStyle}${labelWeight} ${soSize}px ${stack}`;
-    const camFont     = `${camStyle}${camWeight} ${soSize}px ${stack}`;
-    const makerFont   = `${camStyle}400 ${soSize}px ${stack}`;
+    const {
+      label: labelFont,
+      model: camFont,
+      maker: makerFont,
+      exif: exifFont,
+    } = captionFonts(settings, soSize, exSize, stack);
     const makerColor  = mixHexColor(primary, muted, 0.5);
-    const exStyle    = exifItalic ? 'italic ' : '';
-    const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
 
     // Determine if location goes below (needs 3-line layout)
     const hasLocationBelow = effectiveShowLocation && locationPosition === 'below-exif';
@@ -1760,6 +1882,7 @@ const FrameEngine = (() => {
     computeVideoFrameLayout,
     computeOutputSize,
     drawVideoFrameSync,
+    estimateStereoDisparity,
   };
 })();
 
