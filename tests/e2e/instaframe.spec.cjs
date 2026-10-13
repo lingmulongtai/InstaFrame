@@ -724,6 +724,34 @@ test('photo card and live preview decoders share one concurrency limit', async (
   expect(await page.evaluate(() => window.__maxPhotoDecoders)).toBe(2);
 });
 
+test('photo export cancels an unfinished card decode before rendering', async ({ page }) => {
+  await page.evaluate(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__cardDecodeStalled = false;
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__cardDecodeStalled = true;
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'stalled-card.jpg', mimeType: 'image/jpeg', buffer: createJpeg(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__cardDecodeStalled)).toBe(true);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  await downloadPromise;
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => Boolean(eval('state.items')[0].photoThumbnailPromise))).toBe(false);
+});
+
 test('live EXIF edits do not cancel an independent photo card thumbnail', async ({ page }) => {
   await page.evaluate(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
@@ -3829,6 +3857,7 @@ test('duplicate photo exports are coalesced and removal discards stale output', 
 test('removing media aborts a global export before stale output can download', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     window.__staleExportDownloads = 0;
     HTMLAnchorElement.prototype.click = () => { window.__staleExportDownloads += 1; };
     window.FrameEngine.loadImage = (file, options = {}) => {
@@ -4396,6 +4425,7 @@ test('video cancellation propagates an AbortSignal to the active encoder', async
 test('photo cancellation aborts the active image decoder and restores pending state', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     window.__photoAbortObserved = false;
     window.FrameEngine.loadImage = (_file, options) => new Promise((resolve, reject) => {
       options.signal.addEventListener('abort', () => {
@@ -4579,6 +4609,7 @@ test('a stalled photo export decoder times out, revokes its URL, and restores co
   await page.reload();
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     const nativeSetTimeout = window.setTimeout.bind(window);
     const nativeCreateObjectURL = URL.createObjectURL.bind(URL);
     const nativeRevokeObjectURL = URL.revokeObjectURL.bind(URL);
@@ -4945,6 +4976,7 @@ test('a failed generated card canvas falls back to the bounded source thumbnail'
 test('successful photo export releases its full-resolution decoder', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     const nativeLoadImage = window.FrameEngine.loadImage;
     window.__fullResolutionExportImage = null;
     window.FrameEngine.loadImage = async (...args) => {
@@ -6264,6 +6296,146 @@ test('frame rendering rejects Canvas side and area overflow before allocation', 
   expect(result).toEqual({ side: 'MEDIA_RESOURCE_LIMIT', area: 'MEDIA_RESOURCE_LIMIT' });
 });
 
+test('a 50 MP photo fits its framed export within the Canvas budget', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const settings = eval('state.settings');
+    const original = [8192, 6144];
+    let unfittedCode = null;
+    try { window.FrameEngine.computeOutputSize(...original, settings); }
+    catch (error) { unfittedCode = error.code; }
+    const fitted = window.FrameEngine.computePhotoOutputSize(...original, settings);
+    const mobile = window.FrameEngine.computePhotoOutputSize(
+      ...original, settings, {}, { maxPixels: 16_000_000, maxSide: 4096 }
+    );
+
+    const source = document.createElement('canvas');
+    source.width = 960;
+    source.height = 640;
+    source.getContext('2d').fillStyle = '#e02030';
+    source.getContext('2d').fillRect(0, 0, source.width, source.height);
+    const smallLimits = { maxPixels: 250_000, maxSide: 600 };
+    const expected = window.FrameEngine.computePhotoOutputSize(
+      source.width, source.height, settings, {}, smallLimits
+    );
+    const rendered = await window.FrameEngine.renderFrameWhenReady(
+      source, {}, settings, { photoLimits: smallLimits }
+    );
+    const placement = rendered.photoPlacement;
+    const sample = rendered.getContext('2d').getImageData(
+      Math.floor(placement.x + placement.width / 2),
+      Math.floor(placement.y + placement.height / 2), 1, 1
+    ).data;
+    const actual = [rendered.width, rendered.height];
+    rendered.width = 0;
+    rendered.height = 0;
+    source.width = 0;
+    source.height = 0;
+    return { unfittedCode, fitted, mobile, expected, actual, sample: [...sample] };
+  });
+
+  expect(result.unfittedCode).toBe('MEDIA_RESOURCE_LIMIT');
+  expect(result.fitted.scaled).toBe(true);
+  expect(result.fitted.sourceWidth).toBeLessThan(8192);
+  expect(result.fitted.sourceWidth * result.fitted.sourceHeight).toBeGreaterThan(48_000_000);
+  expect(result.fitted.width * result.fitted.height).toBeLessThanOrEqual(64_000_000);
+  expect(Math.max(result.mobile.width, result.mobile.height)).toBeLessThanOrEqual(4096);
+  expect(result.mobile.width * result.mobile.height).toBeLessThanOrEqual(16_000_000);
+  expect(result.actual).toEqual([result.expected.width, result.expected.height]);
+  expect(result.sample[0]).toBeGreaterThan(180);
+  expect(result.sample[1]).toBeLessThan(80);
+});
+
+test('a phone reports the reduced size of a 50 MP photo before export', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:4173',
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const mobilePage = await context.newPage();
+    await mobilePage.goto('/');
+    await mobilePage.locator('#fileInput').setInputFiles({
+      name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg(),
+    });
+    await expect(mobilePage.locator('#card-meta-1')).toContainText(/\d+×\d+/);
+    const result = await mobilePage.evaluate(() => {
+      window._recordSourceSize(eval('state.items')[0], 8192, 6144);
+      const text = document.getElementById('outputEstimate').textContent;
+      const [, width, height] = text.match(/(\d+) × (\d+) px/);
+      return { width: Number(width), height: Number(height), text };
+    });
+    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(4096);
+    expect(result.text).toMatch(/scaled|縮小/);
+  } finally {
+    await context.close();
+  }
+});
+
+test('a landscape phone without userAgentData keeps the mobile Canvas budget', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:4173',
+    viewport: { width: 915, height: 412 },
+    userAgent: 'Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0',
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const mobilePage = await context.newPage();
+    await mobilePage.goto('/');
+    const limits = await mobilePage.evaluate(() => {
+      Object.defineProperty(navigator, 'userAgentData', { value: undefined, configurable: true });
+      return window._photoExportLimits();
+    });
+    expect(limits).toEqual({ maxPixels: 16_000_000, maxSide: 4096 });
+  } finally {
+    await context.close();
+  }
+});
+
+if (process.env.INSTAFRAME_LARGE_JPEG) {
+  test('a real large JPEG downloads as a framed photo', async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.locator('#fileInput').setInputFiles(process.env.INSTAFRAME_LARGE_JPEG);
+    const downloadPromise = page.waitForEvent('download', { timeout: 150_000 });
+    await page.locator('#dl-btn-1').click();
+    const download = await downloadPromise;
+    await expect(page.locator('#outputEstimate')).toContainText(/\d+ × \d+ px/);
+    const handle = await fs.open(await download.path());
+    const signature = Buffer.alloc(3);
+    try { await handle.read(signature, 0, 3, 0); }
+    finally { await handle.close(); }
+    expect([...signature]).toEqual([0xff, 0xd8, 0xff]);
+    expect((await fs.stat(await download.path())).size).toBeGreaterThan(1_000_000);
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  });
+
+  test('a real large JPEG downloads in a phone-sized browser', async ({ browser }) => {
+    test.setTimeout(180_000);
+    const context = await browser.newContext({
+      baseURL: 'http://127.0.0.1:4173',
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      acceptDownloads: true,
+    });
+    try {
+      const mobilePage = await context.newPage();
+      await mobilePage.goto('/');
+      await mobilePage.locator('#fileInput').setInputFiles(process.env.INSTAFRAME_LARGE_JPEG);
+      await expect(mobilePage.locator('#outputEstimate')).toContainText(/縮小|scaled/, { timeout: 90_000 });
+      await mobilePage.locator('#tabPhotosBtn').click();
+      const downloadPromise = mobilePage.waitForEvent('download', { timeout: 150_000 });
+      await mobilePage.locator('#dl-btn-1').click();
+      const download = await downloadPromise;
+      expect((await fs.stat(await download.path())).size).toBeGreaterThan(1_000_000);
+      await expect(mobilePage.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test('blur background supports an explicit custom text color', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="bg-blur"]').click();
@@ -6404,6 +6576,13 @@ test('the export panel shows the output size before download and it matches the 
     return size;
   }, bytes.toString('base64'));
   expect(decoded).toEqual(square);
+
+  await page.evaluate(() => {
+    const selectedItem = eval('state.items')[0];
+    window._recordSourceSize(selectedItem, 8192, 6144);
+  });
+  await expect(estimate).toContainText(/scaled|縮小/);
+  await expect(estimate).not.toContainText(/Too large|超えています/);
 });
 
 test('rendering more photos than the output budget evicts older frames instead of failing', async ({ page }) => {
@@ -8931,6 +9110,8 @@ test('video export preserves an input audio track', async ({ page }) => {
 // ─── Font picker, text styles, HEIC and spatial photos ─────────────────────────
 
 test('the font picker draws each name in its own typeface and loads faces only when opened', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
   const woff2Requests = [];
   page.on('request', request => {
     if (request.url().endsWith('.woff2')) woff2Requests.push(request.url());
@@ -8969,6 +9150,7 @@ test('the font picker draws each name in its own typeface and loads faces only w
 
 test('each caption part has its own bold and italic switch, and older saves migrate', async ({ page }) => {
   await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'en');
     localStorage.setItem('instaframe_settings', JSON.stringify({ cameraNameBold: true, cameraNameItalic: true }));
   });
   await page.reload();
@@ -9027,6 +9209,8 @@ test('each caption part has its own bold and italic switch, and older saves migr
 });
 
 test('an undecodable video names its codec and how to open it', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
   const hevcSupported = await page.evaluate(() => {
     const type = 'video/mp4; codecs="hvc1.2.4.L153.B0"';
     return !!globalThis.MediaSource?.isTypeSupported?.(type) || document.createElement('video').canPlayType(type) !== '';

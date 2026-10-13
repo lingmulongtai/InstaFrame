@@ -167,9 +167,11 @@ const FrameEngine = (() => {
    * frame's window, as a fraction of the photo width. Opposite signs for the
    * two eyes place the frame in front of the picture.
    */
-  function renderFrame(img, exif, settings, mapOverlayImg = null, { eyeShift = 0 } = {}) {
-    const W = img.naturalWidth || img.videoWidth || img.width;
-    const H = img.naturalHeight || img.videoHeight || img.height;
+  function renderFrame(img, exif, settings, mapOverlayImg = null, {
+    eyeShift = 0, sourceWidth = null, sourceHeight = null,
+  } = {}) {
+    const W = sourceWidth || img.naturalWidth || img.videoWidth || img.width;
+    const H = sourceHeight || img.naturalHeight || img.videoHeight || img.height;
     const layout = computeFrameLayout(W, H, settings, exif);
 
     const canvas = document.createElement('canvas');
@@ -278,6 +280,7 @@ const FrameEngine = (() => {
    */
   async function renderFrameWhenReady(img, exif, settings, {
     maxPreviewPx = null, mapOverlayImg = null, signal = null, eyeShift = 0,
+    photoLimits = null,
   } = {}) {
     assertNotAborted(signal);
     await loadFrameFonts(settings, signal);
@@ -285,7 +288,16 @@ const FrameEngine = (() => {
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx, signal) : img;
     try {
-      const result = renderFrame(renderImg, exif, settings, mapOverlayImg, { eyeShift });
+      const fitted = photoLimits ? computePhotoOutputSize(
+        renderImg.naturalWidth || renderImg.width,
+        renderImg.naturalHeight || renderImg.height,
+        settings, exif, photoLimits
+      ) : null;
+      const result = renderFrame(renderImg, exif, settings, mapOverlayImg, {
+        eyeShift,
+        sourceWidth: fitted?.sourceWidth,
+        sourceHeight: fitted?.sourceHeight,
+      });
       if (signal?.aborted) {
         result.width = 0;
         result.height = 0;
@@ -1814,7 +1826,7 @@ const FrameEngine = (() => {
    * the caption frame (base*) and the final output after aspect ratio and
    * outer padding, with the frame's offset inside it (frameX / frameY).
    */
-  function computeFrameLayout(sourceW, sourceH, settings, exif = {}) {
+  function computeUnboundedFrameLayout(sourceW, sourceH, settings, exif = {}) {
     const W = sourceW, H = sourceH;
     const isPortrait    = H > W;
     const ts            = settings.thicknessScale || 1;
@@ -1831,9 +1843,7 @@ const FrameEngine = (() => {
     const baseCanvasW   = Math.round(W + sB * 2);
     const baseCanvasH   = imageLayout.canvasH;
     const frameColor    = settings.frameColor || '#F0F0F0';
-    assertSafeCanvasSize(baseCanvasW, baseCanvasH);
     const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, settings);
-    assertSafeCanvasSize(postProcess.canvasW, postProcess.canvasH);
     return {
       W, H, sB, tB, bB,
       baseCanvasW,
@@ -1848,6 +1858,59 @@ const FrameEngine = (() => {
       isPortrait,
       frameColor,
     };
+  }
+
+  function computeFrameLayout(sourceW, sourceH, settings, exif = {}) {
+    const layout = computeUnboundedFrameLayout(sourceW, sourceH, settings, exif);
+    assertSafeCanvasSize(layout.baseCanvasW, layout.baseCanvasH);
+    assertSafeCanvasSize(layout.canvasW, layout.canvasH);
+    return layout;
+  }
+
+  /** Fit a 2D photo and its frame inside the browser's Canvas budget. */
+  function computePhotoOutputSize(sourceW, sourceH, settings, exif = {}, {
+    maxPixels = MAX_CANVAS_PIXELS,
+    maxSide = MAX_CANVAS_DIMENSION,
+  } = {}) {
+    if (!Number.isFinite(sourceW) || !Number.isFinite(sourceH) ||
+        sourceW < 1 || sourceH < 1 || !Number.isFinite(maxPixels) ||
+        !Number.isFinite(maxSide) || maxPixels < 1 || maxSide < 1) {
+      throw resourceLimitError();
+    }
+    const pixelLimit = Math.min(MAX_CANVAS_PIXELS, maxPixels);
+    const sideLimit = Math.min(MAX_CANVAS_DIMENSION, maxSide);
+    const fits = layout => layout.baseCanvasW <= sideLimit &&
+      layout.baseCanvasH <= sideLimit && layout.canvasW <= sideLimit &&
+      layout.canvasH <= sideLimit &&
+      layout.baseCanvasW * layout.baseCanvasH <= pixelLimit &&
+      layout.canvasW * layout.canvasH <= pixelLimit;
+    const output = (width, height, layout) => ({
+      width: layout.canvasW,
+      height: layout.canvasH,
+      sourceWidth: width,
+      sourceHeight: height,
+      scaled: width !== sourceW || height !== sourceH,
+    });
+    const original = computeUnboundedFrameLayout(sourceW, sourceH, settings, exif);
+    if (fits(original)) return output(sourceW, sourceH, original);
+
+    let low = 0;
+    let high = 1;
+    let best = null;
+    for (let attempt = 0; attempt < 28; attempt += 1) {
+      const scale = (low + high) / 2;
+      const width = Math.max(1, Math.floor(sourceW * scale));
+      const height = Math.max(1, Math.floor(sourceH * scale));
+      const layout = computeUnboundedFrameLayout(width, height, settings, exif);
+      if (fits(layout)) {
+        best = output(width, height, layout);
+        low = scale;
+      } else {
+        high = scale;
+      }
+    }
+    if (!best) throw resourceLimitError();
+    return best;
   }
 
   /**
@@ -1881,6 +1944,7 @@ const FrameEngine = (() => {
     computeFrameLayout,
     computeVideoFrameLayout,
     computeOutputSize,
+    computePhotoOutputSize,
     drawVideoFrameSync,
     estimateStereoDisparity,
   };

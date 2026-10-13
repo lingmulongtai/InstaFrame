@@ -90,6 +90,8 @@ const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_LIVE_PREVIEW_DETAIL_PIXELS = 8_000_000;
+const MOBILE_PHOTO_OUTPUT_PIXELS = 16_000_000;
+const MOBILE_PHOTO_OUTPUT_SIDE = 4_096;
 const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 768px), (max-width: 1024px) and (max-height: 500px) and (orientation: landscape)';
 const MAX_ACTIVE_PHOTO_DECODES = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
@@ -115,6 +117,16 @@ let _pageRestoreFocusTarget = null;
 
 function _usesMobileLayout() {
   return window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+}
+
+function _photoExportLimits() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isPhone = navigator.userAgentData?.mobile || /Mobi/i.test(navigator.userAgent) ||
+    window.matchMedia('(pointer: coarse) and (max-width: 768px)').matches;
+  return isIOS || isPhone
+    ? { maxPixels: MOBILE_PHOTO_OUTPUT_PIXELS, maxSide: MOBILE_PHOTO_OUTPUT_SIDE }
+    : { maxPixels: 64_000_000, maxSide: 16_384 };
 }
 const APP_ASSET_VERSION = (() => {
   try {
@@ -315,6 +327,7 @@ const _imgFailed     = new Set(); // item IDs that failed image load — skip re
 const _downloadUrlTimers = new Map(); // active download Blob URL → delayed cleanup timer
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _previewRenderController = null;
+let   _activeLivePreviewPromise = null;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
 let   _activePhotoDecodes = 0;
@@ -2514,7 +2527,9 @@ async function _addFiles(accepted, reservation) {
       } catch (error) {
         if (!isCurrentImport()) break;
         if (!state.items.includes(item)) continue;
-        if (error?.name === 'AbortError' && _pageResourcesReleased) {
+        if (error?.name === 'AbortError' && item.exportController) {
+          // Export owns the decoded source while the import finishes.
+        } else if (error?.name === 'AbortError' && _pageResourcesReleased) {
           item.status = 'pending';
           _clearItemError(item);
           updateItemStatus(item);
@@ -2691,6 +2706,44 @@ async function _releaseItemThumbnailBeforeExport(item, signal) {
   if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
 }
 
+async function _loadPhotoForExport(item, signal) {
+  // A card thumbnail and the live preview can each decode the full source.
+  // Finish or cancel those reads before allocating the export canvas.
+  const thumbnailPromise = item.photoThumbnailPromise;
+  item.photoThumbnailNeedsRestart = false;
+  _cancelPhotoThumbnail(item);
+
+  const previewItem = state.items.find(entry => entry.id === state.selectedItemId) || state.items[0];
+  const previewWasShowingItem = previewItem === item;
+  if (previewWasShowingItem) {
+    clearTimeout(_livePreviewTimer);
+    _livePreviewTimer = null;
+    _previewRenderController?.abort();
+    _previewRenderController = null;
+    _renderSeq += 1;
+  }
+  await Promise.allSettled([
+    thumbnailPromise,
+    previewWasShowingItem ? _activeLivePreviewPromise : null,
+  ]);
+  const previewLoad = _imgLoadEntries.get(item.id);
+  if (previewLoad) await Promise.allSettled([previewLoad.promise]);
+  if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
+
+  const cached = _imgCache.get(item.id);
+  if (cached) {
+    _imgCache.delete(item.id);
+    URL.revokeObjectURL(cached.objUrl);
+    return cached.img;
+  }
+  const transient = _transientPreviewImages.get(item.id);
+  if (transient) {
+    _transientPreviewImages.delete(item.id);
+    return transient;
+  }
+  return FrameEngine.loadImage(await _photoDecodeFile(item, signal), { signal });
+}
+
 async function generateItem(item, onExternalProgress = null, parentSignal = null) {
   if (item.exportController || !state.items.includes(item)) return false;
   if (item.status === 'error') {
@@ -2749,11 +2802,17 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       }
       item.videoBlob = videoBlob;
     } else {
-      decodedPhoto = await FrameEngine.loadImage(await _photoDecodeFile(item, signal), { signal });
+      decodedPhoto = await _loadPhotoForExport(item, signal);
       _recordSourceSize(item, decodedPhoto.naturalWidth, decodedPhoto.naturalHeight);
-      const expectedSize = FrameEngine.computeOutputSize(
-        decodedPhoto.naturalWidth, decodedPhoto.naturalHeight, state.settings, item.exif
-      );
+      const photoLimits = _isSpatialItem(item) ? null : _photoExportLimits();
+      const expectedSize = photoLimits
+        ? FrameEngine.computePhotoOutputSize(
+          decodedPhoto.naturalWidth, decodedPhoto.naturalHeight,
+          state.settings, item.exif, photoLimits
+        )
+        : FrameEngine.computeOutputSize(
+          decodedPhoto.naturalWidth, decodedPhoto.naturalHeight, state.settings, item.exif
+        );
       _evictPhotoOutputs(item, expectedSize.width * expectedSize.height * 4);
       // A full export decode proves that a prior live-preview failure was
       // transient. Let the selected item retry instead of remaining blacklisted.
@@ -2765,7 +2824,9 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           item.exif && item.exif.latitude != null && item.exif.longitude != null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
       }
-      const rendered = await FrameEngine.renderFrameWhenReady(decodedPhoto, item.exif, state.settings, { mapOverlayImg, signal });
+      const rendered = await FrameEngine.renderFrameWhenReady(
+        decodedPhoto, item.exif, state.settings, { mapOverlayImg, signal, photoLimits }
+      );
       if (!_evictPhotoOutputs(item, rendered.width * rendered.height * 4)) {
         rendered.width = 0;
         rendered.height = 0;
@@ -2829,6 +2890,17 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
         ?.querySelector('canvas.thumb-framed');
       if (item.status === 'done' && !hasThumbnail) item.thumbnailNeedsRestart = true;
       _restartInterruptedVideoThumbnail(item, { reportFailure: item.status !== 'done' });
+    }
+    if (!item.isVideo && item.status === 'pending' && !_pageResourcesReleased) {
+      const hasThumbnail = document.getElementById(`preview-${item.id}`)
+        ?.querySelector('canvas.thumb-source');
+      if (!hasThumbnail) {
+        item.photoThumbnailNeedsRestart = true;
+        _restartInterruptedPhotoThumbnail(item);
+      }
+    }
+    if (!item.isVideo && item.status !== 'error' && state.selectedItemId === item.id) {
+      scheduleLivePreview();
     }
   }
   return shouldUpdate && item.status === 'done';
@@ -4575,9 +4647,14 @@ function scheduleLivePreview() {
   // HTML preview updates are near-instant; canvas still needs debounce
   _livePreviewTimer = setTimeout(() => {
     _livePreviewTimer = null;
-    renderLivePreview()
+    const task = renderLivePreview();
+    _activeLivePreviewPromise = task;
+    task
       .then(() => { if (_spatialPreview.on) return _refreshSpatialPreview(); })
-      .catch(_handleLivePreviewRenderFailure);
+      .catch(_handleLivePreviewRenderFailure)
+      .finally(() => {
+        if (_activeLivePreviewPromise === task) _activeLivePreviewPromise = null;
+      });
   }, 80);
 }
 
@@ -5493,6 +5570,7 @@ async function renderLivePreview() {
 
   const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
              || state.items[0];
+  if (!item.isVideo && item.exportController) return;
 
   // ── Video: canvas-based framed preview ────────────────────────────────────
   const liveVideo = document.getElementById('livePreviewVideo');
@@ -5527,6 +5605,13 @@ async function renderLivePreview() {
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
   _syncPreviewControlAvailability();
+
+  if (!_isSpatialItem(item) && item.status === 'done' && item.canvas) {
+    _drawFrameToCanvas(canvas, pane, emptyEl, item.canvas);
+    applyPreviewTransform();
+    _drawVisiblePreviewDetail(canvas, pane, item.canvas);
+    return;
+  }
 
   // ── Canvas preview with caching ────────────────────────────────────────────
   const hash   = `${item.id}|${_previewSettingsHash()}`;
@@ -6040,9 +6125,9 @@ function _jpegBytesPerPixel(quality) {
   return 0.12 + 0.6 * ((q - 60) / 40) ** 2;
 }
 
-function _estimatePhotoBytes(item, width, height) {
+function _estimatePhotoBytes(item, width, height, sourceWidth = item.sourceWidth, sourceHeight = item.sourceHeight) {
   const format = state.settings.exportPhotoFormat || 'jpeg';
-  const photoPixels = item.sourceWidth * item.sourceHeight;
+  const photoPixels = sourceWidth * sourceHeight;
   const framePixels = Math.max(0, width * height - photoPixels);
   // HEIC compresses about twice as well as JPEG; calibrate from its JPEG stand-in.
   const calibration = item.heif
@@ -6052,7 +6137,7 @@ function _estimatePhotoBytes(item, width, height) {
   if (format === 'png') return photoPixels * 2.4 + framePixels * (blur ? 1.2 : 0.02);
   const quality = state.settings.exportPhotoQuality ?? 92;
   let photoBpp = _jpegBytesPerPixel(quality);
-  const sourceBpp = (calibration?.file?.size || 0) / photoPixels;
+  const sourceBpp = (calibration?.file?.size || 0) / (item.sourceWidth * item.sourceHeight);
   if (calibration && /jpe?g|webp/i.test(calibration.file.type || '') && sourceBpp > 0.05 && sourceBpp < 3) {
     photoBpp = sourceBpp * (_jpegBytesPerPixel(quality) / _jpegBytesPerPixel(calibration.quality));
   }
@@ -6064,7 +6149,11 @@ function _estimateItemOutput(item) {
   if (!item?.sourceWidth || !item?.sourceHeight) return null;
   let size;
   try {
-    size = FrameEngine.computeOutputSize(item.sourceWidth, item.sourceHeight, state.settings, item.exif || {});
+    size = item.isVideo || _isSpatialItem(item)
+      ? FrameEngine.computeOutputSize(item.sourceWidth, item.sourceHeight, state.settings, item.exif || {})
+      : FrameEngine.computePhotoOutputSize(
+        item.sourceWidth, item.sourceHeight, state.settings, item.exif || {}, _photoExportLimits()
+      );
   } catch (_) {
     return { tooLarge: true };
   }
@@ -6074,7 +6163,7 @@ function _estimateItemOutput(item) {
     const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
     if (item.sourceDuration > 0) bytes = item.sourceDuration * bitrate / 8;
   } else {
-    bytes = _estimatePhotoBytes(item, size.width, size.height);
+    bytes = _estimatePhotoBytes(item, size.width, size.height, size.sourceWidth, size.sourceHeight);
     if (_isSpatialItem(item)) {
       spatialMode = _effectiveSpatialMode();
       // Two eyes: side by side doubles the picture; HEVC needs about 60%
@@ -6083,7 +6172,7 @@ function _estimateItemOutput(item) {
       if (spatialMode === 'heic') bytes *= 2 * 0.6;
     }
   }
-  return { width: size.width, height: size.height, bytes, spatialMode };
+  return { width: size.width, height: size.height, bytes, spatialMode, scaled: size.scaled };
 }
 
 function _formatBytes(bytes) {
@@ -6101,8 +6190,10 @@ function _formatEstimate(estimate, { compact = false } = {}) {
   if (!estimate) return t('outputSizePending');
   if (estimate.tooLarge) return t('outputSizeTooLarge');
   const values = { width: estimate.width, height: estimate.height };
-  if (estimate.bytes == null) return tf('outputSizePixels', values);
-  return tf(compact ? 'outputSizeCompact' : 'outputSizeValue', { ...values, size: _formatBytes(estimate.bytes) });
+  const size = estimate.bytes == null
+    ? tf('outputSizePixels', values)
+    : tf(compact ? 'outputSizeCompact' : 'outputSizeValue', { ...values, size: _formatBytes(estimate.bytes) });
+  return estimate.scaled ? `${size} · ${t(compact ? 'outputSizeAdjustedShort' : 'outputSizeAdjusted')}` : size;
 }
 
 function updateOutputEstimates() {
