@@ -1659,6 +1659,8 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
+      // Avoid keeping a second decoder open for the live preview during export.
+      _disposeLiveVideoSource();
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) {
         const error = new Error(t('msgVideoExportUnavailable'));
@@ -1750,7 +1752,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     updateItemStatus(item);
     updateItemPreview(item);
     updateUI();
-    if (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id) {
+    if (item.isVideo || (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id)) {
       scheduleLivePreview();
     }
     if (item.isVideo && !_pageResourcesReleased) {
@@ -4326,6 +4328,11 @@ async function renderLivePreview() {
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
     _clearLivePreviewDetail();
+    // A second video decoder can exhaust limited mobile decoder resources.
+    if (state.items.some(candidate => candidate.isVideo && candidate.status === 'processing')) {
+      _disposeLiveVideoSource();
+      return;
+    }
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
