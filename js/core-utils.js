@@ -176,10 +176,10 @@
     };
   }
 
-  /** Conservative ZIP peak: retained outputs + photo entry blobs + archive blob. */
+  /** ZIP peak includes retained blobs, JSZip input buffers, and the completed archive. */
   function estimateZipPeakBytes(retainedBytes, encodedPhotoBytes, archiveInputBytes, entryCount = 0) {
     const safe = value => Math.max(0, Number(value) || 0);
-    return safe(retainedBytes) + safe(encodedPhotoBytes) + safe(archiveInputBytes) +
+    return safe(retainedBytes) + safe(encodedPhotoBytes) + 2 * safe(archiveInputBytes) +
       Math.floor(safe(entryCount)) * 2048;
   }
 

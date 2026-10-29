@@ -96,9 +96,9 @@ test('preview pan keeps the same image point beneath wheel and moving pinch focu
 
 test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and entry overhead', () => {
   const mib = 1024 * 1024;
-  assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 380 * mib + 4096);
+  assert.equal(core.estimateZipPeakBytes(300 * mib, 40 * mib, 40 * mib, 2), 420 * mib + 4096);
   assert.ok(core.estimateZipPeakBytes(384 * mib, 64 * mib, 64 * mib, 1) > 512 * mib);
-  assert.equal(core.estimateZipPeakBytes(-1, NaN, 10, -3), 10);
+  assert.equal(core.estimateZipPeakBytes(-1, NaN, 10, -3), 20);
 });
 
 test('coordinate labels are deterministic and remain local', () => {

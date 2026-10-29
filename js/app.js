@@ -1841,6 +1841,10 @@ async function generateAll() {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
       }, controller.signal);
+      // Compact large completed batches before the next full-size canvas is created.
+      if (idx + 1 < total && _retainedOutputBytes() > 128 * 1024 * 1024) {
+        await _compactPhotoOutput(item, controller.signal);
+      }
     }
   } catch (error) {
     unexpectedError = error;
@@ -1978,6 +1982,9 @@ async function downloadSingle(id, { signal = null, runToken = null } = {}) {
   if (item.isVideo && item.videoBlob) {
     const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
     triggerDownload(item.videoBlob, name);
+  } else if (item.photoBlob) {
+    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(_photoExportOpts().format);
+    triggerDownload(item.photoBlob, name);
   } else if (item.canvas) {
     const opts = _photoExportOpts();
     const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal });
@@ -2046,6 +2053,22 @@ function _generateZipBlob(zip, signal, onUpdate) {
   });
 }
 
+// Keep finished photos compressed during batch downloads instead of retaining
+// one full RGBA canvas per image. The framed thumbnail has already been drawn.
+async function _compactPhotoOutput(item, signal) {
+  if (item.isVideo || item.status !== 'done' || !item.canvas) return;
+  const canvas = item.canvas;
+  const blob = await FrameEngine.canvasToBlob(canvas, { ..._photoExportOpts(), signal });
+  if (signal.aborted || !state.items.includes(item) || item.canvas !== canvas || item.status !== 'done') {
+    throw new DOMException('Export cancelled', 'AbortError');
+  }
+  if (_retainedOutputBytes(item) + blob.size > MAX_RETAINED_OUTPUT_BYTES) throw _mediaResourceLimitError();
+  item.photoBlob = blob;
+  item.canvas = null;
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 async function downloadAll() {
   if (_globalExportBusy || _reservedImportItems > 0) return;
   if (!state.items.length) {
@@ -2056,6 +2079,18 @@ async function downloadAll() {
   const controller = new AbortController();
   _activeExportController = controller;
   setGlobalBusy(true);
+  _showOwnedExportProgress(controller, t('progressPreparing'), 0);
+
+  // Free full-size canvases before generating the rest of a large batch.
+  try {
+    for (const item of state.items) await _compactPhotoOutput(item, controller.signal);
+  } catch (error) {
+    if (!_ownsGlobalExport(controller)) return;
+    _finishOwnedGlobalExport(controller);
+    showToast(t(error?.name === 'AbortError' ? 'msgExportCancelled' : 'msgExportFailed'),
+      error?.name === 'AbortError' ? 'warn' : 'error');
+    return;
+  }
 
   // Auto-generate pending items and retry failed items first
   const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
@@ -2076,6 +2111,15 @@ async function downloadAll() {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
       }, controller.signal);
+      try {
+        await _compactPhotoOutput(item, controller.signal);
+      } catch (error) {
+        if (!_ownsGlobalExport(controller)) return;
+        _finishOwnedGlobalExport(controller);
+        showToast(t(error?.name === 'AbortError' ? 'msgExportCancelled' : 'msgExportFailed'),
+          error?.name === 'AbortError' ? 'warn' : 'error');
+        return;
+      }
     }
   }
 
@@ -2086,7 +2130,7 @@ async function downloadAll() {
     return;
   }
 
-  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.videoBlob));
+  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.photoBlob || i.videoBlob));
   if (!done.length) {
     _finishOwnedGlobalExport(controller);
     showToast(t('msgNoImages'), 'warn');
@@ -2150,6 +2194,9 @@ async function downloadAll() {
       if (item.isVideo && item.videoBlob) {
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
         addZipEntry(name, item.videoBlob);
+      } else if (item.photoBlob) {
+        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
+        addZipEntry(name, item.photoBlob);
       } else if (item.canvas) {
         const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal: controller.signal });
         const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
@@ -2258,6 +2305,7 @@ function _retainedOutputBytes(excludeItem = null) {
     if (item === excludeItem) return sum;
     if (item.canvas) sum += item.canvas.width * item.canvas.height * 4;
     if (item.videoBlob) sum += item.videoBlob.size || 0;
+    if (item.photoBlob) sum += item.photoBlob.size || 0;
     return sum;
   }, 0);
 }
@@ -3799,6 +3847,7 @@ function _releaseItemOutput(item) {
   item.thumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
+  item.photoBlob = null;
   item.videoBlob = null;
 }
 
@@ -4780,15 +4829,17 @@ function updateItemPreview(item) {
   const dlBtn      = document.getElementById(`dl-btn-${item.id}`);
   if (!previewDiv) return;
 
-  if (item.status === 'done' && (item.canvas || item.videoBlob)) {
+  if (item.status === 'done' && (item.canvas || item.photoBlob || item.videoBlob)) {
     const sourceCanvas = previewDiv.querySelector('canvas.thumb-source');
-    if (sourceCanvas) sourceCanvas.style.display = 'none';
+    if (sourceCanvas && (!item.photoBlob || previewDiv.querySelector('canvas.thumb-framed'))) {
+      sourceCanvas.style.display = 'none';
+    }
     if (item.isVideo) {
       // Video done: thumbnail stays, add a "ready" overlay on badge; enable download
       const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
       const origThumb = previewDiv.querySelector('img.thumb-orig');
       if (origThumb) origThumb.style.display = framedCanvas ? 'none' : '';
-    } else {
+    } else if (item.canvas) {
       // Photo done: replace thumbnail with framed canvas preview
       let existing = previewDiv.querySelector('canvas.thumb-framed');
       if (!existing) {
@@ -5705,10 +5756,13 @@ function setupSettingsListeners() {
     r.addEventListener('change', () => {
       const before = _createSettingsSnapshot();
       _syncPhotoQualityAvailability(r.value);
-      // Photo format doesn't need re-generation (applied at download time) — just save
+      // Compacted photos must be regenerated when their encoding settings change.
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       const nextFormat = pFmt ? pFmt.value : 'jpeg';
-      if (state.settings.exportPhotoFormat !== nextFormat) _abortGlobalExportForMutation();
+      if (state.settings.exportPhotoFormat !== nextFormat) {
+        _abortGlobalExportForMutation();
+        markItemsPending(item => !!item.photoBlob);
+      }
       state.settings.exportPhotoFormat = nextFormat;
       _recordSettingsHistory(before);
       saveSettings();
@@ -5722,7 +5776,10 @@ function setupSettingsListeners() {
     (v, options) => {
       const before = _createSettingsSnapshot();
       const nextQuality = parseInt(v, 10);
-      if (state.settings.exportPhotoQuality !== nextQuality) _abortGlobalExportForMutation();
+      if (state.settings.exportPhotoQuality !== nextQuality) {
+        _abortGlobalExportForMutation();
+        markItemsPending(item => !!item.photoBlob);
+      }
       state.settings.exportPhotoQuality = nextQuality;
       if (options?.recordHistory !== false) _recordSettingsHistory(before);
       saveSettings();
