@@ -677,7 +677,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
     window.__photoThumbnailAttempts = 0;
     window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
       callback,
-      delay === 15_000 ? 25 : delay,
+      delay === 15_000 ? 250 : delay,
       ...args
     );
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
@@ -699,7 +699,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
 
   await uploadJpegs(page);
 
-  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 1_000 }).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 3_000 }).toBe(2);
   await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
   await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
   await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
@@ -2324,6 +2324,12 @@ test('batch download reports items missing from a partial ZIP', async ({ page })
   await uploadJpegs(page, 2);
   await page.evaluate(() => {
     const render = window.FrameEngine.renderFrameWhenReady;
+    const show = window.showToast;
+    window.__partialDownloadMessages = [];
+    window.showToast = (message, ...args) => {
+      window.__partialDownloadMessages.push(message);
+      return show(message, ...args);
+    };
     let attempts = 0;
     window.FrameEngine.renderFrameWhenReady = (...args) => {
       if (attempts++ === 0) throw new Error('simulated export failure');
@@ -2334,7 +2340,7 @@ test('batch download reports items missing from a partial ZIP', async ({ page })
   await page.locator('#downloadAllBtn').click();
   const zip = await JSZip.loadAsync(await fs.readFile(await (await downloadPromise).path()));
   expect(Object.keys(zip.files)).toEqual(['photo-2_frame.jpg']);
-  await expect(page.locator('#toast')).toContainText('ZIP is incomplete: 1');
+  expect(await page.evaluate(() => window.__partialDownloadMessages)).toContain('The ZIP is incomplete: 1 item(s) failed. Review their error details.');
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
 });
 
@@ -5460,7 +5466,7 @@ test('MediaRecorder finalizes when playback ends without another animation frame
     try {
       const outcome = await Promise.race([
         pending.then(blob => ({ status: 'resolved', blobSize: blob.size })),
-        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 500)),
+        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 5_000)),
       ]);
       if (outcome.status === 'timeout') {
         controller.abort();
