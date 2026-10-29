@@ -818,6 +818,7 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
 // }
 
 function _setLocalizedItemError(item, key, values = {}) {
+  item.errorDiagnostic = '';
   item.errorKey = key;
   item.errorValues = { ...values };
   item.errorMsg = tf(key, values);
@@ -825,6 +826,7 @@ function _setLocalizedItemError(item, key, values = {}) {
 }
 
 function _setRawItemError(item, message) {
+  item.errorDiagnostic = '';
   item.errorKey = null;
   item.errorValues = null;
   item.errorMsg = message || '';
@@ -835,6 +837,7 @@ function _clearItemError(item) {
   item.errorKey = null;
   item.errorValues = null;
   item.errorMsg = null;
+  item.errorDiagnostic = '';
 }
 
 function _getItemErrorMessage(item) {
@@ -1735,7 +1738,13 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       else if (e?.code === 'MEDIA_RESOURCE_LIMIT') _setLocalizedItemError(item, 'msgMediaResourceLimit');
       else if (e?.code === 'IMAGE_DECODE_TIMEOUT') _setLocalizedItemError(item, 'msgImageDecodeTimeout');
       else if (e?.code === 'VIDEO_EXPORT_UNAVAILABLE') _setLocalizedItemError(item, 'msgVideoExportUnavailable');
-      else _setRawItemError(item, e.message);
+      else _setRawItemError(item, e?.message || t('msgExportFailed'));
+      if (!cancelled) {
+        item.errorDiagnostic = [e?.name, e?.code, e?.message]
+          .filter(value => typeof value === 'string' && value.trim())
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .join(' · ');
+      }
       if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
       if (onExternalProgress) onExternalProgress(1);
     }
@@ -4675,6 +4684,7 @@ function renderItem(item) {
     </button>
     <div class="card-body">
       <div class="card-filename">${escHtml(item.file.name)}</div>
+      <div class="card-error-details" id="error-details-${item.id}" hidden></div>
       <div class="card-actions">
         <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}">
           <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
@@ -4688,7 +4698,13 @@ function renderItem(item) {
 
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
-    selectItem(item.id);
+    if (item.status === 'error') {
+      const details = card.querySelector('.card-error-details');
+      details.hidden = !details.hidden;
+      card.querySelector('.card-preview').setAttribute('aria-expanded', String(!details.hidden));
+    } else {
+      selectItem(item.id);
+    }
   });
   card.querySelector('[data-action="download"]')?.addEventListener('click', () => applyAndDownloadSingle(item.id));
   card.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeItem(item.id));
@@ -4709,6 +4725,8 @@ function updateItemStatus(item) {
 
   const dot  = badge.querySelector('.status-dot');
   const text = badge.querySelector('.status-text');
+  const preview = document.getElementById(`preview-${item.id}`);
+  const details = document.getElementById(`error-details-${item.id}`);
 
   dot.className = `status-dot ${item.status}`;
   const errorMessage = item.status === 'error' ? _getItemErrorMessage(item) : '';
@@ -4716,7 +4734,18 @@ function updateItemStatus(item) {
     item.errorMsg = errorMessage;
     badge.setAttribute('aria-label', errorMessage);
     badge.title = errorMessage;
+    preview?.setAttribute('aria-expanded', String(!details.hidden));
+    preview?.setAttribute('aria-controls', details.id);
+    preview?.setAttribute('aria-label', tf('showErrorDetailsNamed', { name: item.file.name }));
+    details.textContent = errorMessage;
+    if (item.errorDiagnostic && item.errorDiagnostic !== errorMessage) {
+      details.textContent += `\n${item.errorDiagnostic}`;
+    }
   } else {
+    if (details) { details.hidden = true; details.textContent = ''; }
+    preview?.removeAttribute('aria-expanded');
+    preview?.removeAttribute('aria-controls');
+    preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
     badge.removeAttribute('aria-label');
     badge.removeAttribute('title');
   }
@@ -4724,7 +4753,7 @@ function updateItemStatus(item) {
   if (item.status === 'processing' && item.isVideo && item.progress > 0) {
     text.textContent = `${Math.round(item.progress * 100)}%`;
   } else {
-    text.textContent = t(`status${capitalize(item.status)}`);
+    text.textContent = t(item.status === 'error' ? 'statusErrorDetails' : `status${capitalize(item.status)}`);
   }
 }
 

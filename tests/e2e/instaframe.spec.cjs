@@ -1403,6 +1403,35 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
   await expect(page.locator('#item-1 img.thumb-orig')).toBeHidden();
 });
 
+test('export errors reveal details on the card and clear on retry', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__originalRender = window.FrameEngine.renderFrameWhenReady;
+    window.FrameEngine.renderFrameWhenReady = async () => {
+      const error = new Error('Simulated encoder failure');
+      error.code = 'ENCODER_FAILURE';
+      throw error;
+    };
+  });
+  await page.locator('#generateAllBtn').click();
+  const preview = page.locator('#preview-1');
+  const details = page.locator('#error-details-1');
+  await expect(preview).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toBeHidden();
+  await preview.click();
+  await expect(details).toBeVisible();
+  await expect(details).toContainText('Simulated encoder failure');
+  await expect(details).toContainText('ENCODER_FAILURE');
+  await expect(preview).toHaveAttribute('aria-expanded', 'true');
+  await page.evaluate(() => { window.FrameEngine.renderFrameWhenReady = window.__originalRender; });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(details).toBeHidden();
+  await expect(preview).not.toHaveAttribute('aria-expanded');
+});
+
 test('card progress remains described without competing with the export live region', async ({ page }) => {
   await uploadJpegs(page);
   const preview = page.locator('#preview-1');

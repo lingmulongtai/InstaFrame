@@ -2123,6 +2123,13 @@ input[type="range"]:focus-visible {
   text-overflow: ellipsis;
 }
 
+.card-error-details {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .card-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
