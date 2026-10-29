@@ -1432,6 +1432,20 @@ test('export errors reveal details on the card and clear on retry', async ({ pag
   await expect(preview).not.toHaveAttribute('aria-expanded');
 });
 
+test('mobile error details remain visible when an error card is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('invalid image'),
+  });
+  await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await page.locator('#preview-1').click();
+  await expect(page.locator('body')).toHaveAttribute('data-mobile-tab', 'photos');
+  await expect(page.locator('#error-details-1')).toBeVisible();
+  await expect(page.locator('#preview-1')).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('card progress remains described without competing with the export live region', async ({ page }) => {
   await uploadJpegs(page);
   const preview = page.locator('#preview-1');
