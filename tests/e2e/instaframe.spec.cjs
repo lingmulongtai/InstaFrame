@@ -2341,6 +2341,26 @@ test('large generated batches compact photos before the next output', async ({ p
     .toEqual([[0, 0], [0, 0]]);
 });
 
+test('new batches compact large previously generated photos before rendering', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('.status-dot.done')).toHaveCount(1);
+  await page.locator('#fileInput').setInputFiles({ name: 'next.jpg', mimeType: 'image/jpeg', buffer: createJpeg() });
+  await expect(page.locator('.image-card')).toHaveCount(2);
+  await page.evaluate(() => {
+    window.__priorCanvas = null;
+    const encode = window.FrameEngine.canvasToBlob;
+    window.FrameEngine.canvasToBlob = (canvas, options) => {
+      window.__priorCanvas = canvas;
+      return encode(canvas, options);
+    };
+    window._retainedOutputBytes = () => 129 * 1024 * 1024;
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('.status-dot.done')).toHaveCount(2);
+  expect(await page.evaluate(() => [window.__priorCanvas?.width, window.__priorCanvas?.height])).toEqual([0, 0]);
+});
+
 test('batch download compacts completed photos and regenerates after a format change', async ({ page }) => {
   await uploadJpegs(page, 2);
   await page.evaluate(() => {

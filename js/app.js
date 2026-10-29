@@ -1837,14 +1837,17 @@ async function generateAll() {
         basePct
       );
 
+      // Make room for the next full-size canvas, including outputs from earlier batches.
+      if (_retainedOutputBytes() > 128 * 1024 * 1024) {
+        for (const finished of state.items) {
+          if (_retainedOutputBytes() <= 128 * 1024 * 1024) break;
+          await _compactPhotoOutput(finished, controller.signal);
+        }
+      }
       await generateItem(item, p => {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
       }, controller.signal);
-      // Compact large completed batches before the next full-size canvas is created.
-      if (idx + 1 < total && _retainedOutputBytes() > 128 * 1024 * 1024) {
-        await _compactPhotoOutput(item, controller.signal);
-      }
     }
   } catch (error) {
     unexpectedError = error;
