@@ -3757,7 +3757,7 @@ function resetPreviewView() {
 }
 
 // ─── Item Selection for Preview ───────────────────────────────────────────────
-function selectItem(id) {
+function selectItem(id, { switchMobileTab = true } = {}) {
   _flushLiveExifEdit();
   state.selectedItemId = id;
   for (const [itemId, entry] of _imgLoadEntries) {
@@ -3773,7 +3773,7 @@ function selectItem(id) {
     el.querySelector('.card-preview')?.setAttribute('aria-pressed', 'true');
   }
   // On mobile: auto-switch to preview tab so user can see the result
-  if (_usesMobileLayout()) {
+  if (switchMobileTab && _usesMobileLayout()) {
     document.body.setAttribute('data-mobile-tab', 'preview');
     _setMobileTabState(document.getElementById('mobileTabBar'), 'preview');
     // The Photos panel becomes inert immediately. Wait for the newly selected
@@ -4761,6 +4761,7 @@ function renderItem(item) {
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
     if (item.status === 'error') {
+      selectItem(item.id, { switchMobileTab: false });
       const details = card.querySelector('.card-error-details');
       details.hidden = !details.hidden;
       card.querySelector('.card-preview').setAttribute('aria-expanded', String(!details.hidden));
