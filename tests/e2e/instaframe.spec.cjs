@@ -5963,6 +5963,52 @@ test('WebCodecs rejects oversized encoded chunks before muxer allocation', async
   });
 });
 
+test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const sizes = [];
+    const mimes = [];
+    let retries = 0;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    HTMLCanvasElement.prototype.captureStream = function (...args) {
+      sizes.push([this.width, this.height]);
+      return nativeCapture.apply(this, args);
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor(stream, options) {
+        this.state = 'inactive';
+        this.attempt = mimes.push(options.mimeType);
+      }
+      start() {
+        this.state = 'recording';
+        if (this.attempt === 1) setTimeout(() => this.onerror({ error: new Error('encoder failed') }), 50);
+      }
+      stop() {
+        this.state = 'inactive';
+        if (this.attempt === 2) {
+          this.ondataavailable({ data: new Blob(['video']) });
+          this.onstop();
+        }
+      }
+      pause() { this.state = 'paused'; }
+      resume() { this.state = 'recording'; }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const blob = await window.FrameEngine.renderVideoFrameWhenReady(
+      new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
+      { preferredMime: 'video/webm', onRetry: () => { retries += 1; } }
+    );
+    return { sizes, mimes, retries, type: blob.type, size: blob.size };
+  }, { base64: createWebm().toString('base64') });
+  expect(result.retries).toBe(1);
+  expect(result.mimes).toEqual(['video/webm', 'video/webm']);
+  expect(result.sizes).toHaveLength(2);
+  expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
+  expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
+  expect(result.type).toBe('video/webm');
+  expect(result.size).toBeGreaterThan(0);
+});
+
 test('video output limit rejects an oversized estimate before MediaRecorder allocation', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
