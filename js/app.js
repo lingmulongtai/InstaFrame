@@ -1656,6 +1656,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   let decodedPhoto = null;
   item.status   = 'processing';
   item.progress = 0;
+  item.videoReduced = false;
   updateItemStatus(item);
 
   try {
@@ -1679,6 +1680,12 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
           maxOutputBytes,
+          onRetry: () => {
+            item.videoReduced = true;
+            item.progress = 0;
+            updateItemStatus(item);
+            showToast(t('msgVideoRetryReduced'), 'warn');
+          },
           onProgress: p => {
             item.progress = p;
             updateItemStatus(item);
@@ -4753,7 +4760,10 @@ function updateItemStatus(item) {
   if (item.status === 'processing' && item.isVideo && item.progress > 0) {
     text.textContent = `${Math.round(item.progress * 100)}%`;
   } else {
-    text.textContent = t(item.status === 'error' ? 'statusErrorDetails' : `status${capitalize(item.status)}`);
+    const statusKey = item.status === 'error' ? 'statusErrorDetails'
+      : item.status === 'done' && item.videoReduced ? 'statusDoneReduced'
+        : `status${capitalize(item.status)}`;
+    text.textContent = t(statusKey);
   }
 }
 
