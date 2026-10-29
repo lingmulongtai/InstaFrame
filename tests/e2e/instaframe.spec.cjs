@@ -2304,6 +2304,49 @@ test('photo export corrects a wrong Blob MIME when the requested signature is va
   expect(result).toEqual({ type: 'image/webp', riff: 'RIFF', webp: 'WEBP' });
 });
 
+test('large generated batches compact photos before the next output', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    window.__compactedCanvases = [];
+    const encode = window.FrameEngine.canvasToBlob;
+    window.FrameEngine.canvasToBlob = (canvas, options) => {
+      window.__compactedCanvases.push(canvas);
+      return encode(canvas, options);
+    };
+    window._retainedOutputBytes = () => 129 * 1024 * 1024;
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('.status-dot.done')).toHaveCount(3);
+  expect(await page.evaluate(() => window.__compactedCanvases.map(canvas => [canvas.width, canvas.height])))
+    .toEqual([[0, 0], [0, 0]]);
+});
+
+test('batch download compacts completed photos and regenerates after a format change', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    window.__encodedCanvases = [];
+    const encode = window.FrameEngine.canvasToBlob;
+    window.FrameEngine.canvasToBlob = (canvas, options) => {
+      window.__encodedCanvases.push(canvas);
+      return encode(canvas, options);
+    };
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const download = await downloadPromise;
+  const zip = await JSZip.loadAsync(await fs.readFile(await download.path()));
+  expect(Object.keys(zip.files).sort()).toEqual(['photo-1_frame.jpg', 'photo-2_frame.jpg']);
+  expect(await page.evaluate(() => window.__encodedCanvases.map(canvas => [canvas.width, canvas.height]))).toEqual([[0, 0], [0, 0]]);
+  await expect(page.locator('.status-dot.done')).toHaveCount(2);
+  await page.locator('label[for="fmt-png"]').click();
+  await expect(page.locator('.status-dot.pending')).toHaveCount(2);
+  const nextDownload = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const pngZip = await JSZip.loadAsync(await fs.readFile(await (await nextDownload).path()));
+  const png = await pngZip.file('photo-1_frame.png').async('nodebuffer');
+  expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+});
+
 test('video export controls disappear when MediaRecorder supports no output MIME', async ({ page }) => {
   await page.evaluate(() => {
     window.MediaRecorder.isTypeSupported = () => false;
