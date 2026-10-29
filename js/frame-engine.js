@@ -8,6 +8,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
   const MAX_PENDING_VIDEO_ENCODES = 4;
+  const VIDEO_CAPTURE_FPS = 30;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
   const IMAGE_ENCODE_GUARD_MS = 60_000;
@@ -1561,7 +1562,7 @@ const FrameEngine = (() => {
         } catch (_) { /* no audio support or no audio track */ }
 
         // ── Build output stream: canvas video + original audio ──
-        outputStream = canvas.captureStream(30);
+        outputStream = canvas.captureStream(VIDEO_CAPTURE_FPS);
         if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
@@ -1579,6 +1580,7 @@ const FrameEngine = (() => {
         const chunks = [];
         let recordedBytes = 0;
         let lastMediaTime = -1;
+        let lastDrawnFrame = -1;
         recorder.ondataavailable = event => {
           if (event.data.size <= 0 || settled) return;
           recordedBytes += event.data.size;
@@ -1617,9 +1619,12 @@ const FrameEngine = (() => {
           try {
             rafId = null;
             assertNotAborted(signal);
-            baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas, scale);
-
             const mediaTime = Number(video.currentTime) || 0;
+            const frameIndex = Math.floor(mediaTime * VIDEO_CAPTURE_FPS);
+            if (frameIndex !== lastDrawnFrame) {
+              baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas, scale);
+              lastDrawnFrame = frameIndex;
+            }
             if (mediaTime > lastMediaTime) {
               lastMediaTime = mediaTime;
               armProgressWatchdog();

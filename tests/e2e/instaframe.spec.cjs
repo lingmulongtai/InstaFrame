@@ -6046,6 +6046,76 @@ test('WebCodecs rejects oversized encoded chunks before muxer allocation', async
   });
 });
 
+test('video recording avoids redrawing between 30 fps output frames', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreate = document.createElement.bind(document);
+    const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    const nativeRaf = window.requestAnimationFrame;
+    const nativeCancel = window.cancelAnimationFrame;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeEncoder = window.VideoEncoder;
+    let video;
+    const drawnTimes = [];
+    const stats = { callbacks: 0, captureFps: 0 };
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
+      video = {
+        videoWidth: 96, videoHeight: 64, duration: 0.1, currentTime: 0,
+        paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        pause() { this.paused = true; },
+        removeAttribute() { this.src = ''; },
+      };
+      return video;
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      if (source === video) { drawnTimes.push(video.currentTime); return; }
+      return nativeDraw.call(this, source, ...args);
+    };
+    HTMLCanvasElement.prototype.captureStream = fps => {
+      stats.captureFps = fps;
+      return { addTrack() {}, getTracks() { return []; } };
+    };
+    window.requestAnimationFrame = callback => setTimeout(() => {
+      stats.callbacks += 1;
+      video.currentTime = stats.callbacks / 100;
+      if (stats.callbacks === 10) video.ended = true;
+      callback();
+    }, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.VideoEncoder = undefined;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable({ data: new Blob(['video']) });
+        this.onstop();
+      }
+    };
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(new File(['video'], 'clip.webm'), {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm',
+      });
+      return { ...stats, drawnTimes };
+    } finally {
+      document.createElement = nativeCreate;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDraw;
+      HTMLCanvasElement.prototype.captureStream = nativeCapture;
+      window.requestAnimationFrame = nativeRaf;
+      window.cancelAnimationFrame = nativeCancel;
+      window.MediaRecorder = NativeRecorder;
+      window.VideoEncoder = NativeEncoder;
+    }
+  });
+  expect(result.captureFps).toBe(30);
+  expect(result.callbacks).toBe(10);
+  expect(result.drawnTimes).toEqual([0.01, 0.04, 0.07, 0.1]);
+});
+
 test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const sizes = [];
