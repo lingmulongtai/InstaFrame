@@ -2304,6 +2304,26 @@ test('photo export corrects a wrong Blob MIME when the requested signature is va
   expect(result).toEqual({ type: 'image/webp', riff: 'RIFF', webp: 'WEBP' });
 });
 
+test('batch download reports items missing from a partial ZIP', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    let attempts = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      if (attempts++ === 0) throw new Error('simulated export failure');
+      return render(...args);
+    };
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const zip = await JSZip.loadAsync(await fs.readFile(await (await downloadPromise).path()));
+  expect(Object.keys(zip.files)).toEqual(['photo-2_frame.jpg']);
+  await expect(page.locator('#toast')).toContainText('ZIP is incomplete: 1');
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+});
+
 test('large generated batches compact photos before the next output', async ({ page }) => {
   await uploadJpegs(page, 3);
   await page.evaluate(() => {

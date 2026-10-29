@@ -2131,9 +2131,11 @@ async function downloadAll() {
   }
 
   const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.photoBlob || i.videoBlob));
+  const failedCount = state.items.filter(item => item.status === 'error').length;
   if (!done.length) {
     _finishOwnedGlobalExport(controller);
-    showToast(t('msgNoImages'), 'warn');
+    if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
+    else showToast(t('msgNoImages'), 'warn');
     return;
   }
 
@@ -2259,6 +2261,7 @@ async function downloadAll() {
     return;
   }
   _finishOwnedGlobalExport(controller);
+  if (failedCount) showToast(tf('msgBatchDownloadPartial', { count: failedCount }), 'error');
 }
 
 function triggerDownload(blob, filename) {
