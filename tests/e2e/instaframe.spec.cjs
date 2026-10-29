@@ -3885,11 +3885,9 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
-    const render = window.FrameEngine.renderFrameWhenReady;
-    window.FrameEngine.renderFrameWhenReady = async (...args) => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return render(...args);
-    };
+    window.FrameEngine.renderFrameWhenReady = (_image, _exif, _settings, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('Export cancelled', 'AbortError')), { once: true });
+    });
   });
   await page.locator('#generateAllBtn').click();
   await expect(page.locator('#exportProgress')).toBeVisible();
@@ -5037,10 +5035,13 @@ test('uncertain audio hints use native capture and Web Audio fallback', async ({
 
     const run = async nextMode => {
       mode = nextMode;
+      const controller = new AbortController();
       try {
-        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          preserveAudio: true, signal: controller.signal, onRetry: () => controller.abort(),
+        });
       } catch (error) {
-        if (error.message !== 'stop after audio setup') throw error;
+        if (error.name !== 'AbortError') throw error;
       }
     };
     try {
@@ -5100,10 +5101,13 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
     };
 
     let message = '';
+    const controller = new AbortController();
     try {
-      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false, signal: controller.signal, onRetry: () => controller.abort(),
+      });
     } catch (error) {
-      message = error.message;
+      message = error.name;
     } finally {
       HTMLMediaElement.prototype.captureStream = nativeVideoCapture;
       HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
@@ -5123,7 +5127,7 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
   });
 
   expect(result).toEqual({
-    message: 'stop after fallback stream setup',
+    message: 'AbortError',
     sourceCaptureCalls: 0,
     addedAudioTracks: 0,
     recorderConstructions: 1,
