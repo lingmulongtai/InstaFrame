@@ -3213,6 +3213,25 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
 });
 
+test('video export releases and restores the live preview decoder', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'preview-decoder.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async () => {
+      window.__previewSourceDuringExport = document.querySelector('#livePreviewVideo').getAttribute('src');
+      await window.renderLivePreview();
+      window.__previewSourceAfterRender = document.querySelector('#livePreviewVideo').getAttribute('src');
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await page.locator('#generateAllBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => [window.__previewSourceDuringExport, window.__previewSourceAfterRender])).toEqual([null, null]);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+});
+
 test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
   await page.evaluate(() => {
     window.__thumbnailExportOrder = { captureCalls: 0, started: false, settled: false, encoderSawSettled: false };
