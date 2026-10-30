@@ -1509,6 +1509,67 @@ test('video preview drawing failure shows its cause and preserves a completed ex
   await expect(page.locator('#dl-btn-1')).toBeEnabled();
 });
 
+test('a preview read error retries with a byte-backed copy and exports that copy', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'read-error.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2, message: 'simulated read failure' }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect.poll(() => page.evaluate(() => !!eval('state.items[0].videoReadSource'))).toBe(true);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  const copied = await page.evaluate(async () => {
+    const item = eval('state.items[0]');
+    const original = new Uint8Array(await item.file.arrayBuffer());
+    const copy = new Uint8Array(await item.videoReadSource.arrayBuffer());
+    window.FrameEngine.renderVideoFrameWhenReady = async source => {
+      window.__usedVideoReadCopy = source === item.videoReadSource;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+    return { distinct: item.file !== item.videoReadSource, equal: original.length === copy.length && original.every((v, i) => v === copy[i]) };
+  });
+  expect(copied).toEqual({ distinct: true, equal: true });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__usedVideoReadCopy)).toBe(true);
+});
+
+test('a failed video reread reports the read failure and stops retrying', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'unreadable.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const item = eval('state.items[0]');
+    item.file.slice = () => ({ arrayBuffer: () => Promise.reject(new DOMException('simulated unreadable source', 'NotReadableError')) });
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2, message: 'simulated media read error' }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect(page.locator('#livePreviewError')).toContainText('simulated unreadable source');
+  expect(await page.evaluate(() => [eval('state.items[0].videoReadAttempted'), eval('state.items[0].videoReadSource')])).toEqual([true, null]);
+});
+
+test('removing a video cancels a stalled reread and cannot retain its copy', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'stalled-read.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const item = eval('state.items[0]');
+    window.__removedVideoItem = item;
+    item.file.slice = () => ({ arrayBuffer: () => new Promise(() => {}) });
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2 }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect.poll(() => page.evaluate(() => !!window.__removedVideoItem.videoReadPromise)).toBe(true);
+  await page.evaluate(() => window.clearAllItems(true));
+  await expect.poll(() => page.evaluate(() => window.__removedVideoItem.videoReadPromise)).toBeNull();
+  expect(await page.evaluate(() => window.__removedVideoItem.videoReadSource)).toBeNull();
+  await expect(page.locator('#imageGrid .image-card')).toHaveCount(0);
+});
+
 test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'settings-video.webm',
