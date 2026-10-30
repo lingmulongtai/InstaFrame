@@ -2787,6 +2787,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       _evictPhotoOutputs(item, MAX_RETAINED_OUTPUT_BYTES);
       const maxOutputBytes = MAX_RETAINED_OUTPUT_BYTES - _retainedOutputBytes(item);
       if (maxOutputBytes <= 0) throw _mediaResourceLimitError();
+      let reportedVideoPercent = -1;
       const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
         item.file, item.exif, state.settings,
         {
@@ -2798,11 +2799,15 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           onRetry: () => {
             item.videoReduced = true;
             item.progress = 0;
+            reportedVideoPercent = -1;
             updateItemStatus(item);
             showToast(t('msgVideoRetryReduced'), 'warn');
           },
           onProgress: p => {
             item.progress = p;
+            const percent = Math.floor(p * 100);
+            if (percent === reportedVideoPercent) return;
+            reportedVideoPercent = percent;
             updateItemStatus(item);
             if (onExternalProgress) onExternalProgress(p);
           },
