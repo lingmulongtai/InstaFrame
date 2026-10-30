@@ -1183,6 +1183,7 @@ const FrameEngine = (() => {
    */
   async function _renderVideoWebCodecs(file, exif, settings, {
     onProgress,
+    onOutputSize,
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     videoBitsPerSecond = 10_000_000,
     sourceBitrate = false,
@@ -1340,6 +1341,7 @@ const FrameEngine = (() => {
               if (!buffer) throw new Error('WebM muxing produced no output');
               const byteLength = buffer.byteLength ?? buffer.length ?? 0;
               if (byteLength > maxOutputBytes) throw resourceLimitError();
+              onOutputSize?.(canvas.width, canvas.height);
               if (onProgress) onProgress(1);
               succeed(new Blob([buffer], { type: 'video/webm' }));
             } catch (error) {
@@ -1554,7 +1556,8 @@ const FrameEngine = (() => {
   /** Decode and encode each input frame without depending on playback speed. */
   async function renderVideoFramesOffline(file, exif, settings, options) {
     const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-      outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio } = options;
+      outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio,
+      onOutputSize, hardwareAcceleration = 'no-preference' } = options;
     if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
         typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
     const isMp4 = String(preferredMime || '').startsWith('video/mp4');
@@ -1620,7 +1623,7 @@ const FrameEngine = (() => {
         });
         const supported = async factor => {
           const size = dimensions(factor);
-          return media.canEncodeVideo(codec, { ...size, bitrate });
+          return media.canEncodeVideo(codec, { ...size, bitrate, hardwareAcceleration });
         };
         let chosenScale = scale;
         if (!await supported(scale)) {
@@ -1652,7 +1655,7 @@ const FrameEngine = (() => {
           copy: { shiftTolerance: 0.1 },
           audio: { discard: !preserveAudio },
           video: {
-            codec, bitrate, processedWidth: outWidth, processedHeight: outHeight,
+            codec, bitrate, hardwareAcceleration, processedWidth: outWidth, processedHeight: outHeight,
             allowTransformationMetadata: false,
             process(sample) {
               assertActive();
@@ -1669,13 +1672,14 @@ const FrameEngine = (() => {
           console.warn('Frame-by-frame video export is unsupported:', conversion.discardedTracks.map(track => track.reason).join(', '));
           return null;
         }
-        if (chosenScale < scale) onAutoScale?.(outWidth, outHeight);
         conversion.onProgress = progress => onProgress?.(Math.min(progress, 0.99));
         started = true;
         armGuard('frame progress', resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS));
         await conversion.execute();
         assertActive();
         const blob = sink.finish(isMp4 ? 'video/mp4' : 'video/webm');
+        onOutputSize?.(outWidth, outHeight);
+        if (chosenScale < 1) onAutoScale?.(outWidth, outHeight);
         onProgress?.(1);
         return blob;
       })(), interruption]);
@@ -1711,7 +1715,10 @@ const FrameEngine = (() => {
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     outputScale = 1,
     onAutoScale,
+    onOutputSize,
     onRealtimeFallback,
+    preferHardware = false,
+    onMemoryFallback,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -1719,11 +1726,26 @@ const FrameEngine = (() => {
     const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
     let offlineSourceHasAudio = null;
     if (outputFrameRate === 60) {
-      const offline = await renderVideoFramesOffline(file, exif, settings, {
+      const offlineOptions = {
         onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale,
+        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize,
         onSourceAudio: hasAudio => { offlineSourceHasAudio = hasAudio; },
-      });
+      };
+      let offline = null;
+      if (preferHardware && typeof VideoDecoder !== 'undefined' && typeof VideoEncoder !== 'undefined' &&
+          typeof VideoFrame !== 'undefined' && typeof WritableStream !== 'undefined') {
+        try {
+          offline = await renderVideoFramesOffline(file, exif, settings, {
+            ...offlineOptions, hardwareAcceleration: 'prefer-hardware',
+          });
+        } catch (error) {
+          if (error?.code !== 'VIDEO_ENCODER_FAILED') throw error;
+          assertNotAborted(signal);
+          onProgress?.(0);
+        }
+        if (!offline) onMemoryFallback?.();
+      }
+      if (!offline) offline = await renderVideoFramesOffline(file, exif, settings, offlineOptions);
       if (offline) return offline;
       onRealtimeFallback?.();
     }
@@ -1736,7 +1758,7 @@ const FrameEngine = (() => {
     if (!preserveAudio && canUseWebCodecs) {
       try {
         return await _renderVideoWebCodecs(file, exif, settings, {
-          onProgress,
+          onProgress, onOutputSize,
           videoBitsPerSecond,
           sourceBitrate,
           frameRate: outputFrameRate,
@@ -1977,6 +1999,8 @@ const FrameEngine = (() => {
             fail(resourceLimitError());
             return;
           }
+          try { onOutputSize?.(canvas.width, canvas.height); }
+          catch (error) { fail(error); return; }
           settled = true;
           cleanup();
           resolve(blob);

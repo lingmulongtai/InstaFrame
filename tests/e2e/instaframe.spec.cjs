@@ -446,13 +446,13 @@ test('radio choices expose their localized setting group names', async ({ page }
   }
   await expectGroups([
     'Background', 'Frame Color', 'Aspect Ratio', 'Orientation', 'Text Color',
-    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Bitrate',
+    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Video processing', 'Bitrate',
   ]);
 
   await page.locator('#langToggleBtn').click();
   await expectGroups([
     '背景', 'フレームカラー', 'アスペクト比', '向き', '文字色',
-    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', 'ビットレート',
+    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', '動画の処理', 'ビットレート',
   ]);
   await page.locator('#customizeBtn').click();
   await expectGroups(['テーマ', 'サイドバー', 'EXIF編集']);
@@ -2590,6 +2590,27 @@ test('video frame-rate selection defaults to 60 and survives reload', async ({ p
   await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   expect(await page.evaluate(() => window.__selectedVideoFps)).toBe(30);
+});
+
+test('video memory priority persists and reaches the encoder', async ({ page }) => {
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('memory');
+  await page.locator('label[for="video-quality"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('quality');
+  await page.locator('#fileInput').setInputFiles({ name: 'memory.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__preferHardware = options.preferHardware;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(false);
+  await page.locator('label[for="video-memory"]').click();
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(true);
 });
 
 test('video bitrate preserves existing choices and supports source estimates', async ({ page }) => {
@@ -6346,6 +6367,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const mimes = [];
     const captureFps = [];
     let retries = 0;
+    let outputSize = null;
     window.VideoDecoder = undefined;
     const nativeCapture = HTMLCanvasElement.prototype.captureStream;
     HTMLCanvasElement.prototype.captureStream = function (...args) {
@@ -6376,9 +6398,10 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     const blob = await window.FrameEngine.renderVideoFrameWhenReady(
       new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
-      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false, onRetry: () => { retries += 1; } }
+      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false,
+        onRetry: () => { retries += 1; }, onOutputSize: (width, height) => { outputSize = [width, height]; } }
     );
-    return { sizes, mimes, captureFps, retries, type: blob.type, size: blob.size };
+    return { sizes, mimes, captureFps, retries, outputSize, type: blob.type, size: blob.size };
   }, { base64: createWebm().toString('base64') });
   expect(result.retries).toBe(1);
   expect(result.mimes).toEqual(['video/webm', 'video/webm']);
@@ -6386,6 +6409,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
   expect(result.sizes).toHaveLength(2);
   expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
   expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
+  expect(result.outputSize).toEqual(result.sizes[1]);
   expect(result.type).toBe('video/webm');
   expect(result.size).toBeGreaterThan(0);
 });
