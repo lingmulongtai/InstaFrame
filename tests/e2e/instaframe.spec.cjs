@@ -6367,6 +6367,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const mimes = [];
     const captureFps = [];
     let retries = 0;
+    let outputSize = null;
     window.VideoDecoder = undefined;
     const nativeCapture = HTMLCanvasElement.prototype.captureStream;
     HTMLCanvasElement.prototype.captureStream = function (...args) {
@@ -6397,9 +6398,10 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     const blob = await window.FrameEngine.renderVideoFrameWhenReady(
       new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
-      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false, onRetry: () => { retries += 1; } }
+      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false,
+        onRetry: () => { retries += 1; }, onOutputSize: (width, height) => { outputSize = [width, height]; } }
     );
-    return { sizes, mimes, captureFps, retries, type: blob.type, size: blob.size };
+    return { sizes, mimes, captureFps, retries, outputSize, type: blob.type, size: blob.size };
   }, { base64: createWebm().toString('base64') });
   expect(result.retries).toBe(1);
   expect(result.mimes).toEqual(['video/webm', 'video/webm']);
@@ -6407,6 +6409,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
   expect(result.sizes).toHaveLength(2);
   expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
   expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
+  expect(result.outputSize).toEqual(result.sizes[1]);
   expect(result.type).toBe('video/webm');
   expect(result.size).toBeGreaterThan(0);
 });
