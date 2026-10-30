@@ -204,6 +204,51 @@ test('fragmented MP4 recording is finalized with AAC and unchanged video packets
   expect(result.tooShort.message).toMatch(/ended before/);
 });
 
+test('frame-based MP4 export converts Opus input audio to AAC', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.VideoDecoder || !window.VideoEncoder || !window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const file = new File([Uint8Array.from(atob(content), char => char.charCodeAt(0))], 'opus.mp4', { type: 'video/mp4' });
+    const source = new media.Input({ source: new media.BlobSource(file), formats: media.ALL_FORMATS });
+    const nativeRecorder = window.MediaRecorder;
+    window.MediaRecorder = class { constructor() { throw new Error('Unexpected recorder fallback'); } };
+    try {
+      const sourceVideo = await source.getPrimaryVideoTrack();
+      const sourceAudio = await source.getPrimaryAudioTrack();
+      const result = [];
+      for (const frameRate of [30, 60]) {
+        const blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          frameRate, preferredMime: 'video/mp4', videoBitsPerSecond: 4_000_000,
+        });
+        const output = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
+        try {
+          const video = await output.getPrimaryVideoTrack();
+          const audio = await output.getPrimaryAudioTrack();
+          result.push({
+            codec: await audio.getCodec(),
+            videoDuration: await video.computeDuration(),
+            audioOffset: (await audio.getFirstTimestamp()) - (await video.getFirstTimestamp()),
+            sourceOffset: (await sourceAudio.getFirstTimestamp()) - (await sourceVideo.getFirstTimestamp()),
+            audioEnd: (await audio.computeDuration()) - (await video.computeDuration()),
+            sourceEnd: (await sourceAudio.computeDuration()) - (await sourceVideo.computeDuration()),
+          });
+        } finally { output.dispose(); }
+      }
+      return { result };
+    } finally { source.dispose(); window.MediaRecorder = nativeRecorder; }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  for (const track of result.result) {
+    expect(track.codec).toBe('aac');
+    expect(track.videoDuration).toBeGreaterThan(0.9);
+    expect(Math.abs(track.audioOffset - track.sourceOffset)).toBeLessThan(0.08);
+    expect(Math.abs(track.audioEnd - track.sourceEnd)).toBeLessThan(0.08);
+  }
+});
+
 test('30 fps MediaRecorder fallback finalizes its MP4 before reporting success', async ({ page }) => {
   await page.goto('/');
   const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');

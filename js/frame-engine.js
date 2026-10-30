@@ -1776,7 +1776,7 @@ const FrameEngine = (() => {
         conversion = await media.Conversion.init({
           input, output, tracks: 'primary', showWarnings: false,
           copy: { shiftTolerance: 0.1 },
-          audio: { discard: !preserveAudio },
+          audio: { discard: !preserveAudio, ...(isMp4 ? { codec: 'aac' } : {}) },
           video: {
             codec, bitrate, hardwareAcceleration, processedWidth: outWidth, processedHeight: outHeight,
             ...(frameRate === 30 ? { frameRate: 30 } : {}),
