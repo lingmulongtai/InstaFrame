@@ -136,6 +136,15 @@ test('new theme defaults preserve saved appearance preferences', async ({ page }
   await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
 });
 
+test('the sample print displays the supplied photograph and camera settings', async ({ page }) => {
+  const photo = page.locator('.sample-print-photo img');
+  await expect(photo).toBeVisible();
+  await expect.poll(() => photo.evaluate(img => img.complete && img.naturalWidth)).toBe(1440);
+  await expect(page.locator('.sample-print-camera')).toContainText('X100F');
+  await expect(page.locator('.sample-print-camera')).toContainText('FUJIFILM');
+  await expect(page.locator('.sample-print-exif')).toHaveText('23mmf/81/125sISO 1000');
+});
+
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
   await expect(page.locator('#samplePrint')).toBeVisible();
