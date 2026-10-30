@@ -4993,7 +4993,7 @@ function selectItem(id, { switchMobileTab = true } = {}) {
   _flushLiveExifEdit();
   state.selectedItemId = id;
   for (const item of state.items) {
-    if (item.id !== id) item.videoReadController?.abort();
+    if (item.id !== id && !item.exportController) item.videoReadController?.abort();
   }
   for (const [itemId, entry] of _imgLoadEntries) {
     if (itemId === id) continue;
