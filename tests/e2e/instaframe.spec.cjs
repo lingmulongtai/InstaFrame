@@ -1466,7 +1466,7 @@ test('failed video thumbnail drawing releases decoded image and framing canvas',
   ])).toEqual([0, 0]);
 });
 
-test('language switching retranslates persistent media errors', async ({ page }) => {
+test('language switching retranslates preview errors without marking the video failed', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
   await page.locator('#fileInput').setInputFiles({
@@ -1480,13 +1480,33 @@ test('language switching retranslates persistent media errors', async ({ page })
 
   const badge = page.locator('#status-badge-1');
   const previewError = page.locator('#livePreviewError');
-  await expect(badge).toHaveAttribute('aria-label', /cannot be decoded by this browser/);
-  await expect(previewError).toContainText('cannot be decoded by this browser');
+  await expect(badge.locator('.status-dot')).toHaveClass(/pending/);
+  await expect(previewError).toContainText('preview of');
 
   await page.locator('#langToggleBtn').click();
 
-  await expect(badge).toHaveAttribute('aria-label', /このブラウザでデコードできません/);
-  await expect(previewError).toContainText('このブラウザでデコードできません');
+  await expect(badge.locator('.status-dot')).toHaveClass(/pending/);
+  await expect(previewError).toContainText('プレビューを表示できません');
+});
+
+test('video preview drawing failure shows its cause and preserves a completed export', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'preview-drawing.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async () => new Blob(['video'], { type: 'video/webm' });
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    window.FrameEngine.drawVideoFrameSync = () => { throw new Error('simulated canvas drawing failure'); };
+    window.scheduleLivePreview();
+  });
+  await expect(page.locator('#livePreviewError')).toContainText('simulated canvas drawing failure');
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#dl-btn-1')).toBeEnabled();
 });
 
 test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
@@ -3468,6 +3488,30 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
     aborted: 0,
   });
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
+});
+
+test('live video preview waits until the selected thumbnail decoder is released', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__releaseThumbnail = null;
+    window.FrameEngine.captureVideoFrame = () => new Promise(resolve => {
+      window.__releaseThumbnail = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 96;
+        canvas.height = 64;
+        resolve(canvas);
+      };
+    });
+    window.FrameEngine.renderFrameWhenReady = async source => source;
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'serialized-preview.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseThumbnail)).toBe('function');
+  await page.waitForTimeout(250);
+  await expect(page.locator('#livePreviewVideo')).not.toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => window.__releaseThumbnail());
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
 });
 
 test('video export releases and restores the live preview decoder', async ({ page }) => {
@@ -9001,7 +9045,7 @@ test('failed live video previews release source, frame callback, and canvas reso
   await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => !!video._objUrl)).toBe(true);
   await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
   await page.locator('#livePreviewVideo').dispatchEvent('error');
-  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#livePreviewError')).toBeVisible();
   await expect(page.locator('#livePreviewError')).toHaveAttribute('role', 'alert');
   await expect(page.locator('#livePreviewError')).toContainText('error.webm');
@@ -9023,9 +9067,11 @@ test('failed live video previews release source, frame callback, and canvas reso
 
   await page.locator('#preview-3').click();
   await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
-  await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#livePreviewError')).toBeVisible();
   await expect(page.locator('#livePreviewError')).toContainText('timeout.webm');
+  await expect(page.locator('#livePreviewError')).toContainText('readyState=');
+  await expect(page.locator('#livePreviewError')).toContainText('networkState=');
   await expect.poll(resourceState).toEqual({
     activeUrls: 0,
     activeRafs: 0,
@@ -9042,7 +9088,7 @@ test('failed live video previews release source, frame callback, and canvas reso
   await page.locator('#preview-4').click();
   await expect.poll(() => page.locator('#livePreviewVideo').evaluate(video => !!video._objUrl)).toBe(true);
   await page.locator('#livePreviewVideo').dispatchEvent('loadedmetadata');
-  await expect(page.locator('#status-badge-4 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-4 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#livePreviewError')).toContainText('metadata-only.webm');
   await expect.poll(resourceState).toEqual({
     activeUrls: 0,
@@ -9059,8 +9105,9 @@ test('failed live video previews release source, frame callback, and canvas reso
 
   await page.evaluate(() => { window.__failedLiveVideoControl.loadMode = 'throw'; });
   await page.locator('#preview-5').click();
-  await expect(page.locator('#status-badge-5 .status-dot')).toHaveClass(/error/);
+  await expect(page.locator('#status-badge-5 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#livePreviewError')).toContainText('throw.webm');
+  await expect(page.locator('#livePreviewError')).toContainText('Simulated media load failure');
   await expect.poll(resourceState).toEqual({
     activeUrls: 0,
     activeRafs: 0,

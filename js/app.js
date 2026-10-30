@@ -5445,10 +5445,24 @@ function _disposeLiveVideoSource() {
   if (objUrl) URL.revokeObjectURL(objUrl);
 }
 
-function _failLiveVideoPreview(itemId, generation, { timedOut = false } = {}) {
+function _videoPreviewFailureMessage(item) {
+  const failure = item.previewFailure;
+  const message = tf(failure.timedOut ? 'msgVideoPreviewTimeout' : 'msgVideoPreviewFailed', { name: item.file.name });
+  return failure.details ? `${message}\n${tf('msgVideoPreviewDetails', { details: failure.details })}` : message;
+}
+
+function _failLiveVideoPreview(itemId, generation, { timedOut = false, error = null } = {}) {
   const video = document.getElementById('livePreviewVideo');
   if (!video || video._srcId !== itemId || video._previewSourceGeneration !== generation) return;
   const item = state.items.find(candidate => candidate.id === itemId);
+  const mediaError = video.error;
+  const details = [error?.name, error?.code, error?.message, mediaError?.code && `MediaError ${mediaError.code}`, mediaError?.message]
+    .filter(value => (typeof value === 'string' || typeof value === 'number') && String(value).trim())
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(' · ');
+  const readiness = timedOut
+    ? `readyState=${video.readyState}, networkState=${video.networkState}, ${video.videoWidth}×${video.videoHeight}`
+    : '';
   _disposeLiveVideoSource();
 
   const canvas = document.getElementById('livePreviewCanvas');
@@ -5466,10 +5480,10 @@ function _failLiveVideoPreview(itemId, generation, { timedOut = false } = {}) {
   _syncPreviewControlAvailability();
 
   if (!item) return;
-  item.status = 'error';
-  const message = _setVideoFailureError(item, { timedOut });
-  updateItemStatus(item);
-  _setLivePreviewError(message);
+  // A separate thumbnail or export may have decoded successfully. Do not
+  // classify an isolated preview failure as a damaged input or failed export.
+  item.previewFailure = { timedOut, details: [details, readiness].filter(Boolean).join(' · ') };
+  _setLivePreviewError(_videoPreviewFailureMessage(item));
 }
 
 function _armLiveVideoSourceHandlers(video, item) {
@@ -5593,7 +5607,7 @@ function _startVideoCanvasPreview(item) {
   function draw() {
     if (_videoPreviewItemId !== item.id) return; // stopped or superseded
     try { drawFrame(); }
-    catch { _failLiveVideoPreview(item.id, video._previewSourceGeneration); }
+    catch (error) { _failLiveVideoPreview(item.id, video._previewSourceGeneration, { error }); }
   }
 
   draw();
@@ -5633,17 +5647,30 @@ async function renderLivePreview() {
       _disposeLiveVideoSource();
       return;
     }
+    // A thumbnail opens its own video decoder. Wait for it to release the
+    // source before opening the selected video's live preview decoder.
+    if (item.thumbnailPromise) {
+      _disposeLiveVideoSource();
+      await item.thumbnailPromise;
+      if (!_pageResourcesReleased && state.items.includes(item) &&
+          (state.selectedItemId || state.items[0]?.id) === item.id &&
+          !state.items.some(candidate => candidate.isVideo && candidate.status === 'processing')) {
+        scheduleLivePreview();
+      }
+      return;
+    }
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
+      item.previewFailure = null;
       liveVideo._objUrl = URL.createObjectURL(item.file);
       liveVideo._srcId  = item.id;
       const generation = _armLiveVideoSourceHandlers(liveVideo, item);
       try {
         liveVideo.src = liveVideo._objUrl;
         liveVideo.load();
-      } catch {
-        _failLiveVideoPreview(item.id, generation);
+      } catch (error) {
+        _failLiveVideoPreview(item.id, generation, { error });
         return;
       }
     }
@@ -7612,7 +7639,8 @@ function rerenderCards() {
   const livePreviewError = document.getElementById('livePreviewError');
   if (livePreviewError && !livePreviewError.hidden) {
     const selectedItem = getSelectedPreviewItem();
-    if (selectedItem?.status === 'error') _setLivePreviewError(_getItemErrorMessage(selectedItem));
+    if (selectedItem?.previewFailure) _setLivePreviewError(_videoPreviewFailureMessage(selectedItem));
+    else if (selectedItem?.status === 'error') _setLivePreviewError(_getItemErrorMessage(selectedItem));
   }
   updateUI();
 }
