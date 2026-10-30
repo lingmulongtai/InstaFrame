@@ -2591,6 +2591,28 @@ test('video frame-rate selection defaults to 60 and survives reload', async ({ p
   expect(await page.evaluate(() => window.__selectedVideoFps)).toBe(30);
 });
 
+test('video bitrate preserves existing choices and supports source estimates', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_settings', JSON.stringify({ exportVideoBitrate: 8 })));
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('8');
+  await page.locator('label[for="vbr-source"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('source');
+  await page.locator('label[for="vbr-50"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('50');
+  await page.locator('#fileInput').setInputFiles({ name: 'bitrate.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__selectedVideoBitrate = [options.videoBitsPerSecond, options.sourceBitrate];
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__selectedVideoBitrate)).toEqual([50_000_000, false]);
+});
+
 test('invalid persisted enum values cannot break application startup', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -6233,7 +6255,7 @@ test('video recording avoids redrawing between 30 fps output frames', async ({ p
   expect(result.drawnTimes).toEqual([0.01, 0.04, 0.07, 0.1]);
 });
 
-test('60 fps recording follows decoded video frame callbacks', async ({ page }) => {
+test('60 fps recording limits decoded callbacks to the target rate', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const nativeCreate = document.createElement.bind(document);
     const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
@@ -6244,7 +6266,7 @@ test('60 fps recording follows decoded video frame callbacks', async ({ page }) 
     const NativeEncoder = window.VideoEncoder;
     let video;
     const drawnTimes = [];
-    const stats = { callbacks: 0, captureFps: 0 };
+    const stats = { callbacks: 0, captureFps: 0, bitrate: 0 };
     document.createElement = (tag, options) => {
       if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
       video = {
@@ -6281,7 +6303,7 @@ test('60 fps recording follows decoded video frame callbacks', async ({ page }) 
     window.VideoEncoder = undefined;
     window.MediaRecorder = class FakeMediaRecorder {
       static isTypeSupported() { return true; }
-      constructor() { this.state = 'inactive'; }
+      constructor(_stream, options) { this.state = 'inactive'; stats.bitrate = options.videoBitsPerSecond; }
       start() { this.state = 'recording'; }
       stop() {
         this.state = 'inactive';
@@ -6290,8 +6312,10 @@ test('60 fps recording follows decoded video frame callbacks', async ({ page }) 
       }
     };
     try {
-      await window.FrameEngine.renderVideoFrameWhenReady(new File(['video'], 'clip.webm'), {}, {}, {
-        preserveAudio: false, preferredMime: 'video/webm', frameRate: 60,
+      const file = new File(['video'], 'clip.webm');
+      Object.defineProperty(file, 'size', { value: 625_000 });
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm', frameRate: 60, sourceBitrate: true,
       });
       return { ...stats, drawnTimes };
     } finally {
@@ -6305,18 +6329,21 @@ test('60 fps recording follows decoded video frame callbacks', async ({ page }) 
     }
   });
   expect(result.captureFps).toBe(60);
+  expect(result.bitrate).toBe(50_000_000);
   expect(result.callbacks).toBe(10);
-  expect(result.drawnTimes).toEqual([0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]);
+  expect(result.drawnTimes).toEqual([0.01, 0.03, 0.05, 0.07, 0.09]);
 });
 
 test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const sizes = [];
     const mimes = [];
+    const captureFps = [];
     let retries = 0;
     const nativeCapture = HTMLCanvasElement.prototype.captureStream;
     HTMLCanvasElement.prototype.captureStream = function (...args) {
       sizes.push([this.width, this.height]);
+      captureFps.push(args[0]);
       return nativeCapture.apply(this, args);
     };
     window.MediaRecorder = class FakeMediaRecorder {
@@ -6342,12 +6369,13 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     const blob = await window.FrameEngine.renderVideoFrameWhenReady(
       new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
-      { preferredMime: 'video/webm', onRetry: () => { retries += 1; } }
+      { preferredMime: 'video/webm', frameRate: 60, onRetry: () => { retries += 1; } }
     );
-    return { sizes, mimes, retries, type: blob.type, size: blob.size };
+    return { sizes, mimes, captureFps, retries, type: blob.type, size: blob.size };
   }, { base64: createWebm().toString('base64') });
   expect(result.retries).toBe(1);
   expect(result.mimes).toEqual(['video/webm', 'video/webm']);
+  expect(result.captureFps).toEqual([60, 60]);
   expect(result.sizes).toHaveLength(2);
   expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
   expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
