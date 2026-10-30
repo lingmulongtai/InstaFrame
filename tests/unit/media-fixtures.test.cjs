@@ -8,6 +8,10 @@ const root = path.resolve(__dirname, '..', '..');
 const fixturesDoc = fs.readFileSync(path.join(root, 'tests', 'e2e', 'FIXTURES.md'), 'utf8');
 const fixtures = [
   {
+    name: 'fragmented-opus.mp4',
+    sha256: '526497965b907bd055f99e9616da9b9316dafa43404a77eceb8519508091d6fa',
+  },
+  {
     name: 'offline-60fps.mp4',
     sha256: '07fd34240385aed0f58bc79198e07980c89ae15c81dc175d555254aa35e33e68',
   },
