@@ -101,6 +101,14 @@ test('ZIP peak estimate includes retained outputs, duplicate archive bytes, and 
   assert.equal(core.estimateZipPeakBytes(-1, NaN, 10, -3), 20);
 });
 
+test('source video bitrate uses bounded bytes per duration estimates', () => {
+  assert.equal(core.estimateVideoBitrateFromFile(138_000_000, 22), 50_181_818);
+  assert.equal(core.estimateVideoBitrateFromFile(1, 22), 500_000);
+  assert.equal(core.estimateVideoBitrateFromFile(60_000_000, 480), 1_000_000);
+  assert.equal(core.estimateVideoBitrateFromFile(500_000_000, 22), 80_000_000);
+  assert.equal(core.estimateVideoBitrateFromFile(1, 0), null);
+});
+
 test('coordinate labels are deterministic and remain local', () => {
   assert.equal(core.formatCoordinateLabel(35.6762, 139.6503), '35.6762°N, 139.6503°E');
   assert.equal(core.formatCoordinateLabel(-33.8688, 151.2093), '33.8688°S, 151.2093°E');

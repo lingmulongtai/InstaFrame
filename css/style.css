@@ -2631,6 +2631,8 @@ body[data-workspace="empty"] .photos-panel { display: none; }
   text-overflow: ellipsis;
 }
 
+.setting-hint { font-size: 11px; color: var(--text-2); line-height: 1.4; }
+
 .card-error-details { font-size: 12px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .card-actions { display: flex; gap: 2px; flex: none; }
