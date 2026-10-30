@@ -320,7 +320,9 @@ const FrameEngine = (() => {
     grad.addColorStop(0, 'rgba(0,0,0,0)');
     grad.addColorStop(1, 'rgba(0,0,0,0.05)');
     ctx.fillStyle = grad;
-    ctx.fillRect(x, y, w, h);
+    // The gradient is transparent above the bottom edge. Keep a small
+    // transparent margin for fractional coordinates and rasterization.
+    ctx.fillRect(x, Math.max(y, y + h - 8), w, Math.min(h, 8));
   }
 
   function computeImageVerticalLayout(h, topBorder, bottomBorder, imageOffsetY = 0) {
