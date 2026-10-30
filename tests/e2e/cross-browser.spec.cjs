@@ -161,10 +161,15 @@ test('video audio routing keeps native, Mozilla, and Web Audio fallbacks portabl
 
     const run = async nextMode => {
       mode = nextMode;
+      const controller = new AbortController();
       try {
-        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          preserveAudio: true,
+          signal: controller.signal,
+          onRetry: () => controller.abort(),
+        });
       } catch (error) {
-        if (error.message !== 'stop after audio setup') throw error;
+        if (error.name !== 'AbortError') throw error;
       }
     };
     try {
@@ -308,8 +313,8 @@ test('export progress exposes a named meter, cancel control, and focus restorati
       });
     };
   });
-  await page.locator('#generateAllBtn').focus();
-  await page.locator('#generateAllBtn').press('Enter');
+  await page.locator('#downloadAllBtn').focus();
+  await page.locator('#downloadAllBtn').press('Enter');
   await expect(page.locator('#cancelExportBtn')).toBeFocused();
   await expect(page.locator('#exportProgressMeter')).toHaveAttribute('aria-valuenow', /\d+/);
   expect(await page.locator('#exportProgressStatus').evaluate(element => (
@@ -318,7 +323,7 @@ test('export progress exposes a named meter, cancel control, and focus restorati
   await assertNoAxeViolations(page, '#exportProgress');
   await page.locator('#cancelExportBtn').press('Enter');
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect(page.locator('#generateAllBtn')).toBeFocused();
+  await expect(page.locator('#downloadAllBtn')).toBeFocused();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
 });
 
