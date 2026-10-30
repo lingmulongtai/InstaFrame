@@ -26,6 +26,7 @@ export default [
         applyTranslations: 'readonly',
         FrameEngine: 'readonly',
         InstaFrameCore: 'readonly',
+        InstaFrameHeif: 'readonly',
       },
     },
     rules: {
@@ -34,6 +35,12 @@ export default [
       'no-constant-condition': ['error', { checkLoops: false }],
       'no-unused-vars': 'off',
       'no-empty': 'off',
+    },
+  },
+  {
+    files: ['js/heif-worker.js'],
+    languageOptions: {
+      globals: { ...globals.worker, libheif: 'readonly' },
     },
   },
   {
