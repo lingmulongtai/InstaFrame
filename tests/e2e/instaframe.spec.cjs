@@ -9070,6 +9070,8 @@ test('failed live video previews release source, frame callback, and canvas reso
   await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/pending/);
   await expect(page.locator('#livePreviewError')).toBeVisible();
   await expect(page.locator('#livePreviewError')).toContainText('timeout.webm');
+  await expect(page.locator('#livePreviewError')).toContainText('readyState=');
+  await expect(page.locator('#livePreviewError')).toContainText('networkState=');
   await expect.poll(resourceState).toEqual({
     activeUrls: 0,
     activeRafs: 0,

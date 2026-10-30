@@ -5460,6 +5460,9 @@ function _failLiveVideoPreview(itemId, generation, { timedOut = false, error = n
     .filter(value => (typeof value === 'string' || typeof value === 'number') && String(value).trim())
     .filter((value, index, values) => values.indexOf(value) === index)
     .join(' · ');
+  const readiness = timedOut
+    ? `readyState=${video.readyState}, networkState=${video.networkState}, ${video.videoWidth}×${video.videoHeight}`
+    : '';
   _disposeLiveVideoSource();
 
   const canvas = document.getElementById('livePreviewCanvas');
@@ -5479,7 +5482,7 @@ function _failLiveVideoPreview(itemId, generation, { timedOut = false, error = n
   if (!item) return;
   // A separate thumbnail or export may have decoded successfully. Do not
   // classify an isolated preview failure as a damaged input or failed export.
-  item.previewFailure = { timedOut, details };
+  item.previewFailure = { timedOut, details: [details, readiness].filter(Boolean).join(' · ') };
   _setLivePreviewError(_videoPreviewFailureMessage(item));
 }
 
