@@ -5,7 +5,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
-  <meta name="theme-color" content="#e8e5df">
+  <meta name="theme-color" content="#090b0c">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="vendor/fonts/fonts.css">
 
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/workspace.css">
 
 </head>
 <body data-mobile-tab="preview" data-workspace="empty">
@@ -802,6 +803,15 @@
   <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
   <main class="main">
     <h1 class="sr-only" data-i18n="appTitleMain">InstaFrame</h1>
+    <header class="workspace-header" aria-hidden="true">
+      <div class="workspace-heading">
+        <div class="workspace-heading-mark"><span></span></div>
+        <div>
+          <div class="workspace-heading-kicker" data-i18n="appTitleBy">by lingmulongtai</div>
+          <div class="workspace-title">InstaFrame</div>
+        </div>
+      </div>
+    </header>
 
     <!-- Live Preview + Drop Zone -->
     <div class="preview-area mobile-tab-panel" id="dropZone">
