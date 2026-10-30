@@ -31,3 +31,62 @@ test('short landscape keeps an accessible heading without experimental branding'
   await expect(page.locator('body')).not.toContainText('EXPERIMENTAL');
   await expect(page).toHaveTitle('InstaFrame by lingmulongtai');
 });
+
+test('mouse-wheel steps animate in the sidebar while precise and nested scrolling stays native', async ({ page }) => {
+  await page.goto('/');
+  const panel = page.locator('#sidebarScroll');
+  const result = await panel.evaluate(async element => {
+    element.scrollTop = 0;
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    element.dispatchEvent(wheel);
+    const start = element.scrollTop;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return { prevented: wheel.defaultPrevented, start, moving: element.scrollTop };
+  });
+  expect(result.prevented).toBe(true);
+  expect(result.start).toBe(0);
+  expect(result.moving).toBeGreaterThan(0);
+  expect(result.moving).toBeLessThan(120);
+  await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(120);
+  const native = await panel.evaluate(element => {
+    const precise = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 8.5 });
+    element.dispatchEvent(precise);
+    const nested = document.createElement('div');
+    nested.style.cssText = 'height: 40px; overflow-y: auto';
+    const content = document.createElement('div');
+    content.style.height = '200px';
+    nested.append(content);
+    element.append(nested);
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    nested.dispatchEvent(wheel);
+    nested.remove();
+    return { precisePrevented: precise.defaultPrevented, nestedPrevented: wheel.defaultPrevented };
+  });
+  expect(native).toEqual({ precisePrevented: false, nestedPrevented: false });
+});
+
+test('reduced motion leaves mouse wheel scrolling to the browser', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const panel = page.locator('#sidebarScroll');
+  const prevented = await panel.evaluate(element => {
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    element.dispatchEvent(wheel);
+    return wheel.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+});
+
+
+test('desktop wheel scrolls the sidebar in both directions', async ({ page }) => {
+  await page.goto('/');
+  const panel = page.locator('#sidebarScroll');
+  await panel.hover({ position: { x: 8, y: 30 } });
+  await page.mouse.wheel(0, 120);
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(240);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(120);
+});
+
+
