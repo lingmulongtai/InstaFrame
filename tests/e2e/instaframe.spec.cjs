@@ -1570,6 +1570,35 @@ test('removing a video cancels a stalled reread and cannot retain its copy', asy
   await expect(page.locator('#imageGrid .image-card')).toHaveCount(0);
 });
 
+test('selecting another item does not cancel a reread needed by an active export', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'recovering.webm', mimeType: 'video/webm', buffer: createWebm() },
+    { name: 'other.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+  ]);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(async () => {
+    const item = eval('state.items[0]');
+    const bytes = await item.file.arrayBuffer();
+    item.file.slice = () => ({ arrayBuffer: () => new Promise(resolve => { window.__finishRead = () => resolve(bytes); }) });
+    window.FrameEngine.renderVideoFrameWhenReady = async source => {
+      window.__exportUsedCopy = source === item.videoReadSource;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2 }) });
+    video.dispatchEvent(new Event('error'));
+    window.__exportDuringRead = window.generateItem(item);
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/processing/);
+  await page.locator('#preview-2').click();
+  expect(await page.evaluate(() => eval('state.items[0].videoReadController.signal.aborted'))).toBe(false);
+  await page.evaluate(() => window.__finishRead());
+  await page.evaluate(() => window.__exportDuringRead);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__exportUsedCopy)).toBe(true);
+});
+
 test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'settings-video.webm',
