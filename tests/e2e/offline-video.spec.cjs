@@ -254,6 +254,73 @@ test('frame-by-frame output scales to encoder support and enforces its byte limi
   expect(result.code).toBe('MEDIA_RESOURCE_LIMIT');
 });
 
+test('memory-priority encoding chooses a supported hardware size and retries without it on failure', async ({ page }) => {
+  await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({
+    contentType: 'application/javascript',
+    body: `export const ALL_FORMATS = [];
+      export class BlobSource { constructor() {} }
+      export class Input {
+        constructor() { this.video = { canDecode: async () => true, getDisplayWidth: async () => 320, getDisplayHeight: async () => 180 }; }
+        async getPrimaryVideoTrack() { return this.video; }
+        async getPrimaryAudioTrack() { return null; }
+        async computeDuration() { return 1; }
+        dispose() {}
+      }
+      export async function canEncodeVideo(_codec, { width, hardwareAcceleration }) {
+        return width <= (hardwareAcceleration === 'prefer-hardware' ? 200 : 400);
+      }
+      export class Mp4OutputFormat {}
+      export class StreamTarget { constructor(writable) { this.writable = writable; } }
+      export class Output { constructor({ target }) { this.target = target; } }
+      export class Conversion {
+        static async init({ input, output, video }) { return new Conversion(input, output, video); }
+        constructor(input, output, video) { this.output = output; this.video = video; this.isValid = true; this.utilizedTracks = [input.video]; this.state = 'idle'; }
+        async execute() {
+          this.state = 'executing';
+          window.__accelerationModes.push(this.video.hardwareAcceleration);
+          if (window.__failHardware && this.video.hardwareAcceleration === 'prefer-hardware') {
+            this.onProgress?.(0.5); throw new Error('Hardware encoder failed');
+          }
+          const writer = this.output.target.writable.getWriter();
+          await writer.write({ position: 0, data: new Uint8Array([1, 2, 3]) });
+          await writer.close(); this.state = 'done';
+        }
+        async cancel() { this.state = 'canceled'; }
+      }`,
+  }));
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    await document.fonts.ready;
+    window.VideoDecoder ||= class {};
+    window.VideoEncoder ||= class {};
+    window.VideoFrame ||= class {};
+    const file = new File([new Uint8Array([0])], 'fixture.mp4', { type: 'video/mp4' });
+    const run = async fail => {
+      window.__failHardware = fail;
+      window.__accelerationModes = [];
+      const scales = [], progress = [];
+      let fallbacks = 0;
+      const blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preferredMime: 'video/mp4', frameRate: 60, videoBitsPerSecond: 1, preferHardware: true,
+        onAutoScale: (width, height) => scales.push({ width, height }),
+        onMemoryFallback: () => { fallbacks += 1; }, onProgress: value => progress.push(value),
+      });
+      return { scales, progress, fallbacks, modes: window.__accelerationModes, size: blob.size };
+    };
+    return { hardware: await run(false), retry: await run(true) };
+  });
+  expect(result.hardware.modes).toEqual(['prefer-hardware']);
+  expect(result.hardware.fallbacks).toBe(0);
+  expect(result.hardware.scales).toHaveLength(1);
+  expect(result.hardware.scales[0].width).toBeLessThanOrEqual(200);
+  expect(result.hardware.scales[0].width).toBeGreaterThan(180);
+  expect(result.retry.modes).toEqual(['prefer-hardware', 'no-preference']);
+  expect(result.retry.fallbacks).toBe(1);
+  expect(result.retry.scales).toEqual([]);
+  expect(result.retry.progress).toEqual([0.5, 0, 1]);
+  expect(result.retry.size).toBe(3);
+});
+
 test('realtime fallback refuses silent output when audio capture is unavailable', async ({ page }) => {
   await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({
     contentType: 'application/javascript',
