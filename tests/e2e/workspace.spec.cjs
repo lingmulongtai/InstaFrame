@@ -89,6 +89,17 @@ test('desktop wheel scrolls the sidebar in both directions', async ({ page }) =>
   await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(120);
 });
 
+test('reversing the wheel stops the previous direction immediately', async ({ page }) => {
+  await page.goto('/');
+  const panel = page.locator('#sidebarScroll');
+  await panel.evaluate(element => {
+    element.scrollTop = 300;
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 300 }));
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100 }));
+  });
+  await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(200);
+});
+
 test('closed font picker does no positioning work during sidebar scrolling', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => {

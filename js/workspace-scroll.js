@@ -48,7 +48,10 @@
       const distance = mode === WheelEvent.DOM_DELTA_LINE ? y * 16 :
         mode === WheelEvent.DOM_DELTA_PAGE ? y * panel.clientHeight : y;
       const limit = Math.max(0, panel.scrollHeight - panel.clientHeight);
-      const next = Math.min(limit, Math.max(0, (frame ? target : panel.scrollTop) + distance));
+      const reversed = frame && Math.sign(distance) !== Math.sign(target - panel.scrollTop);
+      if (reversed) position = panel.scrollTop;
+      const origin = frame && !reversed ? target : panel.scrollTop;
+      const next = Math.min(limit, Math.max(0, origin + distance));
       if (next === panel.scrollTop && !frame) return;
       event.preventDefault();
       target = next;
