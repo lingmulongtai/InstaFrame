@@ -183,6 +183,15 @@
       Math.floor(safe(entryCount)) * 2048;
   }
 
+  // Approximate the input's total bitrate (video + audio + container overhead).
+  // Use a bounded target, not a claim of lossless or equal-quality encoding.
+  function estimateVideoBitrateFromFile(fileSize, duration) {
+    const bytes = Number(fileSize);
+    const seconds = Number(duration);
+    if (!Number.isFinite(bytes) || bytes <= 0 || !Number.isFinite(seconds) || seconds <= 0) return null;
+    return Math.round(Math.max(500_000, Math.min(80_000_000, bytes * 8 / seconds)));
+  }
+
   function formatCoordinateLabel(latitude, longitude) {
     const lat = Number(latitude);
     const lon = Number(longitude);
@@ -328,6 +337,7 @@
     getBudgetedPreviewBackingScale,
     getVisiblePreviewDetailPlan,
     estimateZipPeakBytes,
+    estimateVideoBitrateFromFile,
     formatCoordinateLabel,
     parseExposureSeconds,
     formatExposureTime,

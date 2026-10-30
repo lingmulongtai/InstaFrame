@@ -1181,6 +1181,7 @@ const FrameEngine = (() => {
     onProgress,
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     videoBitsPerSecond = 10_000_000,
+    sourceBitrate = false,
     maxOutputBytes = MAX_ESTIMATED_VIDEO_BYTES,
     metadataTimeoutMs = VIDEO_METADATA_GUARD_MS,
     progressTimeoutMs = VIDEO_PROGRESS_GUARD_MS,
@@ -1265,7 +1266,10 @@ const FrameEngine = (() => {
           const layout = computeFrameLayout(W, H, settings, exif);
           const { canvasW, canvasH } = layout;
           const duration = video.duration || 0;
-          if (duration > 0 && duration * videoBitsPerSecond / 8 > maxOutputBytes) {
+          const effectiveBitrate = sourceBitrate
+            ? (InstaFrameCore.estimateVideoBitrateFromFile(file.size, duration) || videoBitsPerSecond)
+            : videoBitsPerSecond;
+          if (duration > 0 && duration * effectiveBitrate / 8 > maxOutputBytes) {
             throw resourceLimitError();
           }
           const fps        = frameRate;
@@ -1308,7 +1312,7 @@ const FrameEngine = (() => {
             codec: 'vp09.00.10.08',
             width: canvasW,
             height: canvasH,
-            bitrate: videoBitsPerSecond,
+            bitrate: effectiveBitrate,
             latencyMode: 'quality',
           });
 
@@ -1502,6 +1506,7 @@ const FrameEngine = (() => {
     onProgress,
     preferredMime,
     videoBitsPerSecond = 10_000_000,
+    sourceBitrate = false,
     preserveAudio = true,
     maxOutputBytes,
     metadataTimeoutMs,
@@ -1524,6 +1529,7 @@ const FrameEngine = (() => {
         return await _renderVideoWebCodecs(file, exif, settings, {
           onProgress,
           videoBitsPerSecond,
+          sourceBitrate,
           frameRate: outputFrameRate,
           maxOutputBytes: outputByteLimit,
           metadataTimeoutMs,
@@ -1674,8 +1680,11 @@ const FrameEngine = (() => {
         const layout = computeFrameLayout(W, H, settings, exif);
         const { canvasW, canvasH } = layout;
         const duration = video.duration || 0;
+        const effectiveBitrate = sourceBitrate
+          ? (InstaFrameCore.estimateVideoBitrateFromFile(file.size, duration) || videoBitsPerSecond)
+          : videoBitsPerSecond;
         try {
-          if (duration > 0 && duration * videoBitsPerSecond / 8 > outputByteLimit) {
+          if (duration > 0 && duration * effectiveBitrate / 8 > outputByteLimit) {
             throw resourceLimitError();
           }
         } catch (error) {
@@ -1724,7 +1733,7 @@ const FrameEngine = (() => {
         if (!mimeType) { fail(new Error('Video export is not supported by this browser')); return; }
 
         try {
-          recorder = new MediaRecorder(outputStream, { mimeType, videoBitsPerSecond });
+          recorder = new MediaRecorder(outputStream, { mimeType, videoBitsPerSecond: effectiveBitrate });
         } catch (error) {
           fail(videoEncoderError(error));
           return;
@@ -1733,6 +1742,7 @@ const FrameEngine = (() => {
         let recordedBytes = 0;
         let lastMediaTime = -1;
         let lastDrawnFrame = -1;
+        let lastDrawnMediaTime = -Infinity;
         recorder.ondataavailable = event => {
           if (event.data.size <= 0 || settled) return;
           recordedBytes += event.data.size;
@@ -1782,9 +1792,13 @@ const FrameEngine = (() => {
             assertNotAborted(signal);
             const mediaTime = Number(metadata?.mediaTime ?? video.currentTime) || 0;
             const frameIndex = Math.floor(mediaTime * outputFrameRate);
-            if (useVideoFrames || frameIndex !== lastDrawnFrame) {
+            const shouldDraw = useVideoFrames
+              ? mediaTime - lastDrawnMediaTime >= 1 / outputFrameRate - 0.002
+              : frameIndex !== lastDrawnFrame;
+            if (shouldDraw) {
               drawVideoFrameSync(ctx, video, exif, settings, layout);
               lastDrawnFrame = frameIndex;
+              lastDrawnMediaTime = mediaTime;
             }
             if (mediaTime > lastMediaTime) {
               lastMediaTime = mediaTime;

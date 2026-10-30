@@ -49,7 +49,7 @@ const state = {
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
     exportVideoFormat:   '',       // resolved dynamically from supported MIME types
     exportVideoFps:      60,       // target fps; actual output depends on browser performance
-    exportVideoBitrate:  8,        // Mbps
+    exportVideoBitrate:  'source', // source estimate or Mbps
     // ── Spatial photos ───────────────────────────────────────────
     exportSpatialMode:   'heic',   // 'heic' | 'sbs' | '2d'
     spatialDepth:        1.0,      // frame pop-out, % of photo width
@@ -2781,7 +2781,8 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
         error.code = 'VIDEO_EXPORT_UNAVAILABLE';
         throw error;
       }
-      const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
+      const sourceBitrate = state.settings.exportVideoBitrate === 'source';
+      const bitrate = sourceBitrate ? 8_000_000 : state.settings.exportVideoBitrate * 1_000_000;
       // Finished photo frames are cheap to re-render; give their memory to the video.
       _evictPhotoOutputs(item, MAX_RETAINED_OUTPUT_BYTES);
       const maxOutputBytes = MAX_RETAINED_OUTPUT_BYTES - _retainedOutputBytes(item);
@@ -2791,6 +2792,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
         {
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
+          sourceBitrate,
           frameRate: state.settings.exportVideoFps,
           maxOutputBytes,
           onRetry: () => {
@@ -3683,7 +3685,10 @@ function restoreSettings() {
   // Video bitrate
   if (saved.exportVideoBitrate != null) {
     const r = _findRadioByValue('exportVideoBitrate', saved.exportVideoBitrate);
-    if (r) r.checked = true;
+    if (r) {
+      r.checked = true;
+      state.settings.exportVideoBitrate = r.value === 'source' ? 'source' : Number(r.value);
+    }
   }
 }
 
@@ -6204,8 +6209,10 @@ function _estimateItemOutput(item) {
   let bytes = null;
   let spatialMode = null;
   if (item.isVideo) {
-    const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
-    if (item.sourceDuration > 0) bytes = item.sourceDuration * bitrate / 8;
+    const bitrate = state.settings.exportVideoBitrate === 'source'
+      ? InstaFrameCore.estimateVideoBitrateFromFile(item.file.size, item.sourceDuration)
+      : state.settings.exportVideoBitrate * 1_000_000;
+    if (item.sourceDuration > 0 && bitrate) bytes = item.sourceDuration * bitrate / 8;
   } else {
     bytes = _estimatePhotoBytes(item, size.width, size.height, size.sourceWidth, size.sourceHeight);
     if (_isSpatialItem(item)) {
@@ -6525,7 +6532,7 @@ function onVideoExportSettingChange() {
   const r = document.querySelector('input[name="exportVideoFormat"]:checked');
   state.settings.exportVideoFormat = r ? r.value : '';
   const vbr = document.querySelector('input[name="exportVideoBitrate"]:checked');
-  state.settings.exportVideoBitrate = vbr ? parseInt(vbr.value, 10) : 8;
+  state.settings.exportVideoBitrate = !vbr || vbr.value === 'source' ? 'source' : Number(vbr.value);
   const fps = document.querySelector('input[name="exportVideoFps"]:checked');
   state.settings.exportVideoFps = fps && fps.value === '30' ? 30 : 60;
   _recordSettingsHistory(before);
