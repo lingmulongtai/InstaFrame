@@ -50,6 +50,7 @@ const state = {
     exportVideoFormat:   '',       // resolved dynamically from supported MIME types
     exportVideoFps:      60,       // target fps; actual output depends on browser performance
     exportVideoBitrate:  'source', // source estimate or Mbps
+    videoMemoryMode:     'memory', // prefer hardware, or preserve the largest output size
     // ── Spatial photos ───────────────────────────────────────────
     exportSpatialMode:   'heic',   // 'heic' | 'sbs' | '2d'
     spatialDepth:        1.0,      // frame pop-out, % of photo width
@@ -2769,6 +2770,8 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   item.progress = 0;
   item.videoReduced = false;
   item.videoRealtimeFallback = false;
+  item.videoMemoryFallback = false;
+  item.videoOutputSize = null;
   updateItemStatus(item);
 
   try {
@@ -2796,6 +2799,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           videoBitsPerSecond: bitrate,
           sourceBitrate,
           frameRate: state.settings.exportVideoFps,
+          preferHardware: state.settings.videoMemoryMode === 'memory',
           maxOutputBytes,
           onRetry: () => {
             item.videoReduced = true;
@@ -2806,7 +2810,12 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           },
           onAutoScale: (width, height) => {
             item.videoReduced = true;
+            item.videoOutputSize = { width, height };
             showToast(tf('msgVideoEncoderScaled', { width, height }), 'warn');
+          },
+          onMemoryFallback: () => {
+            item.videoMemoryFallback = true;
+            showToast(t('msgVideoMemoryFallback'), 'warn');
           },
           onRealtimeFallback: () => {
             item.videoRealtimeFallback = true;
@@ -3696,6 +3705,10 @@ function restoreSettings() {
     const r = _findRadioByValue('exportVideoFps', saved.exportVideoFps);
     if (r) { r.checked = true; state.settings.exportVideoFps = Number(r.value); }
   }
+  if (saved.videoMemoryMode != null) {
+    const r = _findRadioByValue('videoMemoryMode', saved.videoMemoryMode);
+    if (r) { r.checked = true; state.settings.videoMemoryMode = r.value; }
+  }
   // Video bitrate
   if (saved.exportVideoBitrate != null) {
     const r = _findRadioByValue('exportVideoBitrate', saved.exportVideoBitrate);
@@ -3894,6 +3907,8 @@ function _syncDomWithStateSettings() {
   if (bitrate) bitrate.checked = true;
   const fps = _findRadioByValue('exportVideoFps', s.exportVideoFps);
   if (fps) fps.checked = true;
+  const memoryMode = _findRadioByValue('videoMemoryMode', s.videoMemoryMode);
+  if (memoryMode) memoryMode.checked = true;
 
   _syncPhotoQualityAvailability(s.exportPhotoFormat);
 
@@ -5061,6 +5076,7 @@ function _releaseItemOutput(item) {
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
   item.videoBlob = null;
+  item.videoOutputSize = null;
 }
 
 /** Load image for an item, sharing in-flight decodes and keeping safe results for re-use. */
@@ -6050,6 +6066,8 @@ function updateItemStatus(item) {
     const statusKey = item.status === 'error' ? 'statusErrorDetails'
       : item.status === 'done' && item.videoRealtimeFallback
         ? (item.videoReduced ? 'statusDoneReducedRealtime' : 'statusDoneRealtime')
+        : item.status === 'done' && item.videoMemoryFallback
+          ? (item.videoReduced ? 'statusDoneReducedMemoryFallback' : 'statusDoneMemoryFallback')
         : item.status === 'done' && item.videoReduced ? 'statusDoneReduced'
           : `status${capitalize(item.status)}`;
     text.textContent = t(statusKey);
@@ -6221,6 +6239,9 @@ function _estimateItemOutput(item) {
       );
   } catch (_) {
     return { tooLarge: true };
+  }
+  if (item.isVideo && item.status === 'done' && item.videoOutputSize) {
+    size = { ...size, ...item.videoOutputSize, scaled: true };
   }
   let bytes = null;
   let spatialMode = null;
@@ -6507,7 +6528,7 @@ function initVideoFormatOptions() {
     candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
   }
 
-  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"]').forEach(control => {
+  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"], input[name="videoMemoryMode"]').forEach(control => {
     control.disabled = candidates.length === 0;
   });
   if (!candidates.length) {
@@ -6551,6 +6572,8 @@ function onVideoExportSettingChange() {
   state.settings.exportVideoBitrate = !vbr || vbr.value === 'source' ? 'source' : Number(vbr.value);
   const fps = document.querySelector('input[name="exportVideoFps"]:checked');
   state.settings.exportVideoFps = fps && fps.value === '30' ? 30 : 60;
+  const memoryMode = document.querySelector('input[name="videoMemoryMode"]:checked');
+  state.settings.videoMemoryMode = memoryMode?.value === 'quality' ? 'quality' : 'memory';
   _recordSettingsHistory(before);
   saveSettings();
   // Video format change requires re-encoding → mark video items as pending
@@ -7215,7 +7238,7 @@ function setupSettingsListeners() {
   );
 
   // ── Export: video bitrate (format wired in initVideoFormatOptions) ────────
-  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"]').forEach(r => {
+  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"], input[name="videoMemoryMode"]').forEach(r => {
     r.addEventListener('change', onVideoExportSettingChange);
   });
 
