@@ -719,6 +719,18 @@
           </div>
         </div>
 
+        <!-- Target video frame rate -->
+        <div class="setting-row">
+          <div class="setting-label" id="exportVideoFpsLabel" data-i18n="exportVideoFps">Frame rate</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoFpsLabel" aria-describedby="videoFpsHint">
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-60" value="60" checked><label for="vfps-60">60 fps</label></div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-30" value="30"><label for="vfps-30">30 fps</label></div>
+            </div>
+            <div class="setting-hint" id="videoFpsHint" data-i18n="videoFpsHint">Actual frame rate depends on the device and browser.</div>
+          </div>
+        </div>
+
         <!-- Video bitrate -->
         <div class="setting-row">
           <div class="setting-label" id="exportVideoBitrateLabel" data-i18n="exportBitrateLabel">Bitrate</div>

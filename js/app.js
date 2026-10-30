@@ -48,6 +48,7 @@ const state = {
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
     exportVideoFormat:   '',       // resolved dynamically from supported MIME types
+    exportVideoFps:      60,       // target fps; actual output depends on browser performance
     exportVideoBitrate:  8,        // Mbps
     // ── Spatial photos ───────────────────────────────────────────
     exportSpatialMode:   'heic',   // 'heic' | 'sbs' | '2d'
@@ -2790,6 +2791,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
         {
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
+          frameRate: state.settings.exportVideoFps,
           maxOutputBytes,
           onRetry: () => {
             item.videoReduced = true;
@@ -3674,6 +3676,10 @@ function restoreSettings() {
   }
   // Video format: defer to after initVideoFormatOptions runs (handled there)
   state.settings.exportVideoFormat = saved.exportVideoFormat || '';
+  if (saved.exportVideoFps != null) {
+    const r = _findRadioByValue('exportVideoFps', saved.exportVideoFps);
+    if (r) { r.checked = true; state.settings.exportVideoFps = Number(r.value); }
+  }
   // Video bitrate
   if (saved.exportVideoBitrate != null) {
     const r = _findRadioByValue('exportVideoBitrate', saved.exportVideoBitrate);
@@ -3867,6 +3873,8 @@ function _syncDomWithStateSettings() {
   if (videoFmt) videoFmt.checked = true;
   const bitrate = document.querySelector(`input[name="exportVideoBitrate"][value="${s.exportVideoBitrate}"]`);
   if (bitrate) bitrate.checked = true;
+  const fps = _findRadioByValue('exportVideoFps', s.exportVideoFps);
+  if (fps) fps.checked = true;
 
   _syncPhotoQualityAvailability(s.exportPhotoFormat);
 
@@ -6476,7 +6484,7 @@ function initVideoFormatOptions() {
     candidates.push({ label: 'WebM', value: 'webm', mime: 'video/webm' });
   }
 
-  document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(control => {
+  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"]').forEach(control => {
     control.disabled = candidates.length === 0;
   });
   if (!candidates.length) {
@@ -6518,6 +6526,8 @@ function onVideoExportSettingChange() {
   state.settings.exportVideoFormat = r ? r.value : '';
   const vbr = document.querySelector('input[name="exportVideoBitrate"]:checked');
   state.settings.exportVideoBitrate = vbr ? parseInt(vbr.value, 10) : 8;
+  const fps = document.querySelector('input[name="exportVideoFps"]:checked');
+  state.settings.exportVideoFps = fps && fps.value === '30' ? 30 : 60;
   _recordSettingsHistory(before);
   saveSettings();
   // Video format change requires re-encoding → mark video items as pending
@@ -7182,7 +7192,7 @@ function setupSettingsListeners() {
   );
 
   // ── Export: video bitrate (format wired in initVideoFormatOptions) ────────
-  document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(r => {
+  document.querySelectorAll('input[name="exportVideoBitrate"], input[name="exportVideoFps"]').forEach(r => {
     r.addEventListener('change', onVideoExportSettingChange);
   });
 
