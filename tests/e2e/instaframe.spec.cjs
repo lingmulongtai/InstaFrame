@@ -2215,6 +2215,7 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   const undo = page.locator('#undoEditBtn');
   const redo = page.locator('#redoEditBtn');
   const initialPhotoQuality = await page.locator('#photoQualityRange').inputValue();
+  const initialVideoBitrate = await page.locator('input[name="exportVideoBitrate"]:checked').inputValue();
 
   await page.locator('label[for="bg-blur"]').click();
   await undo.click();
@@ -2237,7 +2238,7 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   await page.locator('label[for="vbr-16"]').click();
   await expect(redo).toBeDisabled();
   await undo.click();
-  await expect(page.locator('#vbr-8')).toBeChecked();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue(initialVideoBitrate);
 });
 
 test('redo cannot restore a map overlay after location access is revoked', async ({ page }) => {
