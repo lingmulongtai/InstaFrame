@@ -2192,7 +2192,7 @@ const FrameEngine = (() => {
             if (!video.ended && !video.paused) {
               scheduleFrame();
             } else if (video.ended) {
-              if (duration > 0 && mediaTime < duration - Math.max(0.25, duration * 0.01)) {
+              if (duration > 0 && video.currentTime < duration - Math.max(0.25, duration * 0.01)) {
                 const error = new Error('Video playback ended before the source ended');
                 error.code = 'VIDEO_RECORDING_INCOMPLETE';
                 fail(error);
