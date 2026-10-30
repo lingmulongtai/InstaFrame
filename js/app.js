@@ -1850,6 +1850,7 @@ function openFontPicker() {
   _setFontPickerPreviewing(true);
   list.hidden = false;
   button.setAttribute('aria-expanded', 'true');
+  document.getElementById('sidebarScroll')?.addEventListener('scroll', _positionFontPickerList, { passive: true });
   _positionFontPickerList();
   _setFontPickerActive(button.value);
 }
@@ -1859,6 +1860,7 @@ function closeFontPicker({ restoreFocus = false } = {}) {
   const list = document.getElementById('fontFamilyList');
   if (!_fontPickerOpen) return;
   _fontPickerOpen = false;
+  document.getElementById('sidebarScroll')?.removeEventListener('scroll', _positionFontPickerList);
   if (list) list.hidden = true;
   button?.setAttribute('aria-expanded', 'false');
   button?.removeAttribute('aria-activedescendant');
@@ -1965,7 +1967,6 @@ function setupFontPicker() {
     if (_fontPickerOpen && !event.target.closest('#fontPicker')) closeFontPicker();
   }, true);
   window.addEventListener('resize', () => closeFontPicker());
-  document.getElementById('sidebarScroll')?.addEventListener('scroll', () => _positionFontPickerList(), { passive: true });
   document.addEventListener('instaframe:languagechange', () => buildFontSelect());
 }
 
