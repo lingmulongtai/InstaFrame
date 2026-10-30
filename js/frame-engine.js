@@ -109,19 +109,28 @@ const FrameEngine = (() => {
     'Source Serif 4':     "'Source Serif 4', Georgia, serif",
   };
 
+  /**
+   * Font shorthands for each caption part. Each part has its own bold and
+   * italic switch; regular weights keep the light label and EXIF line.
+   */
+  function captionFonts(settings, cameraSize, exifSize, stack) {
+    const font = (italic, bold, regularWeight, size) =>
+      `${italic ? 'italic ' : ''}${bold ? 700 : regularWeight} ${size}px ${stack}`;
+    return {
+      label: font(settings.shotOnItalic, settings.shotOnBold, 300, cameraSize),
+      model: font(settings.modelItalic, settings.modelBold, 500, cameraSize),
+      maker: font(settings.makerItalic, settings.makerBold, 400, cameraSize),
+      exif: font(settings.exifItalic, settings.exifBold, 300, exifSize),
+    };
+  }
+
   async function loadFrameFonts(settings, signal = null) {
     assertNotAborted(signal);
     if (!document.fonts) return;
     const family = settings.fontFamily || 'Inter';
     const fam = `'${family}'`;
-    const cameraStyle = settings.cameraNameItalic ? 'italic ' : '';
-    const exifStyle = settings.exifItalic ? 'italic ' : '';
-    const specs = new Set([
-      `${cameraStyle}${settings.cameraNameBold ? '700' : '300'} 16px ${fam}`,
-      `${cameraStyle}${settings.cameraNameBold ? '700' : '500'} 16px ${fam}`,
-      `${cameraStyle}400 16px ${fam}`,
-      `${exifStyle}300 16px ${fam}`,
-    ]);
+    const fonts = captionFonts(settings, 16, 16, fam);
+    const specs = new Set([fonts.label, fonts.model, fonts.maker, fonts.exif]);
     const loads = [...specs].map(spec => {
       try { return document.fonts.load(spec); }
       catch { return Promise.resolve(); }
@@ -150,70 +159,82 @@ const FrameEngine = (() => {
 
   /**
    * Core synchronous renderer — works at whatever resolution img was loaded at.
+   * Draws the final canvas in one pass: aspect-ratio and padding space is part
+   * of the same surface, so a blur background is one continuous blur of the
+   * source photo instead of a blur of the already framed (captioned) image.
    */
-  function renderFrame(img, exif, settings, mapOverlayImg = null) {
-    const {
-      frameColor       = '#F0F0F0',
-      thicknessScale   = 1.0,
-      showLocation     = false,
-      locationPosition = 'below-exif',
-    } = settings;
-
-    const W = img.naturalWidth || img.videoWidth || img.width;
-    const H = img.naturalHeight || img.videoHeight || img.height;
-    const isPortrait = H > W;
-
-    const baseBorder      = Math.min(W, H) * 0.05 * 1.2 * thicknessScale;
-    const sideBorder      = baseBorder * 0.5;
-    const extraHeight     = H * 0.10 * thicknessScale;
-    const locationExtra   = (showLocation && exif.location && locationPosition === 'below-exif')
-                            ? H * 0.038 * thicknessScale : 0;
-    const bottomBorder    = sideBorder * 4 + extraHeight + locationExtra;
-    const pf           = isPortrait ? 0.75 : 1.0;
-    const sB = sideBorder   * pf;
-    const tB = sideBorder   * pf;
-    const bB = bottomBorder * pf;
-    const imageLayout = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
-
-    const canvasW = Math.round(W + sB * 2);
-    const canvasH = imageLayout.canvasH;
-    assertSafeCanvasSize(canvasW, canvasH);
+  /**
+   * eyeShift (stereo eyes only): horizontal offset of the photo behind the
+   * frame's window, as a fraction of the photo width. Opposite signs for the
+   * two eyes place the frame in front of the picture.
+   */
+  function renderFrame(img, exif, settings, mapOverlayImg = null, {
+    eyeShift = 0, sourceWidth = null, sourceHeight = null,
+  } = {}) {
+    const W = sourceWidth || img.naturalWidth || img.videoWidth || img.width;
+    const H = sourceHeight || img.naturalHeight || img.videoHeight || img.height;
+    const layout = computeFrameLayout(W, H, settings, exif);
 
     const canvas = document.createElement('canvas');
-    canvas.width  = canvasW;
-    canvas.height = canvasH;
+    canvas.width  = layout.canvasW;
+    canvas.height = layout.canvasH;
     try {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas rendering is unavailable');
-
-      if (settings.frameBackground === 'blur') {
-        drawBlurBackground(ctx, img, canvasW, canvasH, settings);
-      } else {
-        ctx.fillStyle = frameColor;
-        ctx.fillRect(0, 0, canvasW, canvasH);
-      }
-      drawImageAtY(ctx, img, sB, imageLayout.imageTop, W, H);
-      drawInnerShadow(ctx, sB, imageLayout.imageTop, W, H);
-
-      // Map overlay (Passage-style): drawn in the bottom-right corner of the photo
-      if (mapOverlayImg && settings.showMapOverlay) {
-        drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageLayout.imageTop, W, H });
-      }
-
-      drawExifText(ctx, exif, settings, {
-        canvasW, canvasH,
-        imageBottom: imageLayout.imageBottom,
-        bottomAreaHeight: bB,
-        isPortrait,
-        frameColor,
-      });
-
+      drawFrameBackground(ctx, img, settings, layout);
+      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, eyeShift);
+      canvas.photoPlacement = photoPlacement(layout, eyeShift);
       return canvas;
     } catch (error) {
       canvas.width = 0;
       canvas.height = 0;
       throw error;
     }
+  }
+
+  /** Fill the whole output surface, including ratio and padding space. */
+  function drawFrameBackground(ctx, src, settings, layout) {
+    if (settings.frameBackground === 'blur') {
+      drawBlurBackground(ctx, src, layout.canvasW, layout.canvasH, settings);
+    } else {
+      ctx.fillStyle = layout.frameColor;
+      ctx.fillRect(0, 0, layout.canvasW, layout.canvasH);
+    }
+  }
+
+  /**
+   * Draw the photo, its shadow, the map overlay and the caption at the frame's
+   * position inside the output. Returns the caption's layout issues.
+   */
+  function drawFrameContent(ctx, src, exif, settings, layout, mapOverlayImg = null, eyeShift = 0) {
+    const { W, H, sB, imageTop, imageBottom, bB, isPortrait, frameColor } = layout;
+    const issues = [];
+    ctx.save();
+    try {
+      ctx.translate(layout.frameX, layout.frameY);
+      // Keep the caption inside the frame exactly as an unpadded export would.
+      ctx.beginPath();
+      ctx.rect(0, 0, layout.baseCanvasW, layout.baseCanvasH);
+      ctx.clip();
+      if (eyeShift) drawWindowedPhoto(ctx, src, sB, imageTop, W, H, eyeShift * W);
+      else drawImageAtY(ctx, src, sB, imageTop, W, H);
+      drawInnerShadow(ctx, sB, imageTop, W, H);
+      if (mapOverlayImg && settings.showMapOverlay) {
+        drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageTop, W, H });
+      }
+      drawExifText(ctx, exif || {}, settings, {
+        canvasW: layout.baseCanvasW,
+        canvasH: layout.baseCanvasH,
+        imageBottom,
+        bottomAreaHeight: bB,
+        isPortrait,
+        frameColor,
+        issues,
+      });
+    } finally {
+      ctx.restore();
+    }
+    return issues;
   }
 
   /**
@@ -258,37 +279,32 @@ const FrameEngine = (() => {
    * Pass maxPreviewPx to scale the image down for fast live preview.
    * Pass mapOverlayImg (HTMLImageElement) to draw a Passage-style map overlay.
    */
-  async function renderFrameWhenReady(img, exif, settings, { maxPreviewPx = null, mapOverlayImg = null, signal = null } = {}) {
+  async function renderFrameWhenReady(img, exif, settings, {
+    maxPreviewPx = null, mapOverlayImg = null, signal = null, eyeShift = 0,
+    photoLimits = null,
+  } = {}) {
     assertNotAborted(signal);
     await loadFrameFonts(settings, signal);
     assertNotAborted(signal);
 
     const renderImg = maxPreviewPx ? await scaleImage(img, maxPreviewPx, signal) : img;
-    let base = null;
-    let output = null;
     try {
-      base = renderFrame(renderImg, exif, settings, mapOverlayImg);
-      if (signal?.aborted) {
-        base.width = 0;
-        base.height = 0;
-        assertNotAborted(signal);
-      }
-      const result = applyPostProcess(base, settings);
-      if (result !== base) { base.width = 0; base.height = 0; }
-      output = result;
+      const fitted = photoLimits ? computePhotoOutputSize(
+        renderImg.naturalWidth || renderImg.width,
+        renderImg.naturalHeight || renderImg.height,
+        settings, exif, photoLimits
+      ) : null;
+      const result = renderFrame(renderImg, exif, settings, mapOverlayImg, {
+        eyeShift,
+        sourceWidth: fitted?.sourceWidth,
+        sourceHeight: fitted?.sourceHeight,
+      });
       if (signal?.aborted) {
         result.width = 0;
         result.height = 0;
         assertNotAborted(signal);
       }
       return result;
-    } catch (error) {
-      const disposable = output || base;
-      if (disposable) {
-        disposable.width = 0;
-        disposable.height = 0;
-      }
-      throw error;
     } finally {
       if (renderImg !== img && renderImg instanceof HTMLCanvasElement) {
         renderImg.width = 0;
@@ -322,6 +338,112 @@ const FrameEngine = (() => {
     ctx.drawImage(src, x, y, w, h);
   }
 
+  /** Where the photo lands for a given eye shift: scale and top-left offset. */
+  function photoPlacement(layout, eyeShift = 0) {
+    const shift = eyeShift * layout.W;
+    const depth = Math.abs(shift);
+    const scale = depth ? (layout.W + depth * 2) / layout.W : 1;
+    const drawW = layout.W * scale;
+    const drawH = layout.H * scale;
+    return {
+      scale,
+      x: layout.frameX + layout.sB - depth + shift,
+      y: layout.frameY + layout.imageTop + (layout.H - drawH) / 2,
+      width: drawW,
+      height: drawH,
+    };
+  }
+
+  /**
+   * Draw the photo as if seen through the frame's window: zoomed just enough
+   * that shifting it sideways by `shift` pixels never uncovers the window.
+   */
+  function drawWindowedPhoto(ctx, src, x, y, w, h, shift) {
+    const depth = Math.abs(shift);
+    const scale = (w + depth * 2) / w;
+    const drawW = w * scale;
+    const drawH = h * scale;
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      ctx.drawImage(src, x - depth + shift, y + (h - drawH) / 2, drawW, drawH);
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Estimate horizontal disparities of a stereo pair from downscaled greyscale
+   * block matching. Positive values mean the left eye sees a point further
+   * right (it appears in front of the screen). Returns fractions of the width.
+   */
+  function estimateStereoDisparity(left, right, { sampleWidth = 320 } = {}) {
+    const sourceW = left.naturalWidth || left.width;
+    const sourceH = left.naturalHeight || left.height;
+    if (!(sourceW > 0 && sourceH > 0)) return null;
+    const width = Math.min(sampleWidth, sourceW);
+    const height = Math.max(8, Math.round(sourceH * (width / sourceW)));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+      const grey = image => {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
+        const data = ctx.getImageData(0, 0, width, height).data;
+        const out = new Float32Array(width * height);
+        for (let index = 0; index < out.length; index += 1) {
+          out[index] = data[index * 4] * 0.299 + data[index * 4 + 1] * 0.587 + data[index * 4 + 2] * 0.114;
+        }
+        return out;
+      };
+      const L = grey(left);
+      const R = grey(right);
+      const block = 12;
+      const range = Math.round(width * 0.08);
+      const found = [];
+      for (let by = 0; by + block <= height; by += block) {
+        for (let bx = range; bx + block + range <= width; bx += block) {
+          let mean = 0;
+          for (let y = 0; y < block; y += 1) {
+            for (let x = 0; x < block; x += 1) mean += L[(by + y) * width + bx + x];
+          }
+          mean /= block * block;
+          let variance = 0;
+          for (let y = 0; y < block; y += 1) {
+            for (let x = 0; x < block; x += 1) variance += (L[(by + y) * width + bx + x] - mean) ** 2;
+          }
+          if (variance / (block * block) < 40) continue; // flat block: no reliable match
+          let best = Infinity;
+          let bestShift = 0;
+          let total = 0;
+          for (let d = -range; d <= range; d += 1) {
+            let sad = 0;
+            for (let y = 0; y < block; y += 1) {
+              const row = (by + y) * width;
+              for (let x = 0; x < block; x += 1) sad += Math.abs(L[row + bx + x] - R[row + bx + x - d]);
+            }
+            total += sad;
+            if (sad < best) { best = sad; bestShift = d; }
+          }
+          // Keep distinct minima only; repetitive texture matches everywhere.
+          if (best < (total / (range * 2 + 1)) * 0.6) found.push(bestShift);
+        }
+      }
+      if (found.length < 3) return { near: 0, far: 0, samples: found.length };
+      found.sort((a, b) => a - b);
+      const pick = q => found[Math.min(found.length - 1, Math.max(0, Math.round((found.length - 1) * q)))];
+      return { near: pick(0.92) / width, far: pick(0.08) / width, samples: found.length };
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+
   /**
    * Draw the source image blurred and scaled to cover the canvas as a background.
    * Uses ctx.filter for blur, grayscale/sepia/saturation, and brightness.
@@ -340,10 +462,13 @@ const FrameEngine = (() => {
     try {
       ctx.filter = `${styleFilter}blur(${radius}px) brightness(${brightness}%)`;
 
-      // Scale the source to cover the canvas (object-fit: cover)
+      // Cover the canvas (object-fit: cover) plus a bleed of a few blur radii.
+      // Blurring samples beyond the drawn image as transparent, so without the
+      // bleed the edges fade out and JPEG exports show a dark rim.
       const srcW = src.naturalWidth  || src.videoWidth  || src.width  || canvasW;
       const srcH = src.naturalHeight || src.videoHeight || src.height || canvasH;
-      const scale = Math.max(canvasW / srcW, canvasH / srcH);
+      const bleed = Math.ceil(radius * 3);
+      const scale = Math.max((canvasW + bleed * 2) / srcW, (canvasH + bleed * 2) / srcH);
       const dw = Math.ceil(srcW * scale);
       const dh = Math.ceil(srcH * scale);
       const dx = Math.round((canvasW - dw) / 2);
@@ -365,10 +490,13 @@ const FrameEngine = (() => {
     const pos = ['bottom-right', 'top-right', 'top-left', 'bottom-left'].includes(posRaw)
       ? posRaw : 'bottom-right';
 
-    // Target size: ~28% of the shorter side, capped at 320px
+    // Target size: about a quarter of the photo's shorter side
     const shortSide = Math.min(W, H);
-    const ovW = Math.min(320, Math.round(shortSide * 0.28));
-    const ovH = Math.round(ovW * (mapImg.naturalHeight / mapImg.naturalWidth));
+    const mapW = mapImg.naturalWidth || mapImg.width;
+    const mapH = mapImg.naturalHeight || mapImg.height;
+    if (!(mapW > 0 && mapH > 0)) return;
+    const ovW = Math.round(shortSide * 0.26);
+    const ovH = Math.round(ovW * (mapH / mapW));
 
     // Position: corner with a small inset
     const inset = Math.round(shortSide * 0.025);
@@ -407,9 +535,6 @@ const FrameEngine = (() => {
       exifFontScale    = 1.0,
       textOffsetY      = 0,
       lineGapScale     = 1.0,
-      cameraNameBold   = false,
-      cameraNameItalic = false,
-      exifItalic       = false,
       showShotOn       = true,
       showExifInfo     = true,
       showLocation     = false,
@@ -445,15 +570,13 @@ const FrameEngine = (() => {
     const centerX = canvasW / 2;
 
     // Build font strings — CSS shorthand: [style] [weight] [size] [family]
-    const labelWeight = cameraNameBold ? '700' : '300';
-    const camWeight   = cameraNameBold ? '700' : '500';
-    const camStyle    = cameraNameItalic ? 'italic ' : '';
-    const labelFont   = `${camStyle}${labelWeight} ${soSize}px ${stack}`;
-    const camFont     = `${camStyle}${camWeight} ${soSize}px ${stack}`;
-    const makerFont   = `${camStyle}400 ${soSize}px ${stack}`;
+    const {
+      label: labelFont,
+      model: camFont,
+      maker: makerFont,
+      exif: exifFont,
+    } = captionFonts(settings, soSize, exSize, stack);
     const makerColor  = mixHexColor(primary, muted, 0.5);
-    const exStyle    = exifItalic ? 'italic ' : '';
-    const exifFont   = `${exStyle}300 ${exSize}px ${stack}`;
 
     // Determine if location goes below (needs 3-line layout)
     const hasLocationBelow = effectiveShowLocation && locationPosition === 'below-exif';
@@ -461,6 +584,16 @@ const FrameEngine = (() => {
     const line1Y = hasLocationBelow ? centerY - gap * 0.85 : centerY - gap / 2;
     const line2Y = hasLocationBelow ? centerY              : centerY + gap / 2;
     const line3Y = centerY + gap * 0.85;
+
+    // Layout checks: callers pass layout.issues to learn when the caption is
+    // clipped by the frame edges, runs into the photo, or overlaps itself.
+    const issues = Array.isArray(layout.issues) ? layout.issues : null;
+    const report = code => { if (issues && !issues.includes(code)) issues.push(code); };
+    const edgeMargin = Math.max(2, canvasW * 0.012);
+    const checkSpan = (left, right) => {
+      if (left < edgeMargin || right > canvasW - edgeMargin) report('text-overflow');
+    };
+    const drawnLines = [];
 
     ctx.save();
     ctx.textBaseline = 'middle';
@@ -479,7 +612,10 @@ const FrameEngine = (() => {
       const gapW = makerGap ? ctx.measureText(makerGap).width : 0;
       ctx.font = makerFont;
       const makeW = camMake ? ctx.measureText(camMake).width : 0;
-      const x0 = centerX - (lw + modelW + gapW + makeW) / 2;
+      const cameraW = lw + modelW + gapW + makeW;
+      const x0 = centerX - cameraW / 2;
+      checkSpan(x0, x0 + cameraW);
+      drawnLines.push({ y: line1Y, half: soSize * 0.6 });
 
       if (showShotOnLabel) {
         ctx.textAlign = 'left';
@@ -506,16 +642,23 @@ const FrameEngine = (() => {
         const pinSize = soSize * 0.52;
         const sidePad = canvasW * 0.04;
 
+        const locationGap = soSize * 0.6;
         if (locationPosition === 'cam-right') {
           ctx.textAlign = 'right';
           ctx.fillText(exif.location, canvasW - sidePad, line1Y);
           const tw = ctx.measureText(exif.location).width;
           drawLocationPin(ctx, canvasW - sidePad - tw - pinSize * 1.1, line1Y, pinSize, muted, settings.locationIconStyle);
+          const locationLeft = canvasW - sidePad - tw - pinSize * 1.6;
+          if (locationLeft < x0 + cameraW + locationGap) report('location-overlaps-camera');
+          checkSpan(locationLeft, canvasW - sidePad);
         } else {
           const pinCx = sidePad + pinSize * 0.6;
           drawLocationPin(ctx, pinCx, line1Y, pinSize, muted, settings.locationIconStyle);
           ctx.textAlign = 'left';
           ctx.fillText(exif.location, sidePad + pinSize * 1.5, line1Y);
+          const locationRight = sidePad + pinSize * 1.5 + ctx.measureText(exif.location).width;
+          if (locationRight + locationGap > x0) report('location-overlaps-camera');
+          checkSpan(sidePad, locationRight);
         }
       }
     }
@@ -534,6 +677,9 @@ const FrameEngine = (() => {
         ctx.fillStyle = muted;
         ctx.textAlign = 'center';
         ctx.fillText(line, centerX, line2Y);
+        const lineW = ctx.measureText(line).width;
+        checkSpan(centerX - lineW / 2, centerX + lineW / 2);
+        drawnLines.push({ y: line2Y, half: exSize * 0.6 });
       }
     }
 
@@ -549,6 +695,15 @@ const FrameEngine = (() => {
       drawLocationPin(ctx, startX + pinSize * 0.6, line3Y, pinSize, muted, settings.locationIconStyle);
       ctx.textAlign = 'left';
       ctx.fillText(exif.location, startX + pinSize * 1.5, line3Y);
+      checkSpan(startX, startX + totalW);
+      drawnLines.push({ y: line3Y, half: Math.round(soSize * 0.82) * 0.6 });
+    }
+
+    if (drawnLines.length) {
+      const captionTop = Math.min(...drawnLines.map(line => line.y - line.half));
+      const captionBottom = Math.max(...drawnLines.map(line => line.y + line.half));
+      if (captionTop < imageBottom) report('text-overlaps-photo');
+      if (captionBottom > layout.canvasH) report('text-below-frame');
     }
 
     ctx.restore();
@@ -567,11 +722,20 @@ const FrameEngine = (() => {
         textBackgroundSampler = { canvas, context };
       }
       const { canvas: sample, context: sampleCtx } = textBackgroundSampler;
-      const coordinateScale = layout.canvasW ? ctx.canvas.width / layout.canvasW : 1;
-      const sy = Math.max(0, Math.round(layout.imageBottom * coordinateScale));
-      const sh = Math.max(1, Math.min(ctx.canvas.height - sy, Math.round(layout.bottomAreaHeight * coordinateScale)));
+      // Map the caption band through the current transform: the frame may be
+      // offset inside a padded output and scaled to a preview backing store.
+      const matrix = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
+      const toDevice = (x, y) => (matrix
+        ? { x: matrix.a * x + matrix.c * y + matrix.e, y: matrix.b * x + matrix.d * y + matrix.f }
+        : { x, y });
+      const start = toDevice(0, layout.imageBottom);
+      const end = toDevice(layout.canvasW, layout.imageBottom + layout.bottomAreaHeight);
+      const sx = Math.max(0, Math.min(ctx.canvas.width - 1, Math.round(Math.min(start.x, end.x))));
+      const sy = Math.max(0, Math.min(ctx.canvas.height - 1, Math.round(Math.min(start.y, end.y))));
+      const sw = Math.max(1, Math.min(ctx.canvas.width - sx, Math.round(Math.abs(end.x - start.x))));
+      const sh = Math.max(1, Math.min(ctx.canvas.height - sy, Math.round(Math.abs(end.y - start.y))));
       sampleCtx.clearRect(0, 0, sample.width, sample.height);
-      sampleCtx.drawImage(ctx.canvas, 0, sy, ctx.canvas.width, sh, 0, 0, sample.width, sample.height);
+      sampleCtx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, sample.width, sample.height);
       const pixels = sampleCtx.getImageData(0, 0, sample.width, sample.height).data;
       let luminance = 0;
       let weight = 0;
@@ -702,38 +866,11 @@ const FrameEngine = (() => {
     };
   }
 
-  function applyPostProcess(src, settings) {
-    const { frameColor = '#F0F0F0' } = settings;
-    const layout = computePostProcessLayout(src.width, src.height, settings);
-    if (!layout.changed) return src;
-    const { canvasW, canvasH, contentX, contentY } = layout;
-    assertSafeCanvasSize(canvasW, canvasH);
-
-    const out = document.createElement('canvas');
-    out.width = canvasW; out.height = canvasH;
-    try {
-      const ctx = out.getContext('2d');
-      if (!ctx) throw new Error('Canvas rendering is unavailable');
-      if (settings.frameBackground === 'blur') {
-        drawBlurBackground(ctx, src, canvasW, canvasH, settings);
-      } else {
-        ctx.fillStyle = frameColor;
-        ctx.fillRect(0, 0, canvasW, canvasH);
-      }
-      ctx.drawImage(src, contentX, contentY);
-      return out;
-    } catch (error) {
-      out.width = 0;
-      out.height = 0;
-      throw error;
-    }
-  }
-
   function formatShutter(val) {
-    const n = parseFloat(val);
-    if (isNaN(n)) return String(val);
-    if (n >= 1) return `${n}s`;
-    return `1/${Math.round(1 / n)}s`;
+    if (typeof InstaFrameCore === 'undefined') return String(val);
+    const seconds = InstaFrameCore.parseExposureSeconds(val);
+    if (seconds == null) return String(val);
+    return `${InstaFrameCore.formatExposureTime(seconds)}s`;
   }
 
   function isColorDark(hex) {
@@ -920,6 +1057,7 @@ const FrameEngine = (() => {
       let thumbnailImage = null;
       let thumbnailUrl = null;
       let thumbnailLoaded = false;
+      let sourceInfo = null;
       const timeout = setTimeout(() => fail(new Error('Video thumbnail timed out')), timeoutMs);
 
       const cleanup = () => {
@@ -965,6 +1103,7 @@ const FrameEngine = (() => {
           if (!sourceW || !sourceH) throw new Error('Invalid video dimensions');
           assertSafeCanvasSize(sourceW, sourceH);
           const duration = Number.isFinite(video.duration) ? video.duration : 0;
+          sourceInfo = { width: sourceW, height: sourceH, duration };
           const t = Math.min(atSecond, Math.max(0, duration - 0.05));
           video.currentTime = t;
         } catch (error) {
@@ -1001,6 +1140,12 @@ const FrameEngine = (() => {
             try {
               thumbnailUrl = URL.createObjectURL(blob);
               thumbnailImage = new Image();
+              // The thumbnail is downscaled; callers still need the real size.
+              if (sourceInfo) {
+                thumbnailImage.sourceWidth = sourceInfo.width;
+                thumbnailImage.sourceHeight = sourceInfo.height;
+                thumbnailImage.sourceDuration = sourceInfo.duration;
+              }
               thumbnailImage.onload = () => {
                 thumbnailLoaded = true;
                 succeed(thumbnailImage);
@@ -1051,7 +1196,6 @@ const FrameEngine = (() => {
       video.preload = 'auto';
       let encoder = null;
       let canvas = null;
-      let baseCanvas = null;
       let frameCallbackId = null;
       let settled = false;
       let finalizing = false;
@@ -1086,7 +1230,6 @@ const FrameEngine = (() => {
           if (encoder && encoder.state !== 'closed') encoder.close();
         });
         releaseCanvasBackingStore(canvas);
-        releaseCanvasBackingStore(baseCanvas);
       };
       const succeed = blob => {
         if (settled) return;
@@ -1118,7 +1261,7 @@ const FrameEngine = (() => {
           assertNotAborted(signal);
           const W = video.videoWidth, H = video.videoHeight;
           if (!W || !H) throw new Error('Invalid video dimensions');
-          const layout = computeVideoFrameLayout(W, H, settings, exif);
+          const layout = computeFrameLayout(W, H, settings, exif);
           const { canvasW, canvasH } = layout;
           const duration = video.duration || 0;
           if (duration > 0 && duration * videoBitsPerSecond / 8 > maxOutputBytes) {
@@ -1201,7 +1344,7 @@ const FrameEngine = (() => {
             try {
               assertNotAborted(signal);
               const timestamp = Math.round((metadata.mediaTime || 0) * 1_000_000);
-              baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas);
+              drawVideoFrameSync(ctx, video, exif, settings, layout);
 
               let resumeAfterDrain = false;
               if ((Number(encoder.encodeQueueSize) || 0) >= MAX_PENDING_VIDEO_ENCODES) {
@@ -1410,7 +1553,6 @@ const FrameEngine = (() => {
       let outputStream = null;
       let sourceStream = null;
       let canvas = null;
-      let baseCanvas = null;
       let recorder = null;
       let rafId = null;
       let stopTimer = null;
@@ -1460,7 +1602,6 @@ const FrameEngine = (() => {
           }
         });
         releaseCanvasBackingStore(canvas);
-        releaseCanvasBackingStore(baseCanvas);
         signal?.removeEventListener('abort', abort);
       };
 
@@ -1519,7 +1660,7 @@ const FrameEngine = (() => {
           const W = video.videoWidth;
           const H = video.videoHeight;
           if (!W || !H) { fail(new Error('Invalid video dimensions')); return; }
-        const layout = computeVideoFrameLayout(W, H, settings, exif);
+        const layout = computeFrameLayout(W, H, settings, exif);
         const { canvasW, canvasH } = layout;
         const duration = video.duration || 0;
         try {
@@ -1622,7 +1763,7 @@ const FrameEngine = (() => {
             const mediaTime = Number(video.currentTime) || 0;
             const frameIndex = Math.floor(mediaTime * VIDEO_CAPTURE_FPS);
             if (frameIndex !== lastDrawnFrame) {
-              baseCanvas = drawVideoFrameSync(ctx, video, exif, settings, layout, baseCanvas, scale);
+              drawVideoFrameSync(ctx, video, exif, settings, layout);
               lastDrawnFrame = frameIndex;
             }
             if (mediaTime > lastMediaTime) {
@@ -1717,16 +1858,17 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Compute the frame layout for a video given its pixel dimensions and current settings.
-   * Returns the same shape used internally by _renderVideoWebCodecs / _renderVideoMediaRecorder.
+   * Compute the frame layout for a photo or video of the given pixel size:
+   * the caption frame (base*) and the final output after aspect ratio and
+   * outer padding, with the frame's offset inside it (frameX / frameY).
    */
-  function computeVideoFrameLayout(videoW, videoH, settings, exif = {}) {
-    const W = videoW, H = videoH;
+  function computeUnboundedFrameLayout(sourceW, sourceH, settings, exif = {}) {
+    const W = sourceW, H = sourceH;
     const isPortrait    = H > W;
     const ts            = settings.thicknessScale || 1;
     const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
     const sideBorder    = baseBorder * 0.5;
-    const showLoc       = settings.showLocation && exif.location && settings.locationPosition === 'below-exif';
+    const showLoc       = settings.showLocation && exif?.location && settings.locationPosition === 'below-exif';
     const locationExtra = showLoc ? H * 0.038 * ts : 0;
     const bottomBorder  = sideBorder * 4 + H * 0.10 * ts + locationExtra;
     const pf            = isPortrait ? 0.75 : 1.0;
@@ -1737,9 +1879,7 @@ const FrameEngine = (() => {
     const baseCanvasW   = Math.round(W + sB * 2);
     const baseCanvasH   = imageLayout.canvasH;
     const frameColor    = settings.frameColor || '#F0F0F0';
-    assertSafeCanvasSize(baseCanvasW, baseCanvasH);
     const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, settings);
-    assertSafeCanvasSize(postProcess.canvasW, postProcess.canvasH);
     return {
       W, H, sB, tB, bB,
       baseCanvasW,
@@ -1756,95 +1896,94 @@ const FrameEngine = (() => {
     };
   }
 
+  function computeFrameLayout(sourceW, sourceH, settings, exif = {}) {
+    const layout = computeUnboundedFrameLayout(sourceW, sourceH, settings, exif);
+    assertSafeCanvasSize(layout.baseCanvasW, layout.baseCanvasH);
+    assertSafeCanvasSize(layout.canvasW, layout.canvasH);
+    return layout;
+  }
+
+  /** Fit a 2D photo and its frame inside the browser's Canvas budget. */
+  function computePhotoOutputSize(sourceW, sourceH, settings, exif = {}, {
+    maxPixels = MAX_CANVAS_PIXELS,
+    maxSide = MAX_CANVAS_DIMENSION,
+  } = {}) {
+    if (!Number.isFinite(sourceW) || !Number.isFinite(sourceH) ||
+        sourceW < 1 || sourceH < 1 || !Number.isFinite(maxPixels) ||
+        !Number.isFinite(maxSide) || maxPixels < 1 || maxSide < 1) {
+      throw resourceLimitError();
+    }
+    const pixelLimit = Math.min(MAX_CANVAS_PIXELS, maxPixels);
+    const sideLimit = Math.min(MAX_CANVAS_DIMENSION, maxSide);
+    const fits = layout => layout.baseCanvasW <= sideLimit &&
+      layout.baseCanvasH <= sideLimit && layout.canvasW <= sideLimit &&
+      layout.canvasH <= sideLimit &&
+      layout.baseCanvasW * layout.baseCanvasH <= pixelLimit &&
+      layout.canvasW * layout.canvasH <= pixelLimit;
+    const output = (width, height, layout) => ({
+      width: layout.canvasW,
+      height: layout.canvasH,
+      sourceWidth: width,
+      sourceHeight: height,
+      scaled: width !== sourceW || height !== sourceH,
+    });
+    const original = computeUnboundedFrameLayout(sourceW, sourceH, settings, exif);
+    if (fits(original)) return output(sourceW, sourceH, original);
+
+    let low = 0;
+    let high = 1;
+    let best = null;
+    for (let attempt = 0; attempt < 28; attempt += 1) {
+      const scale = (low + high) / 2;
+      const width = Math.max(1, Math.floor(sourceW * scale));
+      const height = Math.max(1, Math.floor(sourceH * scale));
+      const layout = computeUnboundedFrameLayout(width, height, settings, exif);
+      if (fits(layout)) {
+        best = output(width, height, layout);
+        low = scale;
+      } else {
+        high = scale;
+      }
+    }
+    if (!best) throw resourceLimitError();
+    return best;
+  }
+
   /**
    * Draw one video frame (with EXIF frame borders) synchronously onto ctx.
    * ctx must already be scaled so that 1 unit = 1 logical canvas pixel
-   * (i.e. the caller handles DPR scaling before calling this).
+   * (i.e. the caller handles DPR scaling before calling this). The output is
+   * drawn in one pass, so no scratch canvas is needed. The caption's layout
+   * issues are stored on layout.layoutIssues.
    */
-  function drawVideoBaseFrameSync(ctx, video, exif, settings, layout) {
-    const {
-      W, H, sB, baseCanvasW, baseCanvasH,
-      imageTop, imageBottom, bB, isPortrait, frameColor,
-    } = layout;
-
-    if (settings.frameBackground === 'blur') {
-      drawBlurBackground(ctx, video, baseCanvasW, baseCanvasH, settings);
-    } else {
-      ctx.fillStyle = frameColor;
-      ctx.fillRect(0, 0, baseCanvasW, baseCanvasH);
-    }
-    drawImageAtY(ctx, video, sB, imageTop, W, H);
-    drawInnerShadow(ctx, sB, imageTop, W, H);
-    drawExifText(ctx, exif || {}, settings, {
-      canvasW: baseCanvasW,
-      canvasH: baseCanvasH,
-      imageBottom,
-      bottomAreaHeight: bB,
-      isPortrait,
-      frameColor,
-    });
+  function drawVideoFrameSync(ctx, video, exif, settings, layout) {
+    drawFrameBackground(ctx, video, settings, layout);
+    layout.layoutIssues = drawFrameContent(ctx, video, exif, settings, layout);
   }
 
-  function drawVideoFrameSync(ctx, video, exif, settings, layout, reusableBaseCanvas = null, baseScale = 1) {
-    if (!layout.hasPostProcess) {
-      if (reusableBaseCanvas) {
-        reusableBaseCanvas.width = 0;
-        reusableBaseCanvas.height = 0;
-      }
-      drawVideoBaseFrameSync(ctx, video, exif, settings, layout);
-      return null;
-    }
-
-    if (settings.frameBackground !== 'blur') {
-      if (reusableBaseCanvas) {
-        reusableBaseCanvas.width = 0;
-        reusableBaseCanvas.height = 0;
-      }
-      ctx.fillStyle = layout.frameColor;
-      ctx.fillRect(0, 0, layout.canvasW, layout.canvasH);
-      ctx.save();
-      ctx.translate(layout.frameX, layout.frameY);
-      drawVideoBaseFrameSync(ctx, video, exif, settings, layout);
-      ctx.restore();
-      return null;
-    }
-
-    const ownsBaseCanvas = !reusableBaseCanvas;
-    const baseCanvas = reusableBaseCanvas || document.createElement('canvas');
-    try {
-      const safeBaseScale = Math.max(0.01, Math.min(1, Number(baseScale) || 1));
-      const scratchW = Math.max(1, Math.round(layout.baseCanvasW * safeBaseScale));
-      const scratchH = Math.max(1, Math.round(layout.baseCanvasH * safeBaseScale));
-      if (baseCanvas.width !== scratchW || baseCanvas.height !== scratchH) {
-        resizeReusableCanvas(baseCanvas, scratchW, scratchH);
-      }
-      const baseContext = baseCanvas.getContext('2d');
-      if (!baseContext) throw new Error('Canvas rendering is unavailable');
-      baseContext.save();
-      try {
-        baseContext.scale(scratchW / layout.baseCanvasW, scratchH / layout.baseCanvasH);
-        drawVideoBaseFrameSync(baseContext, video, exif, settings, layout);
-      } finally {
-        baseContext.restore();
-      }
-
-      drawBlurBackground(ctx, baseCanvas, layout.canvasW, layout.canvasH, settings);
-      ctx.drawImage(
-        baseCanvas,
-        0, 0, scratchW, scratchH,
-        layout.frameX, layout.frameY, layout.baseCanvasW, layout.baseCanvasH
-      );
-      return baseCanvas;
-    } catch (error) {
-      if (ownsBaseCanvas) {
-        baseCanvas.width = 0;
-        baseCanvas.height = 0;
-      }
-      throw error;
-    }
+  /** Pixel size of the exported frame for a sourceW × sourceH photo or video. */
+  function computeOutputSize(sourceW, sourceH, settings, exif = {}) {
+    const layout = computeFrameLayout(sourceW, sourceH, settings, exif);
+    return { width: layout.canvasW, height: layout.canvasH };
   }
 
-  return { renderFrame, renderFrameWhenReady, canvasToBlob, loadImage, captureVideoFrame, renderVideoFrameWhenReady, isColorDark, computeVideoFrameLayout, drawVideoFrameSync };
+  const computeVideoFrameLayout = computeFrameLayout;
+
+  return {
+    renderFrame,
+    renderFrameWhenReady,
+    canvasToBlob,
+    loadImage,
+    captureVideoFrame,
+    renderVideoFrameWhenReady,
+    isColorDark,
+    computeFrameLayout,
+    computeVideoFrameLayout,
+    computeOutputSize,
+    computePhotoOutputSize,
+    drawVideoFrameSync,
+    estimateStereoDisparity,
+  };
 })();
 
 if (typeof window !== 'undefined') window.FrameEngine = FrameEngine;

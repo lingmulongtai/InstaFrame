@@ -20,8 +20,14 @@ const state = {
     exifFontScale:       1.0,
     lineGapScale:        1.0,
     textOffsetY:         0,
-    cameraNameBold:      false,
-    cameraNameItalic:    false,
+    // Bold / italic for each caption part
+    shotOnBold:          false,
+    modelBold:           false,
+    makerBold:           false,
+    exifBold:            false,
+    shotOnItalic:        false,
+    modelItalic:         false,
+    makerItalic:         false,
     exifItalic:          false,
     textColorMode:       'auto',    // 'auto' | 'light' | 'dark' | 'custom'
     textColor:           '#FFFFFF',
@@ -43,6 +49,9 @@ const state = {
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
     exportVideoFormat:   '',       // resolved dynamically from supported MIME types
     exportVideoBitrate:  8,        // Mbps
+    // ── Spatial photos ───────────────────────────────────────────
+    exportSpatialMode:   'heic',   // 'heic' | 'sbs' | '2d'
+    spatialDepth:        1.0,      // frame pop-out, % of photo width
   },
   // Custom color state
   isCustomColor: false,
@@ -81,6 +90,8 @@ const MAX_ZIP_PEAK_BYTES = 512 * 1024 * 1024;
 const MAX_LIVE_PREVIEW_PIXELS_DESKTOP = 24_000_000;
 const MAX_LIVE_PREVIEW_PIXELS_MOBILE = 12_000_000;
 const MAX_LIVE_PREVIEW_DETAIL_PIXELS = 8_000_000;
+const MOBILE_PHOTO_OUTPUT_PIXELS = 16_000_000;
+const MOBILE_PHOTO_OUTPUT_SIDE = 4_096;
 const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 768px), (max-width: 1024px) and (max-height: 500px) and (orientation: landscape)';
 const MAX_ACTIVE_PHOTO_DECODES = 2;
 const MAX_ACTIVE_VIDEO_THUMBNAILS = 2;
@@ -106,6 +117,16 @@ let _pageRestoreFocusTarget = null;
 
 function _usesMobileLayout() {
   return window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+}
+
+function _photoExportLimits() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isPhone = navigator.userAgentData?.mobile || /Mobi/i.test(navigator.userAgent) ||
+    window.matchMedia('(pointer: coarse) and (max-width: 768px)').matches;
+  return isIOS || isPhone
+    ? { maxPixels: MOBILE_PHOTO_OUTPUT_PIXELS, maxSide: MOBILE_PHOTO_OUTPUT_SIDE }
+    : { maxPixels: 64_000_000, maxSide: 16_384 };
 }
 const APP_ASSET_VERSION = (() => {
   try {
@@ -306,6 +327,7 @@ const _imgFailed     = new Set(); // item IDs that failed image load — skip re
 const _downloadUrlTimers = new Map(); // active download Blob URL → delayed cleanup timer
 let   _renderSeq     = 0;         // increments on each render to cancel stale ones
 let   _previewRenderController = null;
+let   _activeLivePreviewPromise = null;
 let   _activeExportController = null;
 let   _globalExportBusy = false;
 let   _activePhotoDecodes = 0;
@@ -320,7 +342,6 @@ let _videoPreviewFrameHandle = null;
 let _videoPreviewFrameMode = null; // 'video', 'animation', or 'timeout'
 let _videoPreviewFrameGeneration = 0;
 let _videoPreviewItemId = null;   // ID of item currently being rendered in the loop
-let _videoPreviewBaseCanvas = null;
 
 // ─── Location privacy consent ─────────────────────────────────────────────────
 let _sessionLocationNetworkConsent = false;
@@ -715,6 +736,11 @@ function _cancelMapImageLoads() {
 
 function _releaseMapImageSource(img) {
   if (!img) return;
+  if (img instanceof HTMLCanvasElement) {
+    img.width = 0;
+    img.height = 0;
+    return;
+  }
   img.onload = null;
   img.onerror = null;
   img.removeAttribute('src');
@@ -731,18 +757,143 @@ function _clearMapImageCache() {
   _mapImgCache.clear();
 }
 
-/** Fetch a Mapbox static map image and return it as a loaded HTMLImageElement, with caching. */
+// ─── Map overlay ──────────────────────────────────────────────────────────────
+// Without a Mapbox token the overlay is composed from OpenStreetMap tiles. The
+// picture covers the same area as a 400 px wide map at zoom 13, at 2× density.
+const OSM_TILE_ORIGIN = 'https://tile.openstreetmap.org';
+const OSM_TILE_SIZE = 256;
+const MAP_OVERLAY_WIDTH = 800;
+const MAP_OVERLAY_HEIGHT = 560;
+
+function _cacheMapOverlay(key, image) {
+  const cached = _mapImgCache.get(key);
+  if (cached) {
+    if (cached !== image) _releaseMapImageSource(image);
+    return cached;
+  }
+  if (_mapImgCache.size >= 12) _deleteMapImageCacheEntry(_mapImgCache.keys().next().value);
+  _mapImgCache.set(key, image);
+  return image;
+}
+
+function _loadMapTile(url, signal) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    let settled = false;
+    let timeoutId = null;
+    const finish = (value, error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abort);
+      _mapImgLoadCancels.delete(abort);
+      img.onload = null;
+      img.onerror = null;
+      if (error) {
+        img.removeAttribute('src');
+        reject(error);
+      } else {
+        if (!value) img.removeAttribute('src');
+        resolve(value);
+      }
+    };
+    const abort = () => finish(null, new DOMException('Export cancelled', 'AbortError'));
+    _mapImgLoadCancels.add(abort);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    timeoutId = setTimeout(() => finish(null), MAP_IMAGE_LOAD_GUARD_MS);
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    img.onload = () => finish(img);
+    img.onerror = () => finish(null);
+    try { img.src = url; }
+    catch { finish(null); }
+  });
+}
+
+/** Draw a monochrome OpenStreetMap excerpt centred on lat/lon, with a pin and attribution. */
+async function _composeOpenStreetMapOverlay(lat, lon, zoom, signal) {
+  const z = zoom + 1;
+  const tilesPerSide = 2 ** z;
+  const worldSize = tilesPerSide * OSM_TILE_SIZE;
+  const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
+  const latRad = clampedLat * Math.PI / 180;
+  const centerX = ((lon + 180) / 360) * worldSize;
+  const centerY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * worldSize;
+  const left = centerX - MAP_OVERLAY_WIDTH / 2;
+  const top = centerY - MAP_OVERLAY_HEIGHT / 2;
+  const tiles = [];
+  for (let ty = Math.floor(top / OSM_TILE_SIZE); ty * OSM_TILE_SIZE < top + MAP_OVERLAY_HEIGHT; ty += 1) {
+    if (ty < 0 || ty >= tilesPerSide) continue;
+    for (let tx = Math.floor(left / OSM_TILE_SIZE); tx * OSM_TILE_SIZE < left + MAP_OVERLAY_WIDTH; tx += 1) {
+      const wrappedX = ((tx % tilesPerSide) + tilesPerSide) % tilesPerSide;
+      tiles.push({ tx, ty, url: `${OSM_TILE_ORIGIN}/${z}/${wrappedX}/${ty}.png` });
+    }
+  }
+  const images = await Promise.all(tiles.map(tile => _loadMapTile(tile.url, signal)));
+  try {
+    if (!images.some(Boolean)) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = MAP_OVERLAY_WIDTH;
+    canvas.height = MAP_OVERLAY_HEIGHT;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ebebeb';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // A quiet grey map reads as part of the print rather than a screenshot.
+    ctx.filter = 'grayscale(1) contrast(1.04) brightness(1.04)';
+    tiles.forEach((tile, index) => {
+      const image = images[index];
+      if (image) ctx.drawImage(image, Math.round(tile.tx * OSM_TILE_SIZE - left), Math.round(tile.ty * OSM_TILE_SIZE - top));
+    });
+    ctx.filter = 'none';
+
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    ctx.fillStyle = 'rgba(17, 17, 17, 0.14)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 30, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#111111';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    const credit = '© OpenStreetMap contributors';
+    ctx.font = '500 15px system-ui, -apple-system, "Segoe UI", sans-serif';
+    const creditW = ctx.measureText(credit).width;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+    ctx.fillRect(canvas.width - creditW - 16, canvas.height - 26, creditW + 16, 26);
+    ctx.fillStyle = '#333333';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(credit, canvas.width - creditW - 8, canvas.height - 13);
+    return canvas;
+  } finally {
+    images.forEach(image => image?.removeAttribute('src'));
+  }
+}
+
+/** Return the map overlay picture for lat/lon (Mapbox when configured, otherwise OpenStreetMap). */
 async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
   if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
-  const key = `${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
-  if (_mapImgCache.has(key)) return _mapImgCache.get(key);
+  if (!hasLocationNetworkConsent()) return null;
   const token = getMapboxToken();
+  const key = `${token ? 'mapbox' : 'osm'},${lat.toFixed(4)},${lon.toFixed(4)},${zoom}`;
+  if (_mapImgCache.has(key)) return _mapImgCache.get(key);
   if (!token) {
-    if (!_mapboxUnavailableNotified && hasLocationNetworkConsent()) {
-      _mapboxUnavailableNotified = true;
-      showToast(t('msgMapboxUnavailable'), 'warn');
+    const composed = await _composeOpenStreetMapOverlay(lat, lon, zoom, signal);
+    if (!composed) {
+      if (!_mapboxUnavailableNotified) {
+        _mapboxUnavailableNotified = true;
+        showToast(t('msgMapOverlayUnavailable'), 'warn');
+      }
+      return null;
     }
-    return null;
+    return _cacheMapOverlay(key, composed);
   }
   const url = `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${lon.toFixed(5)},${lat.toFixed(5)},${zoom}/400x280@2x?access_token=${token}`;
   return new Promise((resolve, reject) => {
@@ -777,17 +928,7 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
       finish(null);
     }, MAP_IMAGE_LOAD_GUARD_MS);
     img.crossOrigin = 'anonymous';
-    img.onload  = () => {
-      const cached = _mapImgCache.get(key);
-      if (cached) {
-        _releaseMapImageSource(img);
-        finish(cached);
-        return;
-      }
-      if (_mapImgCache.size >= 12) _deleteMapImageCacheEntry(_mapImgCache.keys().next().value);
-      _mapImgCache.set(key, img);
-      finish(img);
-    };
+    img.onload  = () => finish(_cacheMapOverlay(key, img));
     img.onerror = () => {
       img.removeAttribute('src');
       finish(null);
@@ -817,6 +958,696 @@ async function _fetchMapOverlayImage(lat, lon, zoom = 13, signal = null) {
 //   errorValues: object | null,
 // }
 
+// ─── HEIF / HEIC photos ───────────────────────────────────────────────────────
+// Most browsers cannot decode HEIC. A self-hosted libheif build converts each
+// HEIC once into a high-quality JPEG stand-in that every existing decode path
+// can read; the original File stays the item's source for EXIF and export.
+// Spatial photos keep both eyes of their stereo pair.
+const HEIF_SURROGATE_QUALITY = 0.97;
+const HEIF_DECODE_GUARD_MS = 90_000;
+let _heifWorker = null;
+let _heifRequestId = 0;
+const _heifRequests = new Map();
+let _heifConversionTail = Promise.resolve();
+
+function _isHeifCandidate(file) {
+  return /^image\/hei[cf]/i.test(file?.type || '') || /\.(heic|heif|hif)$/i.test(file?.name || '');
+}
+
+function _heifDecodeError(message, code = 'IMAGE_DECODE_FAILED') {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function _resetHeifWorker(reason) {
+  _heifWorker?.terminate();
+  _heifWorker = null;
+  for (const request of _heifRequests.values()) request.reject(reason);
+  _heifRequests.clear();
+}
+
+function _getHeifWorker() {
+  if (_heifWorker) return _heifWorker;
+  const worker = new Worker(_versionedAssetUrl('js/heif-worker.js'));
+  worker.onmessage = event => {
+    const request = _heifRequests.get(event.data?.requestId);
+    if (!request) return;
+    _heifRequests.delete(event.data.requestId);
+    if (event.data.ok) request.resolve(event.data);
+    else request.reject(_heifDecodeError(event.data.message, event.data.code || 'IMAGE_DECODE_FAILED'));
+  };
+  worker.onerror = event => {
+    event.preventDefault?.();
+    _resetHeifWorker(_heifDecodeError('HEIF decoder stopped unexpectedly'));
+  };
+  _heifWorker = worker;
+  return worker;
+}
+
+/** Decode HEIF items to RGBA in the worker. */
+function _decodeHeifItems(bytes, itemIds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Image load cancelled', 'AbortError'));
+      return;
+    }
+    const requestId = ++_heifRequestId;
+    let timeoutId = null;
+    const settle = (callback, value) => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abort);
+      _heifRequests.delete(requestId);
+      callback(value);
+    };
+    const abort = () => settle(reject, new DOMException('Image load cancelled', 'AbortError'));
+    _heifRequests.set(requestId, {
+      resolve: value => settle(resolve, value),
+      reject: error => settle(reject, error),
+    });
+    signal?.addEventListener('abort', abort, { once: true });
+    // A decode that never answers would hold the queue; restart the worker.
+    timeoutId = setTimeout(() => {
+      _resetHeifWorker(_heifDecodeError('HEIF decode timed out', 'IMAGE_DECODE_TIMEOUT'));
+    }, HEIF_DECODE_GUARD_MS);
+    try {
+      _getHeifWorker().postMessage({
+        requestId,
+        scriptUrl: new URL(_versionedAssetUrl('vendor/libheif/libheif.js'), document.baseURI).href,
+        wasmUrl: new URL(_versionedAssetUrl('vendor/libheif/libheif.wasm'), document.baseURI).href,
+        bytes: bytes.buffer,
+        itemIds,
+        maxPixels: MAX_SOURCE_IMAGE_PIXELS,
+      }, [bytes.buffer]);
+    } catch (error) {
+      settle(reject, error);
+    }
+  });
+}
+
+/** Encode decoded RGBA pixels (sRGB or Display P3) as an sRGB JPEG Blob. */
+async function _heifPixelsToJpeg(image, colorSpace, signal) {
+  const canvas = document.createElement('canvas');
+  try {
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas rendering is unavailable');
+    const pixels = new Uint8ClampedArray(image.buffer);
+    let imageData;
+    // P3 pixels are converted to the canvas's sRGB by putImageData.
+    try { imageData = new ImageData(pixels, image.width, image.height, { colorSpace }); }
+    catch { imageData = new ImageData(pixels, image.width, image.height); }
+    context.putImageData(imageData, 0, 0);
+    return await FrameEngine.canvasToBlob(canvas, { format: 'jpeg', quality: HEIF_SURROGATE_QUALITY, signal });
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+async function _convertHeifItem(item, signal) {
+  const file = item.file;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (signal?.aborted) throw new DOMException('Image load cancelled', 'AbortError');
+  const parsed = InstaFrameHeif.parseHeif(bytes);
+  if (!parsed) throw _heifDecodeError('Not a HEIF still image');
+  let pair = InstaFrameHeif.stereoPair(parsed);
+  const primaryId = parsed.primaryId;
+  const primaryIds = primaryId != null ? [primaryId] : [];
+  const itemIds = pair ? [pair.left, pair.right] : primaryIds;
+  const colorSpaces = new Map([...itemIds, ...primaryIds].map(id => [id, InstaFrameHeif.itemColorSpace(parsed, id)]));
+  // The worker takes ownership of the bytes it is sent, so pass a copy when a
+  // stereo decode may need a second, primary-only attempt.
+  let result;
+  try {
+    result = await _decodeHeifItems(pair ? bytes.slice() : bytes, itemIds, signal);
+  } catch (error) {
+    if (!pair || error?.name === 'AbortError' || error?.code === 'MEDIA_RESOURCE_LIMIT') throw error;
+    // An unexpected stereo layout still opens as an ordinary photo.
+    pair = null;
+    result = await _decodeHeifItems(bytes, primaryIds, signal);
+  }
+  const toFile = (blob, suffix = '') => new File([blob], `${file.name}${suffix}`, {
+    type: 'image/jpeg', lastModified: file.lastModified,
+  });
+  const files = [];
+  for (const image of result.images) {
+    if (signal?.aborted) throw new DOMException('Image load cancelled', 'AbortError');
+    const colorSpace = colorSpaces.get(image.itemId) || 'srgb';
+    files.push({ itemId: image.itemId, file: toFile(await _heifPixelsToJpeg(image, colorSpace, signal), files.length ? '#right' : '') });
+    image.buffer = null;
+  }
+  if (pair && files.length === 2) {
+    const [left, right] = files;
+    return {
+      decodeFile: primaryId === pair.right ? right.file : left.file,
+      stereo: { left: left.file, right: right.file, pair },
+    };
+  }
+  if (!files.length) throw _heifDecodeError('HEIF file has no decodable image');
+  return { decodeFile: files[0].file, stereo: null };
+}
+
+/** Start (once) the HEIC conversion for an item; conversions run one at a time. */
+function _ensureHeifConversion(item) {
+  if (!item?.heif) return Promise.resolve(item?.file || null);
+  if (item.decodeFile) return Promise.resolve(item.decodeFile);
+  if (!item.heifConversion) {
+    const controller = new AbortController();
+    item.heifConversionController = controller;
+    const run = _heifConversionTail.then(async () => {
+      if (!state.items.includes(item)) throw new DOMException('Image load cancelled', 'AbortError');
+      const result = await _convertHeifItem(item, controller.signal);
+      item.decodeFile = result.decodeFile;
+      item.stereo = result.stereo;
+      if (item.stereo) {
+        _markSpatialCard(item);
+        _syncSpatialExportControls();
+        _syncSpatialPreviewControl();
+      }
+      return item.decodeFile;
+    });
+    item.heifConversion = run.catch(error => {
+      item.heifConversion = null;
+      throw error;
+    }).finally(() => {
+      if (item.heifConversionController === controller) item.heifConversionController = null;
+    });
+    _heifConversionTail = run.catch(() => {});
+  }
+  return item.heifConversion;
+}
+
+function _releaseHeifResources(item) {
+  item?.heifConversionController?.abort();
+  if (!item) return;
+  item.heifConversionController = null;
+  item.heifConversion = null;
+  item.decodeFile = null;
+  item.stereo = null;
+}
+
+/** The Blob that browser image decoders should read for a photo item. */
+async function _photoDecodeFile(item, signal = null) {
+  if (!item.heif) return item.file;
+  if (item.decodeFile) return item.decodeFile;
+  return _waitForAbortablePromise(_ensureHeifConversion(item), signal, 'Image load cancelled');
+}
+
+function _markSpatialCard(item) {
+  const preview = document.getElementById(`preview-${item.id}`);
+  if (!preview || preview.querySelector('.spatial-badge')) return;
+  const badge = document.createElement('span');
+  badge.className = 'spatial-badge';
+  badge.setAttribute('data-i18n', 'spatialBadge');
+  badge.textContent = t('spatialBadge');
+  preview.appendChild(badge);
+}
+
+// ─── Spatial photos (stereo pairs) ────────────────────────────────────────────
+// Each eye is framed separately. The photo sits behind the frame's window: it
+// is shifted apart between the eyes by its own nearest disparity plus the
+// chosen depth, so the frame and caption appear in front of the picture.
+const SPATIAL_WIGGLE_MS = 140;
+const SPATIAL_MAX_EYE_SHIFT = 0.06;
+const SPATIAL_MODES = ['heic', 'sbs', '2d'];
+const _spatialPreview = { on: false, itemId: null, key: '', eyes: null, timer: null, phase: 0, controller: null };
+let _spatialHeicSupportPromise = null;
+let _spatialHeicSupported = null;
+
+function _isSpatialItem(item) {
+  return !!(item && !item.isVideo && item.stereo);
+}
+
+function _spatialEyeShift(item) {
+  const near = Math.max(-0.05, Math.min(0.1, Number(item?.stereoDisparity?.near) || 0));
+  const depth = Math.max(0, Math.min(5, Number(state.settings.spatialDepth) || 0)) / 100;
+  return Math.max(0, Math.min(SPATIAL_MAX_EYE_SHIFT, (near + depth) / 2));
+}
+
+function _hevcCodecFor(width, height) {
+  // Level 5.1 covers up to 8.9 megapixels; 6.1 covers spatial frames beyond it.
+  return width * height <= 8_912_896 ? 'hvc1.1.6.L153.B0' : 'hvc1.1.6.L183.B0';
+}
+
+/** Whether this browser can encode HEVC stills (needed for spatial HEIC). */
+function _detectSpatialHeicSupport() {
+  if (!_spatialHeicSupportPromise) {
+    _spatialHeicSupportPromise = (async () => {
+      if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return false;
+      try {
+        const result = await VideoEncoder.isConfigSupported({
+          codec: _hevcCodecFor(2560, 2560), width: 2560, height: 2560,
+          bitrate: 40_000_000, framerate: 1, hevc: { format: 'hevc' },
+        });
+        return !!result?.supported;
+      } catch {
+        return false;
+      }
+    })().then(supported => {
+      _spatialHeicSupported = supported;
+      _syncSpatialExportControls();
+      return supported;
+    });
+  }
+  return _spatialHeicSupportPromise;
+}
+
+function _effectiveSpatialMode() {
+  const requested = SPATIAL_MODES.includes(state.settings.exportSpatialMode) ? state.settings.exportSpatialMode : 'heic';
+  if (requested === 'heic' && _spatialHeicSupported !== true) return '2d';
+  return requested;
+}
+
+async function _loadStereoSources(item, signal) {
+  const results = await Promise.allSettled([
+    FrameEngine.loadImage(item.stereo.left, { signal }),
+    FrameEngine.loadImage(item.stereo.right, { signal }),
+  ]);
+  const failed = results.find(result => result.status === 'rejected');
+  if (failed) {
+    results.forEach(result => result.value?.removeAttribute('src'));
+    throw failed.reason;
+  }
+  const [left, right] = results.map(result => result.value);
+  if (!item.stereoDisparity) {
+    item.stereoDisparity = FrameEngine.estimateStereoDisparity(left, right) || { near: 0, far: 0, samples: 0 };
+  }
+  return { left, right };
+}
+
+/** Render both framed eyes. Returns canvases plus where the photo was placed. */
+async function _renderStereoEyes(item, { maxPreviewPx = null, signal = null } = {}) {
+  await _photoDecodeFile(item, signal);
+  if (!_isSpatialItem(item)) throw new Error('Not a spatial photo');
+  const sources = await _loadStereoSources(item, signal);
+  let left = null;
+  try {
+    const shift = _spatialEyeShift(item);
+    let mapOverlayImg = null;
+    if (state.settings.showMapOverlay && state.settings.showLocation &&
+        item.exif && item.exif.latitude != null && item.exif.longitude != null) {
+      mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
+    }
+    const options = { maxPreviewPx, mapOverlayImg, signal };
+    left = await FrameEngine.renderFrameWhenReady(sources.left, item.exif, state.settings, { ...options, eyeShift: -shift });
+    const right = await FrameEngine.renderFrameWhenReady(sources.right, item.exif, state.settings, { ...options, eyeShift: shift });
+    return {
+      left,
+      right,
+      shift,
+      sourceWidth: sources.left.naturalWidth,
+      sourceHeight: sources.left.naturalHeight,
+    };
+  } catch (error) {
+    if (left) { left.width = 0; left.height = 0; }
+    throw error;
+  } finally {
+    sources.left.removeAttribute('src');
+    sources.right.removeAttribute('src');
+  }
+}
+
+function _releaseStereoEyes(eyes) {
+  if (!eyes) return;
+  for (const canvas of [eyes.left, eyes.right]) {
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+  }
+}
+
+// ── 3D preview: alternate the eyes ("wiggle") so depth reads on any screen ──
+function _stopSpatialWiggle({ release = false } = {}) {
+  clearInterval(_spatialPreview.timer);
+  _spatialPreview.timer = null;
+  _spatialPreview.controller?.abort();
+  _spatialPreview.controller = null;
+  if (release) {
+    _releaseStereoEyes(_spatialPreview.eyes);
+    _spatialPreview.eyes = null;
+    _spatialPreview.key = '';
+  }
+}
+
+function _syncSpatialPreviewControl() {
+  const button = document.getElementById('spatialPreviewBtn');
+  const item = getSelectedPreviewItem();
+  const available = _isSpatialItem(item);
+  if (button) {
+    button.hidden = !available;
+    button.setAttribute('aria-pressed', String(available && _spatialPreview.on));
+  }
+  if (!available) _stopSpatialWiggle({ release: true });
+}
+
+function _drawSpatialWiggleFrame() {
+  const item = getSelectedPreviewItem();
+  const eyes = _spatialPreview.eyes;
+  if (!_spatialPreview.on || !eyes || item?.id !== _spatialPreview.itemId || document.hidden) return;
+  _spatialPreview.phase ^= 1;
+  const eye = _spatialPreview.phase ? eyes.right : eyes.left;
+  const canvas = document.getElementById('livePreviewCanvas');
+  const pane = document.getElementById('dropZone');
+  if (!canvas || !pane || !eye?.width) return;
+  const sameComposition = canvas.width > 0 && canvas.style.display === 'block' &&
+    canvas.dataset.compositionWidth === String(eye.width) &&
+    canvas.dataset.compositionHeight === String(eye.height);
+  try {
+    if (sameComposition) {
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(eye, 0, 0, canvas.width, canvas.height);
+    } else {
+      _drawFrameToCanvas(canvas, pane, document.getElementById('previewEmpty'), eye);
+      applyPreviewTransform();
+    }
+  } catch {
+    _stopSpatialWiggle();
+  }
+}
+
+async function _refreshSpatialPreview() {
+  const item = getSelectedPreviewItem();
+  _syncSpatialPreviewControl();
+  if (!_spatialPreview.on || !_isSpatialItem(item)) {
+    _stopSpatialWiggle();
+    return;
+  }
+  const key = `${item.id}|${_previewSettingsHash()}|${state.settings.spatialDepth}`;
+  if (_spatialPreview.key !== key || !_spatialPreview.eyes) {
+    _spatialPreview.controller?.abort();
+    const controller = new AbortController();
+    _spatialPreview.controller = controller;
+    let eyes;
+    try {
+      eyes = await _renderStereoEyes(item, { maxPreviewPx: PREVIEW_LAYOUT_LONG_EDGE, signal: controller.signal });
+    } catch (error) {
+      if (error?.name !== 'AbortError' && !controller.signal.aborted) showToast(t('msgSpatialPreviewFailed'), 'error');
+      return;
+    }
+    if (controller.signal.aborted || getSelectedPreviewItem() !== item || !_spatialPreview.on) {
+      _releaseStereoEyes(eyes);
+      return;
+    }
+    _releaseStereoEyes(_spatialPreview.eyes);
+    _spatialPreview.eyes = eyes;
+    _spatialPreview.key = key;
+    _spatialPreview.itemId = item.id;
+    if (_spatialPreview.controller === controller) _spatialPreview.controller = null;
+  }
+  if (!_spatialPreview.timer) {
+    _spatialPreview.timer = setInterval(_drawSpatialWiggleFrame, SPATIAL_WIGGLE_MS);
+    _drawSpatialWiggleFrame();
+  }
+}
+
+function toggleSpatialPreview(force) {
+  _spatialPreview.on = typeof force === 'boolean' ? force : !_spatialPreview.on;
+  _syncSpatialPreviewControl();
+  if (_spatialPreview.on) {
+    _clearLivePreviewDetail();
+    void _refreshSpatialPreview();
+  } else {
+    _stopSpatialWiggle({ release: true });
+    scheduleLivePreview();
+  }
+}
+
+// ── Export ──────────────────────────────────────────────────────────────────
+const NCLX_PRIMARIES = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020: 9, smpte432: 12 };
+const NCLX_TRANSFER = { bt709: 1, smpte170m: 6, linear: 8, 'iec61966-2-1': 13, pq: 16, hlg: 18 };
+const NCLX_MATRIX = { rgb: 0, bt709: 1, bt470bg: 5, smpte170m: 6, 'bt2020-ncl': 9 };
+
+function _nclxBoxFor(colorSpace) {
+  if (!colorSpace) return null;
+  const primaries = NCLX_PRIMARIES[colorSpace.primaries];
+  const transfer = NCLX_TRANSFER[colorSpace.transfer];
+  const matrix = NCLX_MATRIX[colorSpace.matrix];
+  if (primaries == null || transfer == null || matrix == null) return null;
+  const u16 = value => [(value >> 8) & 255, value & 255];
+  return InstaFrameHeif.box('colr', Uint8Array.from([
+    ...'nclx'.split('').map(char => char.charCodeAt(0)),
+    ...u16(primaries), ...u16(transfer), ...u16(matrix),
+    colorSpace.fullRange ? 0x80 : 0,
+  ]));
+}
+
+/** Encode framed eye canvases as HEVC stills with WebCodecs. */
+async function _encodeHevcStills(canvases, width, height, signal) {
+  const chunks = [];
+  let decoderConfig = null;
+  let failure = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      chunks.push(data);
+      if (metadata?.decoderConfig?.description) decoderConfig = metadata.decoderConfig;
+    },
+    error: error => { failure = error; },
+  });
+  try {
+    encoder.configure({
+      codec: _hevcCodecFor(width, height),
+      width,
+      height,
+      // A still at 1 frame/s: about 0.7 bytes per pixel keeps fine texture.
+      bitrate: Math.round(width * height * 0.7 * 8),
+      framerate: 1,
+      latencyMode: 'quality',
+      hevc: { format: 'hevc' },
+    });
+    canvases.forEach((canvas, index) => {
+      const frame = new VideoFrame(canvas, {
+        timestamp: index * 1_000_000,
+        visibleRect: { x: 0, y: 0, width, height },
+      });
+      try { encoder.encode(frame, { keyFrame: true }); }
+      finally { frame.close(); }
+    });
+    await _waitForAbortablePromise(encoder.flush(), signal, 'Export cancelled');
+    if (failure) throw failure;
+    if (!decoderConfig?.description || chunks.length !== canvases.length) {
+      throw new Error('HEVC encoder returned no decodable stills');
+    }
+    return { chunks, decoderConfig };
+  } finally {
+    if (encoder.state !== 'closed') encoder.close();
+  }
+}
+
+/** Build a spatial HEIC: two framed eyes in a stereo pair group. */
+async function _encodeSpatialHeic(item, eyes, signal) {
+  const width = eyes.left.width - (eyes.left.width % 2);
+  const height = eyes.left.height - (eyes.left.height % 2);
+  const { chunks, decoderConfig } = await _encodeHevcStills([eyes.left, eyes.right], width, height, signal);
+  const description = new Uint8Array(
+    decoderConfig.description instanceof ArrayBuffer
+      ? decoderConfig.description
+      : decoderConfig.description.buffer.slice(
+        decoderConfig.description.byteOffset,
+        decoderConfig.description.byteOffset + decoderConfig.description.byteLength
+      )
+  );
+  const H = InstaFrameHeif;
+  const original = H.parseHeif(new Uint8Array(await item.file.arrayBuffer()));
+  const pair = item.stereo.pair;
+  const hvcC = H.box('hvcC', description);
+  const ispe = H.imageSizeBox(width, height);
+  const pixi = H.fullBox('pixi', 0, 0, Uint8Array.of(3, 8, 8, 8));
+  const colr = _nclxBoxFor(decoderConfig.colorSpace);
+  // Camera parameters follow the photo into its new place inside the frame.
+  const cameraBoxes = (sourceId, eyeCanvas) => {
+    const boxes = [];
+    const cmin = H.parseCameraIntrinsics(original && H.itemProperty(original, sourceId, 'cmin'));
+    const placement = eyeCanvas.photoPlacement;
+    if (cmin && placement) {
+      const reframed = H.reframeCameraIntrinsics(
+        cmin, eyes.sourceWidth, eyes.sourceHeight, placement.x, placement.y, width, height, placement.scale
+      );
+      boxes.push(H.cameraIntrinsicsBox(reframed));
+    }
+    const cmex = original && H.itemProperty(original, sourceId, 'cmex');
+    if (cmex) boxes.push(cmex.box);
+    return boxes;
+  };
+  const eyeItem = (id, data, sourceId, eyeCanvas) => {
+    const properties = [hvcC, ispe, pixi, ...(colr ? [colr] : []), ...cameraBoxes(sourceId, eyeCanvas)];
+    return { id, type: 'hvc1', data, properties, essential: properties.map((_, index) => index === 0) };
+  };
+  const items = [
+    eyeItem(1, chunks[0], pair.left, eyes.left),
+    eyeItem(2, chunks[1], pair.right, eyes.right),
+  ];
+  const references = [];
+  const exifId = original && [...original.items.values()].find(entry => entry.type === 'Exif')?.id;
+  const exifData = exifId != null ? H.readItemData(original, exifId) : null;
+  if (exifData?.length) {
+    items.push({ id: 3, type: 'Exif', data: exifData, properties: [], hidden: true });
+    references.push({ type: 'cdsc', from: 3, to: [1] });
+  }
+  const bytes = H.buildHeif({
+    primaryId: 1,
+    items,
+    references,
+    groups: [{ type: 'ster', groupId: 4, entityIds: [1, 2] }],
+  });
+  return new Blob([bytes], { type: 'image/heic' });
+}
+
+/** Left and right eyes side by side in one picture (cross-platform stereo). */
+async function _encodeSideBySide(eyes, opts, signal) {
+  const canvas = document.createElement('canvas');
+  try {
+    canvas.width = eyes.left.width * 2;
+    canvas.height = eyes.left.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas rendering is unavailable');
+    ctx.drawImage(eyes.left, 0, 0);
+    ctx.drawImage(eyes.right, eyes.left.width, 0);
+    return await FrameEngine.canvasToBlob(canvas, { ...opts, signal });
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+/**
+ * Encode one photo item for download. Spatial photos keep their stereo pair
+ * as a spatial HEIC or side-by-side picture when that mode is chosen.
+ */
+async function _encodePhotoExport(item, opts, signal) {
+  const base = item.file.name.replace(/\.[^.]+$/, '');
+  const mode = _isSpatialItem(item) ? _effectiveSpatialMode() : '2d';
+  if (mode === '2d') {
+    const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal });
+    return { blob, name: `${base}_frame.${_photoExt(opts.format)}` };
+  }
+  const eyes = await _renderStereoEyes(item, { signal });
+  try {
+    if (mode === 'heic') {
+      return { blob: await _encodeSpatialHeic(item, eyes, signal), name: `${base}_frame_spatial.heic` };
+    }
+    return { blob: await _encodeSideBySide(eyes, opts, signal), name: `${base}_frame_sbs.${_photoExt(opts.format)}` };
+  } finally {
+    _releaseStereoEyes(eyes);
+  }
+}
+
+function _syncSpatialExportControls() {
+  const row = document.getElementById('spatialExportRow');
+  const hasSpatial = state.items.some(_isSpatialItem);
+  row?.classList.toggle('is-hidden', !hasSpatial);
+  document.getElementById('spatialDepthRow')?.classList.toggle('is-hidden', !hasSpatial);
+  const heicOption = document.getElementById('spatial-heic');
+  if (heicOption) heicOption.disabled = _spatialHeicSupported === false;
+  const note = document.getElementById('spatialExportNote');
+  if (note) {
+    const fallback = state.settings.exportSpatialMode === 'heic' && _spatialHeicSupported === false;
+    note.hidden = !hasSpatial || !fallback;
+  }
+  if (hasSpatial) void _detectSpatialHeicSupport();
+}
+
+// ─── Video codec diagnosis ────────────────────────────────────────────────────
+// Browsers report every undecodable video the same way. Reading the container's
+// codec lets a failure say what the file is and what will open it.
+const VIDEO_CODEC_LABELS = {
+  hevc: 'HEVC (H.265)', h264: 'H.264', av1: 'AV1', vp9: 'VP9', vp8: 'VP8',
+  prores: 'ProRes', mpeg4: 'MPEG-4 Part 2', mjpeg: 'Motion JPEG',
+};
+const VIDEO_CODEC_PROBES = {
+  hevc: info => [`video/mp4; codecs="${info.profile === 2 ? 'hvc1.2.4.L153.B0' : 'hvc1.1.6.L153.B0'}"`],
+  h264: () => ['video/mp4; codecs="avc1.640033"'],
+  av1: () => ['video/mp4; codecs="av01.0.12M.10"', 'video/webm; codecs="av01.0.12M.10"'],
+  vp9: () => ['video/webm; codecs="vp09.00.51.08"', 'video/mp4; codecs="vp09.00.51.08"'],
+  vp8: () => ['video/webm; codecs="vp8"'],
+  prores: () => ['video/quicktime; codecs="apcn"'],
+};
+const MAX_VIDEO_HEADER_BYTES = 32 * 1024 * 1024;
+
+function _browserSupportsVideoCodec(info) {
+  const probes = VIDEO_CODEC_PROBES[info?.codec];
+  if (!probes) return null;
+  const video = document.createElement('video');
+  return probes(info).some(type => {
+    try {
+      if (globalThis.MediaSource?.isTypeSupported?.(type)) return true;
+    } catch { /* fall back to canPlayType */ }
+    return video.canPlayType(type) !== '';
+  });
+}
+
+async function _sniffVideoCodec(file) {
+  const read = async (start, end) => new Uint8Array(await file.slice(start, end).arrayBuffer());
+  const head = await read(0, 64 * 1024);
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
+    return InstaFrameCore.parseMatroskaVideoCodec(head);
+  }
+  // ISO BMFF (MP4/MOV): the moov box may come after the media data.
+  let offset = 0;
+  for (let index = 0; index < 64 && offset + 8 <= file.size; index += 1) {
+    const header = offset < head.length - 16 ? head.subarray(offset, offset + 16) : await read(offset, offset + 16);
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    let size = view.getUint32(0);
+    const type = String.fromCharCode(header[4], header[5], header[6], header[7]);
+    if (size === 1 && header.length >= 16) size = Number(view.getBigUint64(8));
+    else if (size === 0) size = file.size - offset;
+    if (size < 8) return null;
+    if (type === 'moov') {
+      if (size > MAX_VIDEO_HEADER_BYTES) return null;
+      return InstaFrameCore.parseMp4VideoCodec(await read(offset, offset + size));
+    }
+    offset += size;
+  }
+  return null;
+}
+
+function _videoCodecLabel(info) {
+  const label = VIDEO_CODEC_LABELS[info.codec] || String(info.fourcc || '').trim().toUpperCase();
+  const extras = [];
+  if (info.codec === 'hevc' && info.profile === 2) extras.push('10-bit');
+  if (info.dolbyVision) extras.push('Dolby Vision');
+  return extras.length ? `${label} ${extras.join(' ')}` : label;
+}
+
+function _ensureVideoCodecInfo(item) {
+  if (!item?.isVideo) return Promise.resolve(null);
+  if (!item.videoCodecPromise) {
+    item.videoCodecPromise = _sniffVideoCodec(item.file)
+      .then(info => {
+        if (!info) return null;
+        item.videoCodecInfo = { ...info, supported: _browserSupportsVideoCodec(info) };
+        // A failure reported before the codec was known gets the precise reason.
+        if (item.videoFailure && item.status === 'error' && state.items.includes(item)) {
+          const message = _setVideoFailureError(item, item.videoFailure);
+          updateItemStatus(item);
+          if (state.selectedItemId === item.id) _setLivePreviewError(message);
+        }
+        return item.videoCodecInfo;
+      })
+      .catch(() => null);
+  }
+  return item.videoCodecPromise;
+}
+
+/** Record a video decode failure with the most specific explanation available. */
+function _setVideoFailureError(item, { timedOut = false } = {}) {
+  item.videoFailure = { timedOut };
+  const name = item.file.name;
+  const info = item.videoCodecInfo;
+  if (info?.supported === false) {
+    const codec = _videoCodecLabel(info);
+    if (info.codec === 'hevc') return _setLocalizedItemError(item, 'msgVideoHevcUnsupported', { name, codec });
+    if (info.codec === 'prores') return _setLocalizedItemError(item, 'msgVideoProResUnsupported', { name });
+    if (info.codec === 'h264') return _setLocalizedItemError(item, 'msgVideoH264Unsupported', { name });
+    return _setLocalizedItemError(item, 'msgVideoCodecUnsupported', { name, codec });
+  }
+  if (timedOut) return _setLocalizedItemError(item, 'msgVideoDecodeTimeout', { name });
+  if (info) return _setLocalizedItemError(item, 'msgVideoDecodeFailed', { name, codec: _videoCodecLabel(info) });
+  return _setLocalizedItemError(item, 'msgUnsupportedMedia', { name });
+}
+
 function _setLocalizedItemError(item, key, values = {}) {
   item.errorDiagnostic = '';
   item.errorKey = key;
@@ -844,6 +1675,21 @@ function _getItemErrorMessage(item) {
   return item?.errorKey ? tf(item.errorKey, item.errorValues || {}) : (item?.errorMsg || '');
 }
 
+// Bold / italic switches for each caption part (settings keys = element ids).
+const TEXT_STYLE_SETTING_IDS = [
+  'shotOnBold', 'modelBold', 'makerBold', 'exifBold',
+  'shotOnItalic', 'modelItalic', 'makerItalic', 'exifItalic',
+];
+
+function _syncTextStyleNames() {
+  document.querySelectorAll('input[data-style-part]').forEach(input => {
+    input.setAttribute('aria-label', tf('textStyleToggleName', {
+      part: t(input.dataset.stylePart),
+      style: t(input.dataset.styleKind),
+    }));
+  });
+}
+
 // ─── Font popularity ──────────────────────────────────────────────────────────
 const FONT_USAGE_KEY = 'instaframe_font_usage';
 const ALL_FONTS = [
@@ -865,40 +1711,258 @@ function recordFontUsage(family) {
   saveFontUsage(usage);
 }
 
+const SERIF_FONTS = new Set([
+  'Playfair Display', 'Cormorant Garamond', 'EB Garamond',
+  'Libre Baskerville', 'Cinzel', 'Source Serif 4',
+]);
+
+function _fontPreviewStack(family) {
+  return `'${family}', ${SERIF_FONTS.has(family) ? 'Georgia, serif' : 'system-ui, sans-serif'}`;
+}
+
+function _fontOptionId(family) {
+  return `fontOption-${family.replace(/[^a-z0-9]+/gi, '-')}`;
+}
+
+// The font control is a select-only combobox: each name is drawn in its own
+// typeface. Faces download only when the list opens or a photo needs the font.
+let _fontPickerOpen = false;
+let _fontPickerActive = null;
+let _fontPickerTypeahead = '';
+let _fontPickerTypeaheadTimer = null;
+
+function _setFontPickerPreviewing(enabled) {
+  document.getElementById('fontPicker')?.classList.toggle('has-font-preview', !!enabled);
+}
+
+function _syncFontPickerValue(family) {
+  const button = document.getElementById('fontFamily');
+  const label = document.getElementById('fontFamilyValue');
+  if (!button || !label) return;
+  button.setAttribute('value', family);
+  label.textContent = family;
+  // Applied through CSS only once previews are allowed, so the page does not
+  // fetch a frame font before it is needed.
+  label.style.setProperty('--font-preview', _fontPreviewStack(family));
+  document.querySelectorAll('#fontFamilyList [role="option"]').forEach(option => {
+    option.setAttribute('aria-selected', String(option.dataset.value === family));
+  });
+}
+
+function _installFontPickerValue(button) {
+  if (button._fontPickerValueInstalled) return;
+  button._fontPickerValueInstalled = true;
+  // Existing settings code reads and writes `.value`, as it did on the select.
+  Object.defineProperty(button, 'value', {
+    configurable: true,
+    get: () => button.getAttribute('value') || 'Inter',
+    set: value => {
+      const family = ALL_FONTS.includes(String(value)) ? String(value) : 'Inter';
+      _syncFontPickerValue(family);
+    },
+  });
+}
+
 function buildFontSelect() {
-  const sel = document.getElementById('fontFamily');
-  if (!sel) return;
+  const button = document.getElementById('fontFamily');
+  const list = document.getElementById('fontFamilyList');
+  if (!button || !list) return;
+  _installFontPickerValue(button);
   const usage   = loadFontUsage();
   const sorted  = [...ALL_FONTS].sort((a, b) => (usage[b] || 0) - (usage[a] || 0));
   const popular = sorted.slice(0, 5);
   const rest    = ALL_FONTS.filter(f => !popular.includes(f)).sort();
-  // Preserve current selection (sel.value if already set, else fall back to state)
-  const current = (sel.value && ALL_FONTS.includes(sel.value))
-    ? sel.value
-    : (state.settings.fontFamily || 'Inter');
+  const current = ALL_FONTS.includes(button.value) ? button.value : (state.settings.fontFamily || 'Inter');
 
-  sel.innerHTML = '';
-
-  const makeOpt = (f) => {
-    const o = document.createElement('option');
-    o.value = f;
-    o.textContent = f;
-    if (f === current) o.selected = true;
-    return o;
+  const makeGroup = (key, families) => {
+    const group = document.createElement('div');
+    group.setAttribute('role', 'group');
+    const heading = document.createElement('div');
+    heading.className = 'font-picker-group-label';
+    heading.id = `fontGroup-${key}`;
+    heading.textContent = t(key === 'popular' ? 'fontGroupPopular' : 'fontGroupMore');
+    group.setAttribute('aria-labelledby', heading.id);
+    group.appendChild(heading);
+    families.forEach(family => {
+      const option = document.createElement('div');
+      option.className = 'font-picker-option';
+      option.id = _fontOptionId(family);
+      option.setAttribute('role', 'option');
+      option.dataset.value = family;
+      option.textContent = family;
+      option.style.fontFamily = _fontPreviewStack(family);
+      group.appendChild(option);
+    });
+    return group;
   };
+  list.replaceChildren(
+    ...(popular.length ? [makeGroup('popular', popular)] : []),
+    ...(rest.length ? [makeGroup('more', rest)] : [])
+  );
+  _syncFontPickerValue(current);
+  if (_fontPickerOpen) _setFontPickerActive(_fontPickerActive || current);
+}
 
-  if (popular.length) {
-    const g1 = document.createElement('optgroup');
-    g1.label = t('fontGroupPopular');
-    popular.forEach(f => g1.appendChild(makeOpt(f)));
-    sel.appendChild(g1);
+function _fontPickerOptions() {
+  return [...document.querySelectorAll('#fontFamilyList [role="option"]')];
+}
+
+function _setFontPickerActive(family, { scroll = true } = {}) {
+  const button = document.getElementById('fontFamily');
+  const options = _fontPickerOptions();
+  const target = options.find(option => option.dataset.value === family) || options[0];
+  options.forEach(option => option.classList.toggle('is-active', option === target));
+  _fontPickerActive = target?.dataset.value || null;
+  if (target) {
+    button?.setAttribute('aria-activedescendant', target.id);
+    if (scroll) target.scrollIntoView({ block: 'nearest' });
+  } else {
+    button?.removeAttribute('aria-activedescendant');
   }
-  if (rest.length) {
-    const g2 = document.createElement('optgroup');
-    g2.label = t('fontGroupMore');
-    rest.forEach(f => g2.appendChild(makeOpt(f)));
-    sel.appendChild(g2);
-  }
+}
+
+function _positionFontPickerList() {
+  const button = document.getElementById('fontFamily');
+  const list = document.getElementById('fontFamilyList');
+  if (!button || !list || list.hidden) return;
+  const rect = button.getBoundingClientRect();
+  const margin = 8;
+  const below = window.innerHeight - rect.bottom - margin;
+  const above = rect.top - margin;
+  const openUp = below < 220 && above > below;
+  const maxHeight = Math.max(120, Math.min(340, openUp ? above : below));
+  list.style.left = `${Math.round(rect.left)}px`;
+  list.style.width = `${Math.round(rect.width)}px`;
+  list.style.maxHeight = `${Math.round(maxHeight)}px`;
+  list.style.top = openUp ? '' : `${Math.round(rect.bottom + 4)}px`;
+  list.style.bottom = openUp ? `${Math.round(window.innerHeight - rect.top + 4)}px` : '';
+}
+
+function openFontPicker() {
+  const button = document.getElementById('fontFamily');
+  const list = document.getElementById('fontFamilyList');
+  if (!button || !list || _fontPickerOpen || button.disabled) return;
+  _fontPickerOpen = true;
+  _setFontPickerPreviewing(true);
+  list.hidden = false;
+  button.setAttribute('aria-expanded', 'true');
+  _positionFontPickerList();
+  _setFontPickerActive(button.value);
+}
+
+function closeFontPicker({ restoreFocus = false } = {}) {
+  const button = document.getElementById('fontFamily');
+  const list = document.getElementById('fontFamilyList');
+  if (!_fontPickerOpen) return;
+  _fontPickerOpen = false;
+  if (list) list.hidden = true;
+  button?.setAttribute('aria-expanded', 'false');
+  button?.removeAttribute('aria-activedescendant');
+  if (restoreFocus) button?.focus();
+}
+
+function _chooseFontFamily(family) {
+  const button = document.getElementById('fontFamily');
+  closeFontPicker({ restoreFocus: true });
+  if (!button || !ALL_FONTS.includes(family) || family === button.value) return;
+  button.value = family;
+  button.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function setupFontPicker() {
+  const button = document.getElementById('fontFamily');
+  const list = document.getElementById('fontFamilyList');
+  if (!button || !list) return;
+  _installFontPickerValue(button);
+
+  button.addEventListener('click', () => {
+    if (_fontPickerOpen) closeFontPicker();
+    else openFontPicker();
+  });
+  button.addEventListener('keydown', event => {
+    const options = _fontPickerOptions();
+    const index = options.findIndex(option => option.dataset.value === _fontPickerActive);
+    const move = next => {
+      event.preventDefault();
+      if (!_fontPickerOpen) openFontPicker();
+      const bounded = Math.max(0, Math.min(options.length - 1, next));
+      _setFontPickerActive(options[bounded]?.dataset.value);
+    };
+    switch (event.key) {
+      case 'ArrowDown':
+        if (!_fontPickerOpen) { event.preventDefault(); openFontPicker(); return; }
+        move(index + 1);
+        return;
+      case 'ArrowUp':
+        if (!_fontPickerOpen) { event.preventDefault(); openFontPicker(); return; }
+        move(index - 1);
+        return;
+      case 'Home':
+        if (_fontPickerOpen) move(0);
+        return;
+      case 'End':
+        if (_fontPickerOpen) move(options.length - 1);
+        return;
+      case 'PageDown':
+        if (_fontPickerOpen) move(index + 6);
+        return;
+      case 'PageUp':
+        if (_fontPickerOpen) move(index - 6);
+        return;
+      case 'Enter':
+      case ' ':
+        event.preventDefault();
+        if (_fontPickerOpen && _fontPickerActive) _chooseFontFamily(_fontPickerActive);
+        else openFontPicker();
+        return;
+      case 'Escape':
+        if (_fontPickerOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeFontPicker();
+        }
+        return;
+      case 'Tab':
+        closeFontPicker();
+        return;
+      default:
+        break;
+    }
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      clearTimeout(_fontPickerTypeaheadTimer);
+      _fontPickerTypeahead += event.key.toLowerCase();
+      _fontPickerTypeaheadTimer = setTimeout(() => { _fontPickerTypeahead = ''; }, 600);
+      const match = options.find(option => option.dataset.value.toLowerCase().startsWith(_fontPickerTypeahead));
+      if (match) {
+        event.preventDefault();
+        if (!_fontPickerOpen) openFontPicker();
+        _setFontPickerActive(match.dataset.value);
+      }
+    }
+  });
+  button.addEventListener('blur', () => {
+    // Clicking an option keeps focus on the button (mousedown is prevented).
+    setTimeout(() => {
+      if (document.activeElement !== button) closeFontPicker();
+    }, 0);
+  });
+  list.addEventListener('mousedown', event => event.preventDefault());
+  list.addEventListener('click', event => {
+    const option = event.target.closest('[role="option"]');
+    if (option) _chooseFontFamily(option.dataset.value);
+  });
+  list.addEventListener('mousemove', event => {
+    const option = event.target.closest('[role="option"]');
+    if (option && option.dataset.value !== _fontPickerActive) {
+      _setFontPickerActive(option.dataset.value, { scroll: false });
+    }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (_fontPickerOpen && !event.target.closest('#fontPicker')) closeFontPicker();
+  }, true);
+  window.addEventListener('resize', () => closeFontPicker());
+  document.getElementById('sidebarScroll')?.addEventListener('scroll', () => _positionFontPickerList(), { passive: true });
+  document.addEventListener('instaframe:languagechange', () => buildFontSelect());
 }
 
 // ─── EXIF / Metadata Reading ──────────────────────────────────────────────────
@@ -1055,7 +2119,7 @@ async function readExif(file, signal = null) {
       lensModel:    cleanStr(raw.LensModel || ''),
       focalLength:  raw.FocalLength ? String(Math.round(raw.FocalLength)) : '',
       fNumber:      raw.FNumber     ? formatFNumber(raw.FNumber) : '',
-      exposureTime: raw.ExposureTime ? String(raw.ExposureTime) : '',
+      exposureTime: raw.ExposureTime ? InstaFrameCore.formatExposureTime(raw.ExposureTime) : '',
       iso:          raw.ISO || raw.ISOSpeedRatings || '',
       location,
       latitude,
@@ -1168,7 +2232,7 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
       if (!state.items.includes(item) || item.thumbnailController !== thumbnailController) return;
       if (reportFailure) {
         item.status = 'error';
-        _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+        _setVideoFailureError(item, { timedOut: true });
         updateItemStatus(item);
         showToast(item.errorMsg, 'error');
       }
@@ -1180,6 +2244,8 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
     let thumbnailCommitted = false;
     try {
       img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
+      if (Number.isFinite(img.sourceDuration) && img.sourceDuration > 0) item.sourceDuration = img.sourceDuration;
+      _recordSourceSize(item, img.sourceWidth, img.sourceHeight);
       let thumbnailSource = img;
       try {
         // Render a framed preview at thumbnail resolution
@@ -1226,7 +2292,7 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
       if (!reportFailure) return;
       if (item.status === 'error' && item.errorMsg) return;
       item.status = 'error';
-      _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+      _setVideoFailureError(item, { timedOut: error?.code === 'MEDIA_TIMEOUT' || /timed out/i.test(error?.message || '') });
       updateItemStatus(item);
       showToast(item.errorMsg, 'error');
     })
@@ -1446,7 +2512,9 @@ async function _addFiles(accepted, reservation) {
       errorKey:  null,
       errorValues: null,
       isVideo:   video,
+      heif:      !video && _isHeifCandidate(file),
     };
+    if (video) _ensureVideoCodecInfo(item);
     _consumeImportReservation(reservation, file);
     state.items.push(item);
     renderItem(item);
@@ -1462,7 +2530,9 @@ async function _addFiles(accepted, reservation) {
       } catch (error) {
         if (!isCurrentImport()) break;
         if (!state.items.includes(item)) continue;
-        if (error?.name === 'AbortError' && _pageResourcesReleased) {
+        if (error?.name === 'AbortError' && item.exportController) {
+          // Export owns the decoded source while the import finishes.
+        } else if (error?.name === 'AbortError' && _pageResourcesReleased) {
           item.status = 'pending';
           _clearItemError(item);
           updateItemStatus(item);
@@ -1504,6 +2574,7 @@ async function removeItem(id, options = {}) {
   if (idx !== -1) {
     _cancelPhotoThumbnail(state.items[idx]);
     _releaseItemOutput(state.items[idx]);
+    _releaseHeifResources(state.items[idx]);
     state.items.splice(idx, 1);
   }
   const el = document.getElementById(`item-${id}`);
@@ -1546,6 +2617,7 @@ async function clearAllItems(skipConfirm = false) {
   state.items.forEach(item => {
     _cancelPhotoThumbnail(item);
     _releaseItemOutput(item);
+    _releaseHeifResources(item);
   });
   state.items = [];
   state.selectedItemId = null;
@@ -1637,6 +2709,44 @@ async function _releaseItemThumbnailBeforeExport(item, signal) {
   if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
 }
 
+async function _loadPhotoForExport(item, signal) {
+  // A card thumbnail and the live preview can each decode the full source.
+  // Finish or cancel those reads before allocating the export canvas.
+  const thumbnailPromise = item.photoThumbnailPromise;
+  item.photoThumbnailNeedsRestart = false;
+  _cancelPhotoThumbnail(item);
+
+  const previewItem = state.items.find(entry => entry.id === state.selectedItemId) || state.items[0];
+  const previewWasShowingItem = previewItem === item;
+  if (previewWasShowingItem) {
+    clearTimeout(_livePreviewTimer);
+    _livePreviewTimer = null;
+    _previewRenderController?.abort();
+    _previewRenderController = null;
+    _renderSeq += 1;
+  }
+  await Promise.allSettled([
+    thumbnailPromise,
+    previewWasShowingItem ? _activeLivePreviewPromise : null,
+  ]);
+  const previewLoad = _imgLoadEntries.get(item.id);
+  if (previewLoad) await Promise.allSettled([previewLoad.promise]);
+  if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
+
+  const cached = _imgCache.get(item.id);
+  if (cached) {
+    _imgCache.delete(item.id);
+    URL.revokeObjectURL(cached.objUrl);
+    return cached.img;
+  }
+  const transient = _transientPreviewImages.get(item.id);
+  if (transient) {
+    _transientPreviewImages.delete(item.id);
+    return transient;
+  }
+  return FrameEngine.loadImage(await _photoDecodeFile(item, signal), { signal });
+}
+
 async function generateItem(item, onExternalProgress = null, parentSignal = null) {
   if (item.exportController || !state.items.includes(item)) return false;
   if (item.status === 'error') {
@@ -1663,7 +2773,6 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
-      // Avoid keeping a second decoder open for the live preview during export.
       _disposeLiveVideoSource();
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) {
@@ -1672,6 +2781,8 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
         throw error;
       }
       const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
+      // Finished photo frames are cheap to re-render; give their memory to the video.
+      _evictPhotoOutputs(item, MAX_RETAINED_OUTPUT_BYTES);
       const maxOutputBytes = MAX_RETAINED_OUTPUT_BYTES - _retainedOutputBytes(item);
       if (maxOutputBytes <= 0) throw _mediaResourceLimitError();
       const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
@@ -1702,7 +2813,18 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       }
       item.videoBlob = videoBlob;
     } else {
-      decodedPhoto = await FrameEngine.loadImage(item.file, { signal });
+      decodedPhoto = await _loadPhotoForExport(item, signal);
+      _recordSourceSize(item, decodedPhoto.naturalWidth, decodedPhoto.naturalHeight);
+      const photoLimits = _isSpatialItem(item) ? null : _photoExportLimits();
+      const expectedSize = photoLimits
+        ? FrameEngine.computePhotoOutputSize(
+          decodedPhoto.naturalWidth, decodedPhoto.naturalHeight,
+          state.settings, item.exif, photoLimits
+        )
+        : FrameEngine.computeOutputSize(
+          decodedPhoto.naturalWidth, decodedPhoto.naturalHeight, state.settings, item.exif
+        );
+      _evictPhotoOutputs(item, expectedSize.width * expectedSize.height * 4);
       // A full export decode proves that a prior live-preview failure was
       // transient. Let the selected item retry instead of remaining blacklisted.
       recoveredPreviewDecode = _imgFailed.delete(item.id);
@@ -1713,8 +2835,10 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           item.exif && item.exif.latitude != null && item.exif.longitude != null) {
         mapOverlayImg = await _fetchMapOverlayImage(item.exif.latitude, item.exif.longitude, 13, signal);
       }
-      const rendered = await FrameEngine.renderFrameWhenReady(decodedPhoto, item.exif, state.settings, { mapOverlayImg, signal });
-      if (_retainedOutputBytes(item) + rendered.width * rendered.height * 4 > MAX_RETAINED_OUTPUT_BYTES) {
+      const rendered = await FrameEngine.renderFrameWhenReady(
+        decodedPhoto, item.exif, state.settings, { mapOverlayImg, signal, photoLimits }
+      );
+      if (!_evictPhotoOutputs(item, rendered.width * rendered.height * 4)) {
         rendered.width = 0;
         rendered.height = 0;
         throw _mediaResourceLimitError();
@@ -1734,6 +2858,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       if (onExternalProgress) onExternalProgress(1);
     }
     item.status   = 'done';
+    item.outputAt = performance.now();
     _clearItemError(item);
   } catch (e) {
     const isCurrent = item.exportRunToken === runToken && state.items.includes(item);
@@ -1745,6 +2870,12 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       else if (e?.code === 'MEDIA_RESOURCE_LIMIT') _setLocalizedItemError(item, 'msgMediaResourceLimit');
       else if (e?.code === 'IMAGE_DECODE_TIMEOUT') _setLocalizedItemError(item, 'msgImageDecodeTimeout');
       else if (e?.code === 'VIDEO_EXPORT_UNAVAILABLE') _setLocalizedItemError(item, 'msgVideoExportUnavailable');
+      else if (item.isVideo && (e?.code === 'MEDIA_TIMEOUT' || e?.message === 'Video load failed')) {
+        _setVideoFailureError(item, { timedOut: e?.code === 'MEDIA_TIMEOUT' });
+      }
+      else if (item.heif && e?.code === 'IMAGE_DECODE_FAILED') {
+        _setLocalizedItemError(item, 'msgHeifDecodeFailed', { name: item.file.name });
+      }
       else _setRawItemError(item, e?.message || t('msgExportFailed'));
       if (!cancelled) {
         item.errorDiagnostic = [e?.name, e?.code, e?.message]
@@ -1777,6 +2908,17 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       if (item.status === 'done' && !hasThumbnail) item.thumbnailNeedsRestart = true;
       _restartInterruptedVideoThumbnail(item, { reportFailure: item.status !== 'done' });
     }
+    if (!item.isVideo && item.status === 'pending' && !_pageResourcesReleased) {
+      const hasThumbnail = document.getElementById(`preview-${item.id}`)
+        ?.querySelector('canvas.thumb-source');
+      if (!hasThumbnail) {
+        item.photoThumbnailNeedsRestart = true;
+        _restartInterruptedPhotoThumbnail(item);
+      }
+    }
+    if (!item.isVideo && item.status !== 'error' && state.selectedItemId === item.id) {
+      scheduleLivePreview();
+    }
   }
   return shouldUpdate && item.status === 'done';
 }
@@ -1803,6 +2945,8 @@ function _finishOwnedGlobalExport(controller) {
   return true;
 }
 
+// Renders every pending item without downloading. The UI exports on demand
+// through downloadAll; this remains the batch renderer for automation.
 async function generateAll() {
   if (_globalExportBusy || _reservedImportItems > 0) return;
   const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
@@ -1837,13 +2981,6 @@ async function generateAll() {
         basePct
       );
 
-      // Make room for the next full-size canvas, including outputs from earlier batches.
-      if (_retainedOutputBytes() > 128 * 1024 * 1024) {
-        for (const finished of state.items) {
-          if (_retainedOutputBytes() <= 128 * 1024 * 1024) break;
-          await _compactPhotoOutput(finished, controller.signal);
-        }
-      }
       await generateItem(item, p => {
         const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
         _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + itemSlot * p);
@@ -1985,21 +3122,22 @@ async function downloadSingle(id, { signal = null, runToken = null } = {}) {
   if (item.isVideo && item.videoBlob) {
     const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
     triggerDownload(item.videoBlob, name);
-  } else if (item.photoBlob) {
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(_photoExportOpts().format);
-    triggerDownload(item.photoBlob, name);
   } else if (item.canvas) {
-    const opts = _photoExportOpts();
-    const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal });
+    const { blob, name } = await _encodePhotoExport(item, _photoExportOpts(), signal);
     if (!isCurrent()) throw new DOMException('Export cancelled', 'AbortError');
-    const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
     triggerDownload(blob, name);
   }
 }
 
+const ZIP_CHUNK_FOLD_BYTES = 16 * 1024 * 1024;
+
 function _generateZipBlob(zip, signal, onUpdate) {
   return new Promise((resolve, reject) => {
+    // Generated bytes are folded into Blobs every few MiB so the browser can
+    // keep large archives out of the JavaScript heap.
+    let parts = [];
     let chunks = [];
+    let chunkBytes = 0;
     let settled = false;
     const stream = zip.generateInternalStream({
       type: 'uint8array',
@@ -2011,6 +3149,7 @@ function _generateZipBlob(zip, signal, onUpdate) {
     const fail = error => {
       if (settled) return;
       settled = true;
+      parts = [];
       chunks = [];
       try { stream.pause(); } catch (_) { /* best-effort JSZip stream teardown */ }
       cleanup();
@@ -2026,6 +3165,12 @@ function _generateZipBlob(zip, signal, onUpdate) {
           return;
         }
         chunks.push(data);
+        chunkBytes += data.byteLength || 0;
+        if (chunkBytes >= ZIP_CHUNK_FOLD_BYTES) {
+          parts.push(new Blob(chunks));
+          chunks = [];
+          chunkBytes = 0;
+        }
         try { onUpdate?.(meta); }
         catch (error) { fail(error); }
       })
@@ -2037,7 +3182,8 @@ function _generateZipBlob(zip, signal, onUpdate) {
           return;
         }
         try {
-          const blob = new Blob(chunks, { type: 'application/zip' });
+          const blob = new Blob([...parts, ...chunks], { type: 'application/zip' });
+          parts = [];
           chunks = [];
           settled = true;
           cleanup();
@@ -2056,21 +3202,11 @@ function _generateZipBlob(zip, signal, onUpdate) {
   });
 }
 
-// Keep finished photos compressed during batch downloads instead of retaining
-// one full RGBA canvas per image. The framed thumbnail has already been drawn.
-async function _compactPhotoOutput(item, signal) {
-  if (item.isVideo || item.status !== 'done' || !item.canvas) return;
-  const canvas = item.canvas;
-  const blob = await FrameEngine.canvasToBlob(canvas, { ..._photoExportOpts(), signal });
-  if (signal.aborted || !state.items.includes(item) || item.canvas !== canvas || item.status !== 'done') {
-    throw new DOMException('Export cancelled', 'AbortError');
-  }
-  if (_retainedOutputBytes(item) + blob.size > MAX_RETAINED_OUTPUT_BYTES) throw _mediaResourceLimitError();
-  item.photoBlob = blob;
-  item.canvas = null;
-  canvas.width = 0;
-  canvas.height = 0;
-}
+// Batch export streams one item at a time: render, encode, add to the archive,
+// then release the full-size photo frame. Memory stays near a single photo no
+// matter how many are exported. The batch is saved as one ZIP; if it exceeds
+// the browser memory budget, no partial archive is downloaded.
+const BATCH_ITEMS_PROGRESS = 0.9;
 
 async function downloadAll() {
   if (_globalExportBusy || _reservedImportItems > 0) return;
@@ -2078,192 +3214,158 @@ async function downloadAll() {
     showToast(t('msgNoImages'), 'warn');
     return;
   }
+  // Rendering happens on demand, so a lone item skips the ZIP and saves directly.
+  if (state.items.length === 1) {
+    await applyAndDownloadSingle(state.items[0].id);
+    return;
+  }
 
   const controller = new AbortController();
+  const { signal } = controller;
   _activeExportController = controller;
   setGlobalBusy(true);
-  _showOwnedExportProgress(controller, t('progressPreparing'), 0);
 
-  // Free full-size canvases before generating the rest of a large batch.
-  try {
-    for (const item of state.items) await _compactPhotoOutput(item, controller.signal);
-  } catch (error) {
-    if (!_ownsGlobalExport(controller)) return;
-    _finishOwnedGlobalExport(controller);
-    showToast(t(error?.name === 'AbortError' ? 'msgExportCancelled' : 'msgExportFailed'),
-      error?.name === 'AbortError' ? 'warn' : 'error');
-    return;
-  }
-
-  // Auto-generate pending items and retry failed items first
-  const candidates = state.items.filter(i => i.status === 'pending' || i.status === 'error');
-  const generationWeight = candidates.length ? 0.55 : 0;
-  const packingWeight = candidates.length ? 0.25 : 0.7;
-  const packingStart = generationWeight;
-  const zipStart = packingStart + packingWeight;
-  if (candidates.length) {
-    const total = candidates.length;
-    for (let idx = 0; idx < total; idx++) {
-      if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
-      const item    = candidates[idx];
-      const basePct = generationWeight * (idx / total);
-      const slot    = generationWeight / total;
-      const prefix  = `${idx + 1} / ${total}`;
-      _showOwnedExportProgress(controller, `${prefix}  —  ${item.file.name}`, basePct);
-      await generateItem(item, p => {
-        const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
-        _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, basePct + slot * p);
-      }, controller.signal);
-      try {
-        await _compactPhotoOutput(item, controller.signal);
-      } catch (error) {
-        if (!_ownsGlobalExport(controller)) return;
-        _finishOwnedGlobalExport(controller);
-        showToast(t(error?.name === 'AbortError' ? 'msgExportCancelled' : 'msgExportFailed'),
-          error?.name === 'AbortError' ? 'warn' : 'error');
-        return;
-      }
-    }
-  }
-
-  if (!_ownsGlobalExport(controller)) return;
-  if (controller.signal.aborted) {
-    _finishOwnedGlobalExport(controller);
-    showToast(t('msgExportCancelled'), 'warn');
-    return;
-  }
-
-  const done = state.items.filter(i => i.status === 'done' && (i.canvas || i.photoBlob || i.videoBlob));
-  const failedCount = state.items.filter(item => item.status === 'error').length;
-  if (!done.length) {
-    _finishOwnedGlobalExport(controller);
-    if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
-    else showToast(t('msgNoImages'), 'warn');
-    return;
-  }
-
-  _showOwnedExportProgress(controller, t('progressPreparing'), packingStart);
-
-  let zip;
-  try {
-    const JSZipCtor = await _waitForAbortablePromise(
-      loadVendorScript('vendor/jszip.min.js', 'JSZip'),
-      controller.signal,
-      'Export cancelled'
-    );
-    if (typeof JSZipCtor !== 'function') throw new TypeError('Invalid JSZip constructor');
-    zip = new JSZipCtor();
-  } catch (error) {
-    if (!_ownsGlobalExport(controller)) return;
-    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
-    _finishOwnedGlobalExport(controller);
-    showToast(t(cancelled ? 'msgExportCancelled' : 'msgDependencyLoadFailed'), cancelled ? 'warn' : 'error');
-    return;
-  }
-
-  const opts  = _photoExportOpts();
-  const total = done.length;
-  const retainedBytes = _retainedOutputBytes();
-  let encodedPhotoBytes = 0;
-  let archiveInputBytes = 0;
-  let packedEntries = 0;
+  const items = [...state.items];
+  const total = items.length;
+  const opts = _photoExportOpts();
   const usedZipEntryNames = new Set();
+  const abortError = () => new DOMException('Export cancelled', 'AbortError');
+  const isCurrent = () => !signal.aborted && _ownsGlobalExport(controller);
+  let JSZipCtor = null;
+  let zip = null;
+  let partPhotoBytes = 0;
+  let partArchiveBytes = 0;
+  let partEntries = 0;
+  let packedEntries = 0;
+  let failedCount = 0;
+  let itemsProgress = 0;
 
-  function addZipEntry(name, blob, encodedPhoto = false) {
-    const nextPhotoBytes = encodedPhotoBytes + (encodedPhoto ? (blob.size || 0) : 0);
-    const nextArchiveBytes = archiveInputBytes + (blob.size || 0);
-    const nextEntries = packedEntries + 1;
-    const estimatedPeak = InstaFrameCore.estimateZipPeakBytes(
-      retainedBytes,
-      nextPhotoBytes,
-      nextArchiveBytes,
-      nextEntries
-    );
-    if (estimatedPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
-    zip.file(_uniqueZipEntryName(name, usedZipEntryNames), blob);
-    encodedPhotoBytes = nextPhotoBytes;
-    archiveInputBytes = nextArchiveBytes;
-    packedEntries = nextEntries;
-  }
+  const fitsPeak = (photoBytes, archiveBytes, entries) => InstaFrameCore.estimateZipPeakBytes(
+    _retainedOutputBytes(), photoBytes, archiveBytes, entries
+  ) <= MAX_ZIP_PEAK_BYTES;
 
-  try {
-    for (let i = 0; i < total; i++) {
-      if (controller.signal.aborted || !_ownsGlobalExport(controller)) break;
-      const item = done[i];
-      _showOwnedExportProgress(
-        controller,
-        tf('progressPacking', { current: i + 1, total, name: item.file.name }),
-        packingStart + (i / total) * packingWeight
-      );
-
-      if (item.isVideo && item.videoBlob) {
-        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(item.videoBlob);
-        addZipEntry(name, item.videoBlob);
-      } else if (item.photoBlob) {
-        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-        addZipEntry(name, item.photoBlob);
-      } else if (item.canvas) {
-        const blob = await FrameEngine.canvasToBlob(item.canvas, { ...opts, signal: controller.signal });
-        const name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _photoExt(opts.format);
-        addZipEntry(name, blob, true);
-      }
-    }
-  } catch (error) {
-    if (!_ownsGlobalExport(controller)) return;
-    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
-    _finishOwnedGlobalExport(controller);
-    const messageKey = cancelled
-      ? 'msgExportCancelled'
-      : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
-    showToast(t(messageKey), cancelled ? 'warn' : 'error');
-    return;
-  }
-
-  if (!_ownsGlobalExport(controller)) return;
-  if (controller.signal.aborted) {
-    _finishOwnedGlobalExport(controller);
-    showToast(t('msgExportCancelled'), 'warn');
-    return;
-  }
-
-  let zipBlob;
-  try {
-    zipBlob = await _generateZipBlob(zip, controller.signal, meta => {
-      _showOwnedExportProgress(controller, t('progressZip'), zipStart + (1 - zipStart) * (meta.percent / 100));
+  const saveArchive = async () => {
+    const zipBlob = await _generateZipBlob(zip, signal, meta => {
+      _showOwnedExportProgress(controller, t('progressZip'),
+        BATCH_ITEMS_PROGRESS + (1 - BATCH_ITEMS_PROGRESS) * (meta.percent / 100));
     });
     const actualPeak = InstaFrameCore.estimateZipPeakBytes(
-      retainedBytes,
-      encodedPhotoBytes,
-      zipBlob.size,
-      packedEntries
+      _retainedOutputBytes(), partPhotoBytes, zipBlob.size, partEntries
     );
     if (actualPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
+    if (!isCurrent()) throw abortError();
+    _showOwnedExportProgress(controller, t('progressZip'), 1);
+    triggerDownload(zipBlob, 'instaframe_export.zip');
+    zip = null;
+  };
+
+  try {
+    _showOwnedExportProgress(controller, t('progressPreparing'), 0);
+    try {
+      JSZipCtor = await _waitForAbortablePromise(
+        loadVendorScript('vendor/jszip.min.js', 'JSZip'),
+        signal,
+        'Export cancelled'
+      );
+      if (typeof JSZipCtor !== 'function') throw new TypeError('Invalid JSZip constructor');
+    } catch (error) {
+      if (error?.name !== 'AbortError' && !signal.aborted) error.code = 'DEPENDENCY_LOAD_FAILED';
+      throw error;
+    }
+
+    for (let index = 0; index < total; index++) {
+      if (!isCurrent()) throw abortError();
+      const item = items[index];
+      if (!state.items.includes(item)) continue;
+      const prefix = `${index + 1} / ${total}`;
+      const itemStart = BATCH_ITEMS_PROGRESS * (index / total);
+      const itemSlot = BATCH_ITEMS_PROGRESS / total;
+      itemsProgress = itemStart;
+      _showOwnedExportProgress(controller, `${prefix}  —  ${item.isVideo ? '▶ ' : ''}${item.file.name}`, itemStart);
+
+      const hasOutput = item.status === 'done' && (item.isVideo ? !!item.videoBlob : !!item.canvas);
+      if (!hasOutput) {
+        await generateItem(item, p => {
+          const pctStr = item.isVideo ? `  ${Math.round(p * 100)}%` : '';
+          itemsProgress = itemStart + itemSlot * 0.8 * p;
+          _showOwnedExportProgress(controller, `${prefix}${pctStr}  —  ${item.file.name}`, itemsProgress);
+        }, signal);
+      }
+      if (!isCurrent()) throw abortError();
+      if (item.status !== 'done' || !(item.isVideo ? item.videoBlob : item.canvas)) {
+        failedCount += 1;
+        continue;
+      }
+
+      itemsProgress = itemStart + itemSlot * 0.8;
+      _showOwnedExportProgress(
+        controller,
+        tf('progressPacking', { current: index + 1, total, name: item.file.name }),
+        itemsProgress
+      );
+      let blob;
+      let name;
+      let photoBytes = 0;
+      if (item.isVideo) {
+        blob = item.videoBlob;
+        name = item.file.name.replace(/\.[^.]+$/, '') + '_frame.' + _videoExt(blob);
+      } else {
+        ({ blob, name } = await _encodePhotoExport(item, opts, signal));
+        if (!isCurrent()) throw abortError();
+        photoBytes = blob.size || 0;
+      }
+      const entryBytes = blob.size || 0;
+
+      if (zip && partEntries > 0 && !fitsPeak(partPhotoBytes + photoBytes, partArchiveBytes + entryBytes, partEntries + 1)) {
+        const error = new Error(t('msgZipSingleLimit'));
+        error.code = 'ZIP_SINGLE_LIMIT';
+        throw error;
+      }
+      if (!zip) {
+        zip = new JSZipCtor();
+        partPhotoBytes = 0;
+        partArchiveBytes = 0;
+        partEntries = 0;
+      }
+      if (!fitsPeak(partPhotoBytes + photoBytes, partArchiveBytes + entryBytes, partEntries + 1)) {
+        throw _mediaResourceLimitError();
+      }
+      zip.file(_uniqueZipEntryName(name, usedZipEntryNames), blob);
+      partPhotoBytes += photoBytes;
+      partArchiveBytes += entryBytes;
+      partEntries += 1;
+      packedEntries += 1;
+
+      // The encoded bytes are in the archive; the full-size frame can go.
+      if (!item.isVideo) _releasePhotoOutputKeepingThumbnail(item);
+      itemsProgress = itemStart + itemSlot;
+      _showOwnedExportProgress(controller, `${prefix}  —  ${item.file.name}`, itemsProgress);
+    }
+
+    if (!isCurrent()) throw abortError();
+    if (!packedEntries) {
+      _finishOwnedGlobalExport(controller);
+      updateUI();
+      showToast(failedCount ? tf('msgBatchFailed', { count: failedCount }) : t('msgNoImages'), failedCount ? 'error' : 'warn');
+      return;
+    }
+    await saveArchive();
   } catch (error) {
     if (!_ownsGlobalExport(controller)) return;
-    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
+    const cancelled = signal.aborted || error?.name === 'AbortError';
     _finishOwnedGlobalExport(controller);
+    updateUI();
     const messageKey = cancelled
       ? 'msgExportCancelled'
-      : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit' : 'msgExportFailed';
+      : error?.code === 'ZIP_SINGLE_LIMIT' ? 'msgZipSingleLimit'
+        : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit'
+          : error?.code === 'DEPENDENCY_LOAD_FAILED' ? 'msgDependencyLoadFailed' : 'msgExportFailed';
     showToast(t(messageKey), cancelled ? 'warn' : 'error');
     return;
   }
 
-  if (!_ownsGlobalExport(controller)) return;
-  if (controller.signal.aborted) {
-    _finishOwnedGlobalExport(controller);
-    showToast(t('msgExportCancelled'), 'warn');
-    return;
-  }
-  _showOwnedExportProgress(controller, t('progressZip'), 1);
-  try {
-    triggerDownload(zipBlob, 'instaframe_export.zip');
-  } catch (_) {
-    _finishOwnedGlobalExport(controller);
-    showToast(t('msgExportFailed'), 'error');
-    return;
-  }
   _finishOwnedGlobalExport(controller);
+  updateUI();
   if (failedCount) showToast(tf('msgBatchDownloadPartial', { count: failedCount }), 'error');
 }
 
@@ -2306,12 +3408,47 @@ function _mediaResourceLimitError() {
   return error;
 }
 
+// Finished full-size photo frames are a cache: they can always be rendered
+// again from the source file. Release the oldest ones (never the item being
+// exported or one with work in flight) until neededBytes fits the budget.
+function _evictPhotoOutputs(item, neededBytes) {
+  const fits = () => _retainedOutputBytes(item) + neededBytes <= MAX_RETAINED_OUTPUT_BYTES;
+  if (fits()) return true;
+  const evictable = state.items
+    .filter(other => other !== item && !other.isVideo && other.canvas &&
+      other.status === 'done' && !other.exportController)
+    .sort((a, b) => (a.outputAt || 0) - (b.outputAt || 0));
+  for (const other of evictable) {
+    if (fits()) break;
+    _releasePhotoOutputKeepingThumbnail(other);
+  }
+  return fits();
+}
+
+// A released photo is rendered again on demand. Its small framed card
+// thumbnail still matches the current settings, so the card keeps showing it
+// until a setting or EXIF edit makes it stale.
+function _releasePhotoOutputKeepingThumbnail(item) {
+  _releaseItemOutput(item);
+  item.status = 'pending';
+  item.framedThumbnailKept = true;
+  updateItemStatus(item);
+  updateItemPreview(item);
+}
+
+function _recordSourceSize(item, width, height) {
+  if (!item || !(width > 0) || !(height > 0)) return;
+  if (item.sourceWidth === width && item.sourceHeight === height) return;
+  item.sourceWidth = width;
+  item.sourceHeight = height;
+  updateOutputEstimates();
+}
+
 function _retainedOutputBytes(excludeItem = null) {
   return state.items.reduce((sum, item) => {
     if (item === excludeItem) return sum;
     if (item.canvas) sum += item.canvas.width * item.canvas.height * 4;
     if (item.videoBlob) sum += item.videoBlob.size || 0;
-    if (item.photoBlob) sum += item.photoBlob.size || 0;
     return sum;
   }, 0);
 }
@@ -2412,14 +3549,20 @@ function restoreSettings() {
   const textPicker = document.getElementById('textColorPicker');
   if (textPicker) textPicker.disabled = (saved.textColorMode || 'auto') !== 'custom';
 
-  const restoredMapOverlay = Boolean(
-    saved.showMapOverlay && hasLocationNetworkConsent() && _getConfiguredMapboxToken()
-  );
+  const restoredMapOverlay = Boolean(saved.showMapOverlay && hasLocationNetworkConsent());
 
-  // Checkboxes
+  // Checkboxes. Older saves had one bold and one italic switch for the
+  // camera line: bold covered "Shot on" and the model, italic all three.
+  const legacyBold = saved.cameraNameBold;
+  const legacyItalic = saved.cameraNameItalic;
   [
-    ['cameraNameBold',   saved.cameraNameBold],
-    ['cameraNameItalic', saved.cameraNameItalic],
+    ['shotOnBold',       saved.shotOnBold ?? legacyBold],
+    ['modelBold',        saved.modelBold ?? legacyBold],
+    ['makerBold',        saved.makerBold],
+    ['exifBold',         saved.exifBold],
+    ['shotOnItalic',     saved.shotOnItalic ?? legacyItalic],
+    ['modelItalic',      saved.modelItalic ?? legacyItalic],
+    ['makerItalic',      saved.makerItalic ?? legacyItalic],
     ['exifItalic',       saved.exifItalic],
     ['showShotOn',       saved.showShotOn],
     ['showExifInfo',     saved.showExifInfo],
@@ -2519,6 +3662,16 @@ function restoreSettings() {
     const valEl = document.getElementById('photoQualityRangeVal');
     if (valEl) valEl.textContent = saved.exportPhotoQuality + '%';
   }
+  if (saved.exportSpatialMode) {
+    const r = _findRadioByValue('exportSpatialMode', saved.exportSpatialMode);
+    if (r) r.checked = true;
+  }
+  if (saved.spatialDepth != null) {
+    const el = document.getElementById('spatialDepthRange');
+    if (el) el.value = saved.spatialDepth;
+    const valEl = document.getElementById('spatialDepthRangeVal');
+    if (valEl) valEl.textContent = Number(saved.spatialDepth).toFixed(1) + '%';
+  }
   // Video format: defer to after initVideoFormatOptions runs (handled there)
   state.settings.exportVideoFormat = saved.exportVideoFormat || '';
   // Video bitrate
@@ -2531,10 +3684,11 @@ function restoreSettings() {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function markItemsPending(predicate = () => true) {
   const affected = state.items.filter(item =>
-    predicate(item) && (item.status === 'done' || item.status === 'processing')
+    predicate(item) && (item.status === 'done' || item.status === 'processing' || item.framedThumbnailKept)
   );
   if (affected.length) _abortGlobalExportForMutation();
   affected.forEach(item => {
+    item.framedThumbnailKept = false;
     item.status = 'pending';
     item.progress = 0;
     _clearItemError(item);
@@ -2593,9 +3747,9 @@ function applySettings(options = {}) {
   state.settings.exifFontScale    = parseFloat(document.getElementById('exifFontRange').value);
   state.settings.lineGapScale     = parseFloat(document.getElementById('lineGapRange').value);
   state.settings.textOffsetY      = parseFloat(document.getElementById('textOffsetRange').value);
-  state.settings.cameraNameBold   = document.getElementById('cameraNameBold').checked;
-  state.settings.cameraNameItalic = document.getElementById('cameraNameItalic').checked;
-  state.settings.exifItalic       = document.getElementById('exifItalic').checked;
+  TEXT_STYLE_SETTING_IDS.forEach(id => {
+    state.settings[id] = !!document.getElementById(id)?.checked;
+  });
   state.settings.showShotOn       = document.getElementById('showShotOn').checked;
   state.settings.showExifInfo     = document.getElementById('showExifInfo').checked;
   state.settings.cameraNameOnly   = false; // removed from UI; always false
@@ -2635,6 +3789,9 @@ function applySettings(options = {}) {
   const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
   state.settings.exportPhotoFormat  = pFmt ? pFmt.value : 'jpeg';
   state.settings.exportPhotoQuality = parseInt(document.getElementById('photoQualityRange')?.value || '92', 10);
+  const spatialMode = document.querySelector('input[name="exportSpatialMode"]:checked');
+  state.settings.exportSpatialMode = spatialMode ? spatialMode.value : 'heic';
+  state.settings.spatialDepth = parseFloat(document.getElementById('spatialDepthRange')?.value || '1');
   // (video export settings read via onVideoExportSettingChange)
 
   // Mark all done items as pending (frame settings changed → need re-render)
@@ -2682,9 +3839,7 @@ function _syncDomWithStateSettings() {
   setVal('textColorPicker', s.textColor || '#FFFFFF');
   setVal('photoQualityRange', s.exportPhotoQuality);
 
-  setChecked('cameraNameBold', s.cameraNameBold);
-  setChecked('cameraNameItalic', s.cameraNameItalic);
-  setChecked('exifItalic', s.exifItalic);
+  TEXT_STYLE_SETTING_IDS.forEach(id => setChecked(id, s[id]));
   setChecked('showShotOn', s.showShotOn);
   setChecked('showExifInfo', s.showExifInfo);
   setChecked('showLocation', s.showLocation);
@@ -2705,6 +3860,9 @@ function _syncDomWithStateSettings() {
   if (orientation) orientation.checked = true;
   const photoFmt = document.querySelector(`input[name="exportPhotoFormat"][value="${s.exportPhotoFormat}"]`);
   if (photoFmt) photoFmt.checked = true;
+  const spatialMode = document.querySelector(`input[name="exportSpatialMode"][value="${s.exportSpatialMode || 'heic'}"]`);
+  if (spatialMode) spatialMode.checked = true;
+  setVal('spatialDepthRange', s.spatialDepth ?? 1);
   const videoFmt = document.querySelector(`input[name="exportVideoFormat"][value="${s.exportVideoFormat}"]`);
   if (videoFmt) videoFmt.checked = true;
   const bitrate = document.querySelector(`input[name="exportVideoBitrate"][value="${s.exportVideoBitrate}"]`);
@@ -2724,6 +3882,7 @@ function _syncDomWithStateSettings() {
   setText('textOffsetRangeVal', parseFloat(s.textOffsetY).toFixed(1));
   setText('outerPaddingRangeVal', parseInt(s.outerPadding, 10) + '%');
   setText('photoQualityRangeVal', parseInt(s.exportPhotoQuality, 10) + '%');
+  setText('spatialDepthRangeVal', Number(s.spatialDepth ?? 1).toFixed(1) + '%');
 
   // Frame background mode
   const bgR = document.querySelector(`input[name="frameBackground"][value="${s.frameBackground || 'color'}"]`);
@@ -2759,8 +3918,7 @@ function applySettingsSnapshot(snapshot) {
   if (!snapshot) return;
   _historyLocked = true;
   const nextSettings = { ...snapshot.settings };
-  if (nextSettings.showMapOverlay &&
-      (!hasLocationNetworkConsent() || !_getConfiguredMapboxToken())) {
+  if (nextSettings.showMapOverlay && !hasLocationNetworkConsent()) {
     nextSettings.showMapOverlay = false;
   }
   state.settings = nextSettings;
@@ -2839,7 +3997,19 @@ function updateLiveExifPanel() {
 function toggleLiveExifPanel() {
   const wrap = document.getElementById('previewExifWrap');
   if (!wrap) return;
-  const open = wrap.classList.toggle('exif-open');
+  const open = !wrap.classList.contains('exif-open');
+  setLiveExifPanelOpen(open);
+  if (!_usesMobileLayout()) {
+    const prefs = loadPrefs();
+    prefs.exifEditorOpen = open;
+    savePrefs(prefs);
+  }
+}
+
+function setLiveExifPanelOpen(open) {
+  const wrap = document.getElementById('previewExifWrap');
+  if (!wrap) return;
+  wrap.classList.toggle('exif-open', open);
   document.querySelector('.preview-exif-drawer-header')?.setAttribute('aria-expanded', String(open));
   const content = document.getElementById('previewExifContent');
   if (content) {
@@ -2920,6 +4090,7 @@ function applyLiveExifEdit(item, nextExif) {
   syncCard('exif-iso',      item.exif.iso);
   syncCard('exif-location', item.exif.location);
 
+  item.framedThumbnailKept = false;
   item.status = 'pending';
   _clearItemError(item);
   _releaseItemOutput(item);
@@ -2957,6 +4128,7 @@ function _applyResolvedLocation(item, latitude, longitude, label) {
   if (input && getSelectedPreviewItem()?.id === item.id) input.value = item.exif.location;
   const cardInput = document.getElementById(`exif-location-${item.id}`);
   if (cardInput) cardInput.value = item.exif.location;
+  item.framedThumbnailKept = false;
   item.status = 'pending';
   _clearItemError(item);
   _releaseItemOutput(item);
@@ -3485,7 +4657,14 @@ function scheduleLivePreview() {
   // HTML preview updates are near-instant; canvas still needs debounce
   _livePreviewTimer = setTimeout(() => {
     _livePreviewTimer = null;
-    renderLivePreview().catch(_handleLivePreviewRenderFailure);
+    const task = renderLivePreview();
+    _activeLivePreviewPromise = task;
+    task
+      .then(() => { if (_spatialPreview.on) return _refreshSpatialPreview(); })
+      .catch(_handleLivePreviewRenderFailure)
+      .finally(() => {
+        if (_activeLivePreviewPromise === task) _activeLivePreviewPromise = null;
+      });
   }, 80);
 }
 
@@ -3782,6 +4961,7 @@ function selectItem(id, { switchMobileTab = true } = {}) {
     _queueLoadedMediaFocus();
   }
   updateLiveExifPanel();
+  updateOutputEstimates();
   scheduleLivePreview();
 }
 
@@ -3813,7 +4993,7 @@ function _previewSettingsHash() {
     s.frameColor, s.frameBackground, s.blurRadius, s.blurStyle, s.blurBrightness,
     s.thicknessScale, s.imageOffsetY, s.fontFamily,
     s.shotOnFontScale, s.exifFontScale, s.lineGapScale, s.textOffsetY,
-    s.cameraNameBold, s.cameraNameItalic, s.exifItalic, s.textColorMode, s.textColor,
+    ...TEXT_STYLE_SETTING_IDS.map(id => !!s[id]), s.textColorMode, s.textColor,
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
@@ -3853,7 +5033,6 @@ function _releaseItemOutput(item) {
   item.thumbnailController = null;
   if (item.canvas) { item.canvas.width = 0; item.canvas.height = 0; }
   item.canvas = null;
-  item.photoBlob = null;
   item.videoBlob = null;
 }
 
@@ -3884,7 +5063,14 @@ async function _loadPreviewImage(item, { retainUncached = false } = {}) {
 }
 
 async function _decodePreviewImage(item, signal, retainUncached) {
-  const objUrl = URL.createObjectURL(item.file);
+  let source;
+  try {
+    source = await _photoDecodeFile(item, signal);
+  } catch (error) {
+    if (error?.name !== 'AbortError') _imgFailed.add(item.id);
+    throw error;
+  }
+  const objUrl = URL.createObjectURL(source);
   const img    = new Image();
   await new Promise((resolve, reject) => {
     let settled = false;
@@ -4013,6 +5199,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
 
   if (emptyEl) emptyEl.style.display = 'none';
   pane.classList.add('has-preview');
+  _showLayoutIssues(src.layoutIssues);
   _syncPreviewControlAvailability();
   _settleLoadedMediaFocus();
 }
@@ -4031,6 +5218,11 @@ function _clearLivePreviewDetail() {
 }
 
 function _drawVisiblePreviewDetail(canvas, pane, src) {
+  // The 3D preview alternates whole eyes; a 2D detail layer would cover them.
+  if (_spatialPreview.on && _isSpatialItem(getSelectedPreviewItem())) {
+    _clearLivePreviewDetail();
+    return;
+  }
   const detail = document.getElementById('livePreviewDetailCanvas');
   if (_previewGestureActive || !detail || !canvas.width || !canvas.height || !src?.width || !src?.height) return;
   const canvasRect = canvas.getBoundingClientRect();
@@ -4144,11 +5336,6 @@ function _scheduleVideoCanvasPreviewFrame(video, callback, waitingForData = fals
 
 function _stopVideoCanvasPreview() {
   _cancelVideoCanvasPreviewFrame();
-  if (_videoPreviewBaseCanvas) {
-    _videoPreviewBaseCanvas.width = 0;
-    _videoPreviewBaseCanvas.height = 0;
-    _videoPreviewBaseCanvas = null;
-  }
   _videoPreviewItemId = null;
 }
 
@@ -4171,6 +5358,7 @@ function _setLivePreviewError(message = '') {
   const error = document.getElementById('livePreviewError');
   if (!error) return;
   if (message) {
+    _showLayoutIssues([]);
     error.hidden = false;
     error.textContent = message;
     const toast = document.getElementById('toast');
@@ -4214,7 +5402,7 @@ function _disposeLiveVideoSource() {
   if (objUrl) URL.revokeObjectURL(objUrl);
 }
 
-function _failLiveVideoPreview(itemId, generation) {
+function _failLiveVideoPreview(itemId, generation, { timedOut = false } = {}) {
   const video = document.getElementById('livePreviewVideo');
   if (!video || video._srcId !== itemId || video._previewSourceGeneration !== generation) return;
   const item = state.items.find(candidate => candidate.id === itemId);
@@ -4236,7 +5424,7 @@ function _failLiveVideoPreview(itemId, generation) {
 
   if (!item) return;
   item.status = 'error';
-  const message = _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+  const message = _setVideoFailureError(item, { timedOut });
   updateItemStatus(item);
   _setLivePreviewError(message);
 }
@@ -4248,7 +5436,7 @@ function _armLiveVideoSourceHandlers(video, item) {
   video._previewErrorHandler = () => _failLiveVideoPreview(item.id, generation);
   video.addEventListener('error', video._previewErrorHandler);
   video._previewReadinessGuard = setTimeout(
-    () => _failLiveVideoPreview(item.id, generation),
+    () => _failLiveVideoPreview(item.id, generation, { timedOut: true }),
     LIVE_VIDEO_PREVIEW_GUARD_MS
   );
   return generation;
@@ -4338,11 +5526,9 @@ function _startVideoCanvasPreview(item) {
     const ctx = canvas.getContext('2d');
     ctx.save();
     ctx.scale(targetW / layout.canvasW, targetH / layout.canvasH);
-    _videoPreviewBaseCanvas = FrameEngine.drawVideoFrameSync(
-      ctx, video, item.exif || {}, state.settings, layout,
-      _videoPreviewBaseCanvas, Math.min(targetW / layout.canvasW, targetH / layout.canvasH)
-    );
+    FrameEngine.drawVideoFrameSync(ctx, video, item.exif || {}, state.settings, layout);
     ctx.restore();
+    _showLayoutIssues(layout.layoutIssues);
     _clearLiveVideoReadinessGuard(video);
 
     applyPreviewTransform();
@@ -4394,12 +5580,12 @@ async function renderLivePreview() {
 
   const item = (state.selectedItemId && state.items.find(i => i.id === state.selectedItemId))
              || state.items[0];
+  if (!item.isVideo && item.exportController) return;
 
   // ── Video: canvas-based framed preview ────────────────────────────────────
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
     _clearLivePreviewDetail();
-    // A second video decoder can exhaust limited mobile decoder resources.
     if (state.items.some(candidate => candidate.isVideo && candidate.status === 'processing')) {
       _disposeLiveVideoSource();
       return;
@@ -4433,6 +5619,13 @@ async function renderLivePreview() {
   if (liveVideo) liveVideo.style.display = 'none';
   pane.classList.remove('has-video');
   _syncPreviewControlAvailability();
+
+  if (!_isSpatialItem(item) && item.status === 'done' && item.canvas) {
+    _drawFrameToCanvas(canvas, pane, emptyEl, item.canvas);
+    applyPreviewTransform();
+    _drawVisiblePreviewDetail(canvas, pane, item.canvas);
+    return;
+  }
 
   // ── Canvas preview with caching ────────────────────────────────────────────
   const hash   = `${item.id}|${_previewSettingsHash()}`;
@@ -4615,7 +5808,7 @@ function _startPhotoThumbnail(item) {
   let thumbnailTimedOut = false;
   let retryAfterTimeout = false;
 
-  const thumbnailPromise = _queuePhotoDecode(item, signal, () => new Promise((resolve, reject) => {
+  function loadCardPhotoThumbnail(source) { return new Promise((resolve, reject) => {
     if (signal.aborted || !state.items.includes(item) || !card.isConnected) {
       reject(new DOMException('Thumbnail cancelled', 'AbortError'));
       return;
@@ -4624,7 +5817,7 @@ function _startPhotoThumbnail(item) {
       thumbnailTimedOut = true;
       controller.abort();
     }, PHOTO_THUMBNAIL_GUARD_MS);
-    const objectUrl = URL.createObjectURL(item.file);
+    const objectUrl = URL.createObjectURL(source);
     thumbnail._objectUrl = objectUrl;
     let settled = false;
     const cleanup = () => {
@@ -4646,6 +5839,7 @@ function _startPhotoThumbnail(item) {
         return;
       }
       item.photoThumbnailRetryCount = 0;
+      _recordSourceSize(item, thumbnail.naturalWidth, thumbnail.naturalHeight);
       finish(resolve, undefined, 'compact');
     };
     const failed = () => {
@@ -4671,7 +5865,12 @@ function _startPhotoThumbnail(item) {
     } catch (error) {
       finish(reject, error, 'discard');
     }
-  }))
+  }); }
+  // HEIC files are converted first; the decode guard starts once a
+  // browser-decodable source exists.
+  const thumbnailPromise = _queuePhotoDecode(item, signal, async () => (
+    loadCardPhotoThumbnail(await _photoDecodeFile(item, signal))
+  ))
     .catch(error => {
       if (!state.items.includes(item)) return;
       if (error?.name === 'AbortError') {
@@ -4694,10 +5893,13 @@ function _startPhotoThumbnail(item) {
         return;
       }
       _discardCardPhotoThumbnail(card, thumbnail);
-      if (error?.code === 'IMAGE_DECODE_FAILED') {
+      if (error?.code === 'IMAGE_DECODE_FAILED' || error?.code === 'IMAGE_DECODE_TIMEOUT' ||
+          error?.code === 'MEDIA_RESOURCE_LIMIT') {
         _imgFailed.add(item.id);
         item.status = 'error';
-        const message = _setLocalizedItemError(item, 'msgUnsupportedMedia', { name: item.file.name });
+        const message = error.code === 'MEDIA_RESOURCE_LIMIT'
+          ? _setLocalizedItemError(item, 'msgMediaResourceLimit')
+          : _setLocalizedItemError(item, item.heif ? 'msgHeifDecodeFailed' : 'msgUnsupportedMedia', { name: item.file.name });
         updateItemStatus(item);
         const selected = state.selectedItemId === item.id;
         if (selected) _setLivePreviewError(message);
@@ -4739,20 +5941,23 @@ function renderItem(item) {
     <button type="button" class="card-preview" id="preview-${item.id}" aria-pressed="false" aria-label="${escHtml(tf('selectPreview', { name: item.file.name }))}" aria-describedby="status-badge-${item.id}">
       ${item.isVideo ? '<div class="video-badge">▶</div>' : ''}
       <img class="thumb-orig" alt="">
-      <div class="card-status" id="status-badge-${item.id}">
+      <div class="card-status" id="status-badge-${item.id}" data-status="pending">
         <span class="status-dot pending"></span>
         <span class="status-text" data-i18n="statusPending">${t('statusPending')}</span>
       </div>
     </button>
     <div class="card-body">
-      <div class="card-filename">${escHtml(item.file.name)}</div>
-      <div class="card-error-details" id="error-details-${item.id}" hidden></div>
+      <div class="card-text">
+        <div class="card-filename">${escHtml(item.file.name)}</div>
+        <div class="card-meta" id="card-meta-${item.id}"></div>
+        <div class="card-error-details" id="error-details-${item.id}" hidden></div>
+      </div>
       <div class="card-actions">
-        <button class="btn btn-sm btn-primary" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}">
-          <span data-i18n="downloadSingle">${t('downloadSingle')}</span>
+        <button type="button" class="card-icon-btn" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}" title="${escHtml(t('downloadSingle'))}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>
         </button>
-        <button class="btn btn-sm btn-danger" data-action="remove" aria-label="${escHtml(tf('removeNamed', { name: item.file.name }))}">
-          <span data-i18n="remove">${t('remove')}</span>
+        <button type="button" class="card-icon-btn" data-action="remove" aria-label="${escHtml(tf('removeNamed', { name: item.file.name }))}" title="${escHtml(t('remove'))}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l.8 12.5h9.4l.8-12.5"/></svg>
         </button>
       </div>
     </div>
@@ -4792,6 +5997,7 @@ function updateItemStatus(item) {
   const details = document.getElementById(`error-details-${item.id}`);
 
   dot.className = `status-dot ${item.status}`;
+  badge.dataset.status = item.status;
   const errorMessage = item.status === 'error' ? _getItemErrorMessage(item) : '';
   if (errorMessage) {
     item.errorMsg = errorMessage;
@@ -4801,9 +6007,7 @@ function updateItemStatus(item) {
     preview?.setAttribute('aria-controls', details.id);
     preview?.setAttribute('aria-label', tf('showErrorDetailsNamed', { name: item.file.name }));
     details.textContent = errorMessage;
-    if (item.errorDiagnostic && item.errorDiagnostic !== errorMessage) {
-      details.textContent += `\n${item.errorDiagnostic}`;
-    }
+    if (item.errorDiagnostic && item.errorDiagnostic !== errorMessage) details.textContent += `\n${item.errorDiagnostic}`;
   } else {
     if (details) { details.hidden = true; details.textContent = ''; }
     preview?.removeAttribute('aria-expanded');
@@ -4836,17 +6040,15 @@ function updateItemPreview(item) {
   const dlBtn      = document.getElementById(`dl-btn-${item.id}`);
   if (!previewDiv) return;
 
-  if (item.status === 'done' && (item.canvas || item.photoBlob || item.videoBlob)) {
+  if (item.status === 'done' && (item.canvas || item.videoBlob)) {
     const sourceCanvas = previewDiv.querySelector('canvas.thumb-source');
-    if (sourceCanvas && (!item.photoBlob || previewDiv.querySelector('canvas.thumb-framed'))) {
-      sourceCanvas.style.display = 'none';
-    }
+    if (sourceCanvas) sourceCanvas.style.display = 'none';
     if (item.isVideo) {
       // Video done: thumbnail stays, add a "ready" overlay on badge; enable download
       const framedCanvas = previewDiv.querySelector('canvas.thumb-framed');
       const origThumb = previewDiv.querySelector('img.thumb-orig');
       if (origThumb) origThumb.style.display = framedCanvas ? 'none' : '';
-    } else if (item.canvas) {
+    } else {
       // Photo done: replace thumbnail with framed canvas preview
       let existing = previewDiv.querySelector('canvas.thumb-framed');
       if (!existing) {
@@ -4882,7 +6084,11 @@ function updateItemPreview(item) {
     const origThumb = previewDiv.querySelector('img.thumb-orig');
     if (item.isVideo && framedCanvas) {
       if (origThumb) origThumb.style.display = 'none';
+    } else if (framedCanvas && item.framedThumbnailKept && item.status === 'pending') {
+      if (sourceCanvas) sourceCanvas.style.display = 'none';
+      if (origThumb) origThumb.style.display = 'none';
     } else {
+      item.framedThumbnailKept = false;
       if (framedCanvas) {
         framedCanvas.width = 0;
         framedCanvas.height = 0;
@@ -4900,12 +6106,197 @@ function updateImageCounter() {
   const count = state.items.length;
   const visual = document.getElementById('imageCounterVisual');
   const status = document.getElementById('imageCounterStatus');
-  if (visual) visual.textContent = count ? `(${count})` : '';
+  if (visual) visual.textContent = count ? String(count) : '';
   if (status) status.textContent = count ? tf('imageCount', { count }) : '';
+}
+
+// The empty-state sample print mirrors the main frame settings, so the look
+// can be tuned before any media is added. Fonts stay lazy: it uses UI type.
+function _syncSamplePrint() {
+  const print = document.getElementById('samplePrint');
+  if (!print) return;
+  const s = state.settings;
+  const blur = s.frameBackground === 'blur';
+  const frameColor = InstaFrameCore.normalizeHexColor(s.frameColor, '#F0F0F0');
+  let tone = s.textColorMode;
+  if (tone !== 'light' && tone !== 'dark' && tone !== 'custom') {
+    tone = blur || FrameEngine.isColorDark(frameColor) ? 'light' : 'dark';
+  }
+  print.style.setProperty('--sample-frame', frameColor);
+  print.style.setProperty('--sample-thickness', String(Number(s.thicknessScale) || 1));
+  print.style.setProperty('--sample-text-custom', InstaFrameCore.normalizeHexColor(s.textColor, '#FFFFFF'));
+  print.dataset.background = blur ? 'blur' : 'color';
+  print.dataset.frame = !blur && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
+  print.dataset.tone = tone;
+  print.classList.toggle('hide-shot-on', s.showShotOn === false);
+  print.classList.toggle('hide-exif', s.showExifInfo === false);
+  TEXT_STYLE_SETTING_IDS.forEach(id => {
+    print.classList.toggle(`style-${id}`, !!s[id]);
+  });
+}
+
+// Sidebar sliders paint their filled track from this custom property.
+// Ranges that straddle zero (offsets) fill outward from the zero point.
+function _syncRangeFill(input) {
+  const min = Number(input.min) || 0;
+  const max = input.max === '' ? 100 : Number(input.max);
+  const span = max - min;
+  const toPercent = value => (span > 0 ? Math.min(100, Math.max(0, ((value - min) / span) * 100)) : 0);
+  const value = toPercent(Number(input.value));
+  const origin = min < 0 && max > 0 ? toPercent(0) : 0;
+  input.style.setProperty('--range-start', `${Math.min(origin, value)}%`);
+  input.style.setProperty('--range-end', `${Math.max(origin, value)}%`);
+}
+
+function _syncRangeFills() {
+  document.querySelectorAll('.sidebar input[type="range"], #cardSizeRange').forEach(_syncRangeFill);
+}
+
+// ─── Output size estimates ────────────────────────────────────────────────────
+// Pixel sizes are exact (same layout as the renderer). File sizes are
+// estimates: photos scale this file's own compressibility to the export
+// quality, videos use the chosen bitrate over the clip's duration.
+function _jpegBytesPerPixel(quality) {
+  const q = Math.max(60, Math.min(100, Number(quality) || 92));
+  return 0.12 + 0.6 * ((q - 60) / 40) ** 2;
+}
+
+function _estimatePhotoBytes(item, width, height, sourceWidth = item.sourceWidth, sourceHeight = item.sourceHeight) {
+  const format = state.settings.exportPhotoFormat || 'jpeg';
+  const photoPixels = sourceWidth * sourceHeight;
+  const framePixels = Math.max(0, width * height - photoPixels);
+  // HEIC compresses about twice as well as JPEG; calibrate from its JPEG stand-in.
+  const calibration = item.heif
+    ? (item.decodeFile ? { file: item.decodeFile, quality: HEIF_SURROGATE_QUALITY * 100 } : null)
+    : { file: item.file, quality: 92 };
+  const blur = state.settings.frameBackground === 'blur';
+  if (format === 'png') return photoPixels * 2.4 + framePixels * (blur ? 1.2 : 0.02);
+  const quality = state.settings.exportPhotoQuality ?? 92;
+  let photoBpp = _jpegBytesPerPixel(quality);
+  const sourceBpp = (calibration?.file?.size || 0) / (item.sourceWidth * item.sourceHeight);
+  if (calibration && /jpe?g|webp/i.test(calibration.file.type || '') && sourceBpp > 0.05 && sourceBpp < 3) {
+    photoBpp = sourceBpp * (_jpegBytesPerPixel(quality) / _jpegBytesPerPixel(calibration.quality));
+  }
+  const bytes = photoPixels * photoBpp + framePixels * (blur ? 0.06 : 0.02);
+  return format === 'webp' ? bytes * 0.85 : bytes;
+}
+
+function _estimateItemOutput(item) {
+  if (!item?.sourceWidth || !item?.sourceHeight) return null;
+  let size;
+  try {
+    size = item.isVideo || _isSpatialItem(item)
+      ? FrameEngine.computeOutputSize(item.sourceWidth, item.sourceHeight, state.settings, item.exif || {})
+      : FrameEngine.computePhotoOutputSize(
+        item.sourceWidth, item.sourceHeight, state.settings, item.exif || {}, _photoExportLimits()
+      );
+  } catch (_) {
+    return { tooLarge: true };
+  }
+  let bytes = null;
+  let spatialMode = null;
+  if (item.isVideo) {
+    const bitrate = (state.settings.exportVideoBitrate || 8) * 1_000_000;
+    if (item.sourceDuration > 0) bytes = item.sourceDuration * bitrate / 8;
+  } else {
+    bytes = _estimatePhotoBytes(item, size.width, size.height, size.sourceWidth, size.sourceHeight);
+    if (_isSpatialItem(item)) {
+      spatialMode = _effectiveSpatialMode();
+      // Two eyes: side by side doubles the picture; HEVC needs about 60%
+      // of a JPEG per eye.
+      if (spatialMode === 'sbs') return { width: size.width * 2, height: size.height, bytes: bytes * 2, spatialMode };
+      if (spatialMode === 'heic') bytes *= 2 * 0.6;
+    }
+  }
+  return { width: size.width, height: size.height, bytes, spatialMode, scaled: size.scaled };
+}
+
+function _formatBytes(bytes) {
+  const units = [['GB', 1e9], ['MB', 1e6], ['KB', 1e3]];
+  for (const [unit, scale] of units) {
+    if (bytes >= scale * 0.95) {
+      const value = bytes / scale;
+      return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${unit}`;
+    }
+  }
+  return `${Math.max(1, Math.round(bytes))} B`;
+}
+
+function _formatEstimate(estimate, { compact = false } = {}) {
+  if (!estimate) return t('outputSizePending');
+  if (estimate.tooLarge) return t('outputSizeTooLarge');
+  const values = { width: estimate.width, height: estimate.height };
+  const size = estimate.bytes == null
+    ? tf('outputSizePixels', values)
+    : tf(compact ? 'outputSizeCompact' : 'outputSizeValue', { ...values, size: _formatBytes(estimate.bytes) });
+  return estimate.scaled ? `${size} · ${t(compact ? 'outputSizeAdjustedShort' : 'outputSizeAdjusted')}` : size;
+}
+
+function updateOutputEstimates() {
+  let totalBytes = 0;
+  let allKnown = state.items.length > 0;
+  state.items.forEach(item => {
+    const estimate = _estimateItemOutput(item);
+    if (estimate?.bytes != null) totalBytes += estimate.bytes;
+    else allKnown = false;
+    const meta = document.getElementById(`card-meta-${item.id}`);
+    if (meta) meta.textContent = _formatEstimate(estimate, { compact: true });
+  });
+  const batch = document.getElementById('batchEstimate');
+  if (batch) {
+    batch.textContent = state.items.length > 1 && allKnown
+      ? tf('outputSizeTotal', { size: _formatBytes(totalBytes) })
+      : '';
+  }
+  const selected = document.getElementById('outputEstimate');
+  if (selected) {
+    const item = getSelectedPreviewItem();
+    selected.textContent = item ? _formatEstimate(_estimateItemOutput(item)) : t('outputSizeNone');
+    selected.title = item ? t('outputSizeHint') : '';
+  }
+}
+
+// ─── Layout warnings ──────────────────────────────────────────────────────────
+// The renderer reports caption problems (clipped, overlapping) for the frame it
+// just drew; the stage lists them for the photo or video being previewed.
+const LAYOUT_WARNING_KEYS = {
+  'text-overflow': 'layoutWarningTextOverflow',
+  'text-overlaps-photo': 'layoutWarningTextOverlapsPhoto',
+  'text-below-frame': 'layoutWarningTextBelowFrame',
+  'location-overlaps-camera': 'layoutWarningLocationOverlap',
+};
+let _shownLayoutIssues = '';
+let _lastLayoutIssueCodes = [];
+
+function _showLayoutIssues(issues = []) {
+  const panel = document.getElementById('previewWarning');
+  const list = document.getElementById('previewWarningList');
+  if (!panel || !list) return;
+  const known = (Array.isArray(issues) ? issues : []).filter(code => LAYOUT_WARNING_KEYS[code]);
+  _lastLayoutIssueCodes = known;
+  const key = `${currentLang}|${known.join(',')}`;
+  if (key === _shownLayoutIssues) return;
+  _shownLayoutIssues = key;
+  list.replaceChildren(...known.map(code => {
+    const entry = document.createElement('li');
+    entry.textContent = t(LAYOUT_WARNING_KEYS[code]);
+    return entry;
+  }));
+  panel.hidden = known.length === 0;
+}
+
+// One item downloads as its own file; several are packed into a ZIP.
+function _syncDownloadAllLabel() {
+  const label = document.getElementById('downloadAllLabel');
+  if (label) label.textContent = state.items.length > 1 ? t('downloadAllZip') : t('downloadSingle');
 }
 
 function updateUI() {
   const hasItems = state.items.length > 0;
+  // With media present the selected face is already loaded for the frame.
+  if (hasItems) _setFontPickerPreviewing(true);
+  _syncSpatialExportControls();
+  _syncSpatialPreviewControl();
   const hasPendingImports = _reservedImportItems > 0;
   const hasWorkspaceItems = hasItems || hasPendingImports;
   const hasExportableItems = _hasExportableItems();
@@ -4922,14 +6313,17 @@ function updateUI() {
     exifWrap.setAttribute('aria-hidden', String(!hasItems));
   }
 
-  const genBtn  = document.getElementById('generateAllBtn');
   const dlBtn   = document.getElementById('downloadAllBtn');
   const clrBtn  = document.getElementById('clearAllBtn');
 
-  if (genBtn)  genBtn.disabled  = _globalExportBusy || hasPendingImports || !hasExportableItems;
   if (dlBtn)   dlBtn.disabled   = _globalExportBusy || hasPendingImports || !hasExportableItems;
   if (clrBtn)  clrBtn.disabled  = _globalExportBusy || !hasWorkspaceItems;
   updateImageCounter();
+  _syncDownloadAllLabel();
+  updateOutputEstimates();
+  _syncSamplePrint();
+  _syncRangeFills();
+  document.body.setAttribute('data-workspace', hasWorkspaceItems ? 'active' : 'empty');
 
   setVisible(document.getElementById('imageSection'), hasWorkspaceItems, 'flex');
   setVisible(document.getElementById('emptyHint'),    !hasWorkspaceItems);
@@ -4946,6 +6340,7 @@ function updateUI() {
 
   // If no items, reset the drop zone to its empty/clickable state
   if (!hasItems) {
+    _showLayoutIssues([]);
     _clearLoadedMediaFocusRequest();
     _disposeLiveVideoSource();
     const dropZone = document.getElementById('dropZone');
@@ -4982,7 +6377,6 @@ function setGlobalBusy(busy) {
     if (activeElement && activeElement !== document.body) _exportProgressPreviousFocus = activeElement;
   }
   const hasExportableItems = _hasExportableItems();
-  document.getElementById('generateAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
   document.getElementById('downloadAllBtn').disabled = busy || _reservedImportItems > 0 || !hasExportableItems;
   const clrBtn = document.getElementById('clearAllBtn');
   if (clrBtn) clrBtn.disabled = busy || state.items.length === 0;
@@ -5662,7 +7056,7 @@ function setupSettingsListeners() {
   }
 
   // Font style and visibility controls
-  ['cameraNameBold', 'cameraNameItalic', 'exifItalic', 'showShotOn', 'showExifInfo', 'showLocation'].forEach(id => {
+  [...TEXT_STYLE_SETTING_IDS, 'showShotOn', 'showExifInfo', 'showLocation'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', applySettings);
   });
@@ -5682,10 +7076,7 @@ function setupSettingsListeners() {
     if (mapOverlayToggle.checked && !await requestLocationNetworkConsent()) {
       mapOverlayToggle.checked = false;
     }
-    if (mapOverlayToggle.checked && !getMapboxToken()) {
-      mapOverlayToggle.checked = false;
-      showToast(t('msgMapboxUnavailable'), 'warn');
-    }
+    _mapboxUnavailableNotified = false;
     applySettings();
   });
 
@@ -5763,16 +7154,14 @@ function setupSettingsListeners() {
     r.addEventListener('change', () => {
       const before = _createSettingsSnapshot();
       _syncPhotoQualityAvailability(r.value);
-      // Compacted photos must be regenerated when their encoding settings change.
+      // Photo format doesn't need re-generation (applied at download time) — just save
       const pFmt = document.querySelector('input[name="exportPhotoFormat"]:checked');
       const nextFormat = pFmt ? pFmt.value : 'jpeg';
-      if (state.settings.exportPhotoFormat !== nextFormat) {
-        _abortGlobalExportForMutation();
-        markItemsPending(item => !!item.photoBlob);
-      }
+      if (state.settings.exportPhotoFormat !== nextFormat) _abortGlobalExportForMutation();
       state.settings.exportPhotoFormat = nextFormat;
       _recordSettingsHistory(before);
       saveSettings();
+      updateOutputEstimates();
     });
   });
 
@@ -5783,13 +7172,11 @@ function setupSettingsListeners() {
     (v, options) => {
       const before = _createSettingsSnapshot();
       const nextQuality = parseInt(v, 10);
-      if (state.settings.exportPhotoQuality !== nextQuality) {
-        _abortGlobalExportForMutation();
-        markItemsPending(item => !!item.photoBlob);
-      }
+      if (state.settings.exportPhotoQuality !== nextQuality) _abortGlobalExportForMutation();
       state.settings.exportPhotoQuality = nextQuality;
       if (options?.recordHistory !== false) _recordSettingsHistory(before);
       saveSettings();
+      updateOutputEstimates();
     },
     '%'
   );
@@ -5798,6 +7185,37 @@ function setupSettingsListeners() {
   document.querySelectorAll('input[name="exportVideoBitrate"]').forEach(r => {
     r.addEventListener('change', onVideoExportSettingChange);
   });
+
+  // ── Spatial photos: export mode, frame depth, 3D preview ─────────────────
+  document.querySelectorAll('input[name="exportSpatialMode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const before = _createSettingsSnapshot();
+      const checked = document.querySelector('input[name="exportSpatialMode"]:checked');
+      const next = checked ? checked.value : 'heic';
+      if (state.settings.exportSpatialMode !== next) _abortGlobalExportForMutation();
+      state.settings.exportSpatialMode = next;
+      _recordSettingsHistory(before);
+      saveSettings();
+      _syncSpatialExportControls();
+      updateOutputEstimates();
+    });
+  });
+  bindRangeControl(
+    'spatialDepthRange',
+    'spatialDepthRangeVal',
+    v => Number(v).toFixed(1) + '%',
+    (v, options) => {
+      const before = _createSettingsSnapshot();
+      const next = Math.max(0, Math.min(3, parseFloat(v) || 0));
+      if (state.settings.spatialDepth !== next) _abortGlobalExportForMutation();
+      state.settings.spatialDepth = next;
+      if (options?.recordHistory !== false) _recordSettingsHistory(before);
+      saveSettings();
+      void _refreshSpatialPreview();
+    },
+    '%'
+  );
+  document.getElementById('spatialPreviewBtn')?.addEventListener('click', () => toggleSpatialPreview());
 }
 
 function setupHistoryControls() {
@@ -6124,14 +7542,12 @@ function rerenderCards() {
     const card = document.getElementById(`item-${item.id}`);
     const preview = card?.querySelector('.card-preview');
     preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
-    card?.querySelector('[data-action="download"]')?.setAttribute(
-      'aria-label',
-      tf('downloadSingleNamed', { name: item.file.name })
-    );
-    card?.querySelector('[data-action="remove"]')?.setAttribute(
-      'aria-label',
-      tf('removeNamed', { name: item.file.name })
-    );
+    const downloadBtn = card?.querySelector('[data-action="download"]');
+    downloadBtn?.setAttribute('aria-label', tf('downloadSingleNamed', { name: item.file.name }));
+    downloadBtn?.setAttribute('title', t('downloadSingle'));
+    const removeBtn = card?.querySelector('[data-action="remove"]');
+    removeBtn?.setAttribute('aria-label', tf('removeNamed', { name: item.file.name }));
+    removeBtn?.setAttribute('title', t('remove'));
     updateItemStatus(item);
     if (item.status === 'done') updateItemPreview(item);
   });
@@ -6354,7 +7770,10 @@ function setupMobileTabs() {
   // Default to preview tab on mobile
   if (isMobile()) {
     _setMobileTabState(tabBar, 'preview');
-  } else _syncMobileTabPanels(tabBar, '', false);
+  } else {
+    document.body.removeAttribute('data-mobile-tab');
+    _syncMobileTabPanels(tabBar, '', false);
+  }
 
   // Reset to no tab attribute on desktop
   window.addEventListener('resize', () => {
@@ -6519,7 +7938,9 @@ function setupMainResize() {
 
   const getMinHeight = () => Math.max(120, parseFloat(getComputedStyle(preview).minHeight) || 0);
   const getMaxHeight = () => Math.max(getMinHeight(), window.innerHeight - 160);
-  let preferredHeight = preview.offsetHeight;
+  // Mirrors the CSS default (52vh). The empty stage fills the whole workspace,
+  // so its measured height would overshoot once media is added.
+  let preferredHeight = Math.round(window.innerHeight * 0.52);
   const applyHeight = (value, persist = false) => {
     const minHeight = getMinHeight();
     const maxHeight = getMaxHeight();
@@ -6586,9 +8007,11 @@ function setupCardSize() {
   const range = document.getElementById('cardSizeRange');
   if (!range) return;
   const prefs = loadPrefs();
-  if (prefs.cardSize) {
-    range.value = prefs.cardSize;
-    document.documentElement.style.setProperty('--card-min-w', prefs.cardSize + 'px');
+  // Phones default to two columns; a saved size always wins.
+  const initialSize = prefs.cardSize || (_usesMobileLayout() ? 140 : null);
+  if (initialSize) {
+    range.value = initialSize;
+    document.documentElement.style.setProperty('--card-min-w', initialSize + 'px');
   }
   range.addEventListener('input', () => {
     document.documentElement.style.setProperty('--card-min-w', range.value + 'px');
@@ -6697,10 +8120,14 @@ function _restorePageResources() {
 
 document.addEventListener('DOMContentLoaded', () => {
   buildFontSelect();         // populate font select with popularity-ordered options
+  setupFontPicker();
+  _syncTextStyleNames();
+  document.addEventListener('instaframe:languagechange', _syncTextStyleNames);
   applyTranslations();
   setupAccessibleFormNames();
   document.addEventListener('instaframe:languagechange', setupAccessibleFormNames);
   document.addEventListener('instaframe:languagechange', updateImageCounter);
+  document.addEventListener('instaframe:languagechange', () => _showLayoutIssues(_lastLayoutIssueCodes));
   restoreSettings();         // restore saved settings to DOM
   initVideoFormatOptions();  // build video format pills (needs MediaRecorder)
 
@@ -6729,6 +8156,12 @@ document.addEventListener('DOMContentLoaded', () => {
   setupHistoryControls();
   setupKeyboardShortcuts();
   setupMobileTabs();
+  // On phones the editor would cover the photo, so it starts collapsed. On
+  // larger screens it reopens the way the user last left it.
+  if (_usesMobileLayout() || loadPrefs().exifEditorOpen === false) setLiveExifPanelOpen(false);
+  document.addEventListener('input', event => {
+    if (event.target?.matches?.('.sidebar input[type="range"], #cardSizeRange')) _syncRangeFill(event.target);
+  });
   document.getElementById('langToggleBtn')?.addEventListener('click', () => {
     setLang(currentLang === 'en' ? 'ja' : 'en');
     rerenderCards();
@@ -6738,7 +8171,6 @@ document.addEventListener('DOMContentLoaded', () => {
   updatePreviewViewModifiedState();
   _refreshShareLinks();
 
-  document.getElementById('generateAllBtn').addEventListener('click', generateAll);
   document.getElementById('downloadAllBtn').addEventListener('click', downloadAll);
   document.getElementById('cancelExportBtn')?.addEventListener('click', () => {
     _activeExportController?.abort();
@@ -6751,4 +8183,13 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('pageshow', event => {
     if (event.persisted) _restorePageResources();
   });
+});
+
+// boot.js hides the UI until the setup above has translated and laid it out.
+// This separate listener still reveals the page if that setup throws.
+document.addEventListener('DOMContentLoaded', () => {
+  // Resolve the final styles while transitions are still off, so nothing
+  // animates from its markup default once the page is revealed.
+  void document.body.offsetWidth;
+  document.documentElement.classList.remove('is-booting');
 });

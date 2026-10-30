@@ -11,6 +11,11 @@ const files = [
   ['node_modules/leaflet/dist/leaflet.js', 'leaflet/leaflet.js'],
   ['node_modules/leaflet/dist/leaflet.css', 'leaflet/leaflet.css'],
   ['node_modules/leaflet/LICENSE', 'leaflet/LICENSE.txt'],
+  // HEIF/HEIC decoder (libheif + libde265, LGPL-3.0), loaded only for HEIC files.
+  ['node_modules/libheif-js/libheif-wasm/libheif.js', 'libheif/libheif.js'],
+  ['node_modules/libheif-js/libheif-wasm/libheif.wasm', 'libheif/libheif.wasm'],
+  ['node_modules/libheif-js/libheif-wasm/LICENSE', 'libheif/LICENSE.txt'],
+  ['node_modules/libheif-js/LICENSE', 'libheif/LICENSE-libheif-js.txt'],
 ];
 
 const fonts = [
@@ -34,6 +39,7 @@ const fonts = [
 
 await rm(output, { recursive: true, force: true });
 await mkdir(path.join(output, 'leaflet'), { recursive: true });
+await mkdir(path.join(output, 'libheif'), { recursive: true });
 await mkdir(path.join(output, 'fonts'), { recursive: true });
 
 for (const [source, target] of files) {

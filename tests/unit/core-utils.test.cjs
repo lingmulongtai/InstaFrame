@@ -162,3 +162,18 @@ test('mobile layout prefers the dynamic viewport and reserves the safe area', ()
   assert.match(css, /\.app-shell\s*\{[^}]*padding:\s*var\(--safe-area-top\) var\(--safe-area-right\) 0 var\(--safe-area-left\)/s);
   assert.match(css, /\.sidebar\s*\{[^}]*top:\s*var\(--safe-area-top\)[^}]*left:\s*var\(--safe-area-left\)[^}]*right:\s*var\(--safe-area-right\)/s);
 });
+
+test('exposure times parse camera fractions and format like camera labels', () => {
+  assert.equal(core.parseExposureSeconds('1/250'), 1 / 250);
+  assert.equal(core.parseExposureSeconds('1/250s'), 1 / 250);
+  assert.equal(core.parseExposureSeconds(' 0.004 '), 0.004);
+  assert.equal(core.parseExposureSeconds('2s'), 2);
+  assert.equal(core.parseExposureSeconds('fast'), null);
+  assert.equal(core.parseExposureSeconds(''), null);
+  assert.equal(core.formatExposureTime(0.004), '1/250');
+  assert.equal(core.formatExposureTime('1/250'), '1/250');
+  assert.equal(core.formatExposureTime(1 / 3), '1/3');
+  assert.equal(core.formatExposureTime(0.3), '0.3');
+  assert.equal(core.formatExposureTime(2), '2');
+  assert.equal(core.formatExposureTime('bulb'), 'bulb');
+});
