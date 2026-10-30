@@ -161,10 +161,15 @@ test('video audio routing keeps native, Mozilla, and Web Audio fallbacks portabl
 
     const run = async nextMode => {
       mode = nextMode;
+      const controller = new AbortController();
       try {
-        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          preserveAudio: true,
+          signal: controller.signal,
+          onRetry: () => controller.abort(),
+        });
       } catch (error) {
-        if (error.message !== 'stop after audio setup') throw error;
+        if (error.name !== 'AbortError') throw error;
       }
     };
     try {

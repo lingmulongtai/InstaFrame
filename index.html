@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
   <meta name="theme-color" content="#e8e5df">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
   <meta property="og:title" content="InstaFrame">
@@ -154,7 +154,7 @@
             <input type="password" id="mapboxTokenInput" class="customize-token-input" placeholder="pk.…" autocomplete="off" spellcheck="false">
             <button type="button" class="btn btn-secondary btn-sm" id="clearMapboxTokenBtn" data-i18n="mapboxTokenClear">Clear</button>
           </div>
-          <div class="customize-row-hint" id="mapboxTokenStatus" data-i18n="mapboxTokenNotConfigured">Not configured. Map overlay stays off.</div>
+          <div class="customize-row-hint" id="mapboxTokenStatus" data-i18n="mapboxTokenNotConfigured">Optional. Without a token the map overlay uses OpenStreetMap.</div>
         </div>
         <div class="customize-row-hint" data-i18n="privacyShortNotice">Photos stay on this device. Location tools may send coordinates to external map services only after consent.</div>
       </div>
@@ -368,9 +368,14 @@
 
         <!-- Font Family (options populated dynamically for popularity tracking) -->
         <div class="setting-row">
-          <div class="setting-label" data-i18n="fontFamily">Font</div>
-          <div class="setting-control">
-            <select id="fontFamily" class="font-select"><!-- filled by JS --></select>
+          <div class="setting-label" id="fontFamilyLabel" data-i18n="fontFamily">Font</div>
+          <div class="setting-control font-picker" id="fontPicker">
+            <button type="button" id="fontFamily" class="font-picker-button" role="combobox"
+                    aria-haspopup="listbox" aria-expanded="false" aria-controls="fontFamilyList"
+                    aria-labelledby="fontFamilyLabel" value="Inter">
+              <span class="font-picker-value" id="fontFamilyValue">Inter</span>
+            </button>
+            <div class="font-picker-list" id="fontFamilyList" role="listbox" aria-labelledby="fontFamilyLabel" tabindex="-1" hidden><!-- filled by JS --></div>
           </div>
         </div>
 
@@ -402,22 +407,62 @@
           </div>
         </div>
 
-        <!-- Camera Style -->
-        <div class="setting-row">
-          <div class="setting-label" data-i18n="cameraStyle">Style</div>
+        <!-- Text style: bold and italic for each caption part -->
+        <div class="setting-row text-style-row">
+          <div class="setting-label" id="textStyleLabel" data-i18n="textStyle">Text Style</div>
           <div class="setting-control">
-            <div class="style-toggles">
-              <div class="style-toggle-btn">
-                <input type="checkbox" id="cameraNameBold">
-                <label for="cameraNameBold" class="style-toggle-bold">B</label>
+            <div class="text-style-grid" role="group" aria-labelledby="textStyleLabel">
+              <div class="text-style-part">
+                <span class="text-style-name" data-i18n="textStylePartShotOn">Shot on</span>
+                <div class="text-style-toggles">
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="shotOnBold" data-style-part="textStylePartShotOn" data-style-kind="styleBold">
+                    <label for="shotOnBold" class="style-toggle-bold" aria-hidden="true">B</label>
+                  </div>
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="shotOnItalic" data-style-part="textStylePartShotOn" data-style-kind="styleItalic">
+                    <label for="shotOnItalic" class="style-toggle-italic" aria-hidden="true">I</label>
+                  </div>
+                </div>
               </div>
-              <div class="style-toggle-btn">
-                <input type="checkbox" id="cameraNameItalic">
-                <label for="cameraNameItalic" class="style-toggle-italic">I</label>
+              <div class="text-style-part">
+                <span class="text-style-name" data-i18n="textStylePartModel">Camera</span>
+                <div class="text-style-toggles">
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="modelBold" data-style-part="textStylePartModel" data-style-kind="styleBold">
+                    <label for="modelBold" class="style-toggle-bold" aria-hidden="true">B</label>
+                  </div>
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="modelItalic" data-style-part="textStylePartModel" data-style-kind="styleItalic">
+                    <label for="modelItalic" class="style-toggle-italic" aria-hidden="true">I</label>
+                  </div>
+                </div>
               </div>
-              <div class="style-toggle-btn">
-                <input type="checkbox" id="exifItalic">
-                <label for="exifItalic" class="style-toggle-exif">I&thinsp;exif</label>
+              <div class="text-style-part">
+                <span class="text-style-name" data-i18n="textStylePartMaker">Maker</span>
+                <div class="text-style-toggles">
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="makerBold" data-style-part="textStylePartMaker" data-style-kind="styleBold">
+                    <label for="makerBold" class="style-toggle-bold" aria-hidden="true">B</label>
+                  </div>
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="makerItalic" data-style-part="textStylePartMaker" data-style-kind="styleItalic">
+                    <label for="makerItalic" class="style-toggle-italic" aria-hidden="true">I</label>
+                  </div>
+                </div>
+              </div>
+              <div class="text-style-part">
+                <span class="text-style-name" data-i18n="textStylePartExif">EXIF</span>
+                <div class="text-style-toggles">
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="exifBold" data-style-part="textStylePartExif" data-style-kind="styleBold">
+                    <label for="exifBold" class="style-toggle-bold" aria-hidden="true">B</label>
+                  </div>
+                  <div class="style-toggle-btn">
+                    <input type="checkbox" id="exifItalic" data-style-part="textStylePartExif" data-style-kind="styleItalic">
+                    <label for="exifItalic" class="style-toggle-italic" aria-hidden="true">I</label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -546,7 +591,7 @@
                 <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
                 <span class="ios-toggle-label">
                   <span data-i18n="showMapOverlay">Map Overlay</span>
-                  <span class="tooltip-anchor">?<span class="tooltip-box" data-i18n="mapOverlayTooltip">Draws a mini map on the photo area. Requires saved location coordinates.</span></span>
+                  <span class="tooltip-anchor">?<span class="tooltip-box" data-i18n="mapOverlayTooltip">Draws a small OpenStreetMap map on the photo. Requires location coordinates.</span></span>
                 </span>
               </label>
             </div>
@@ -595,6 +640,14 @@
           <span data-i18n="sectionExport">Export</span>
         </div>
 
+        <!-- Output size of the selected item (pixels and estimated file size) -->
+        <div class="setting-row output-estimate-row">
+          <div class="setting-label" data-i18n="outputSizeLabel">Output size</div>
+          <div class="setting-control">
+            <span class="output-estimate" id="outputEstimate" data-i18n="outputSizeNone">Add a photo to see it</span>
+          </div>
+        </div>
+
         <!-- Photo format -->
         <div class="setting-row">
           <div class="setting-label" id="exportPhotoFormatLabel" data-i18n="exportPhotoLabel">Photo</div>
@@ -627,6 +680,37 @@
           </div>
         </div>
 
+        <!-- Spatial photos (shown when a stereo pair is loaded) -->
+        <div class="setting-row is-hidden" id="spatialExportRow">
+          <div class="setting-label" id="exportSpatialLabel" data-i18n="exportSpatialLabel">Spatial photo</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportSpatialLabel">
+              <div class="ratio-pill">
+                <input type="radio" name="exportSpatialMode" id="spatial-heic" value="heic" checked>
+                <label for="spatial-heic" data-i18n="exportSpatialHeic">Spatial HEIC</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportSpatialMode" id="spatial-sbs" value="sbs">
+                <label for="spatial-sbs" data-i18n="exportSpatialSbs">Side by side</label>
+              </div>
+              <div class="ratio-pill">
+                <input type="radio" name="exportSpatialMode" id="spatial-2d" value="2d">
+                <label for="spatial-2d" data-i18n="exportSpatial2d">2D photo</label>
+              </div>
+            </div>
+            <p class="setting-note" id="spatialExportNote" data-i18n="exportSpatialHeicUnavailable" hidden>This browser cannot encode HEVC, so spatial photos are saved as 2D photos. Choose side by side to keep both eyes.</p>
+          </div>
+        </div>
+        <div class="setting-row is-hidden" id="spatialDepthRow">
+          <div class="setting-label" data-i18n="spatialDepth">Frame pop-out</div>
+          <div class="setting-control">
+            <div class="range-wrap">
+              <input type="range" id="spatialDepthRange" min="0" max="3" step="0.1" value="1">
+              <span class="range-val" id="spatialDepthRangeVal">1.0%</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Video format (dynamically filled by JS) -->
         <div class="setting-row">
           <div class="setting-label" id="exportVideoFormatLabel" data-i18n="exportVideoLabel">Video</div>
@@ -635,17 +719,42 @@
           </div>
         </div>
 
+        <!-- Target video frame rate -->
+        <div class="setting-row">
+          <div class="setting-label" id="exportVideoFpsLabel" data-i18n="exportVideoFps">Frame rate</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoFpsLabel" aria-describedby="videoFpsHint">
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-60" value="60" checked><label for="vfps-60">60 fps</label></div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-30" value="30"><label for="vfps-30">30 fps</label></div>
+            </div>
+            <div class="setting-hint" id="videoFpsHint" data-i18n="videoFpsHint">At 60 fps, source frames are preserved where supported. Real-time fallback may drop frames.</div>
+          </div>
+        </div>
+
+        <!-- Prefer a lower-memory encoder when exporting at 60 fps -->
+        <div class="setting-row">
+          <div class="setting-label" id="videoMemoryModeLabel" data-i18n="videoMemoryMode">Video processing</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="videoMemoryModeLabel" aria-describedby="videoMemoryModeHint">
+              <div class="ratio-pill"><input type="radio" name="videoMemoryMode" id="video-memory" value="memory" checked><label for="video-memory" data-i18n="videoMemoryPriority">Save memory</label></div>
+              <div class="ratio-pill"><input type="radio" name="videoMemoryMode" id="video-quality" value="quality"><label for="video-quality" data-i18n="videoQualityPriority">Prefer quality</label></div>
+            </div>
+            <div class="setting-hint" id="videoMemoryModeHint" data-i18n="videoMemoryModeHint">At 60 fps, this prefers hardware processing and may reduce dimensions. Memory use varies by device; quality priority favors larger dimensions.</div>
+          </div>
+        </div>
+
         <!-- Video bitrate -->
         <div class="setting-row">
           <div class="setting-label" id="exportVideoBitrateLabel" data-i18n="exportBitrateLabel">Bitrate</div>
           <div class="setting-control">
-            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoBitrateLabel">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoBitrateLabel" aria-describedby="videoBitrateHint">
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-source" value="source" checked><label for="vbr-source" data-i18n="videoBitrateSource">Match source</label></div>
               <div class="ratio-pill">
                 <input type="radio" name="exportVideoBitrate" id="vbr-4" value="4">
                 <label for="vbr-4">4M</label>
               </div>
               <div class="ratio-pill">
-                <input type="radio" name="exportVideoBitrate" id="vbr-8" value="8" checked>
+                <input type="radio" name="exportVideoBitrate" id="vbr-8" value="8">
                 <label for="vbr-8">8M</label>
               </div>
               <div class="ratio-pill">
@@ -656,7 +765,10 @@
                 <input type="radio" name="exportVideoBitrate" id="vbr-24" value="24">
                 <label for="vbr-24">24M</label>
               </div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-50" value="50"><label for="vbr-50">50M</label></div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-80" value="80"><label for="vbr-80">80M</label></div>
             </div>
+            <div class="setting-hint" id="videoBitrateHint" data-i18n="videoBitrateHint">Source estimate includes audio and is capped at 80 Mbps; the encoder may vary.</div>
           </div>
         </div>
       </div>
@@ -699,6 +811,10 @@
       <canvas id="livePreviewDetailCanvas" class="live-preview-detail" width="0" height="0" aria-hidden="true"></canvas>
       <video id="livePreviewVideo" class="live-preview-video" playsinline></video>
       <div class="preview-error" id="livePreviewError" role="alert" aria-atomic="true" hidden></div>
+      <div class="preview-warning" id="previewWarning" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 2.5 20h19L12 3.5Z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>
+        <ul class="preview-warning-list" id="previewWarningList"></ul>
+      </div>
 
       <div class="preview-empty" id="previewEmpty">
         <!-- Decorative sample print: shows what an export looks like before any media is added. -->
@@ -765,7 +881,7 @@
             </svg>
           </div>
           <figcaption class="sample-print-caption">
-            <span class="sample-print-camera"><span class="sample-print-label">Shot on</span> X-T5 <span class="sample-print-make">FUJIFILM</span></span>
+            <span class="sample-print-camera"><span class="sample-print-label">Shot on</span> <span class="sample-print-model">X-T5</span> <span class="sample-print-make">FUJIFILM</span></span>
             <span class="sample-print-exif"><span>XF35mmF1.4 R</span><span>35mm</span><span>f/1.4</span><span>1/250s</span><span>ISO 400</span></span>
           </figcaption>
         </figure>
@@ -787,6 +903,10 @@
         <button class="preview-quality-btn" id="previewQualityBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="previewQualityPopup" data-i18n-attr="title" data-i18n="previewQualityTitle" title="Preview quality">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 3.5V2.5M8 3.5V2.5M12 3.5V2.5"/><path d="M4 8.5h2M6 7l2 1.5L6 10"/></svg>
           <span id="previewQualityLabel">Auto</span>
+        </button>
+        <button type="button" class="preview-quality-btn preview-spatial-btn" id="spatialPreviewBtn" aria-pressed="false" data-i18n-attr="title" data-i18n="spatialPreviewTitle" title="Preview the spatial photo in 3D" hidden>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="8.5" r="2.6"/><circle cx="10.5" cy="8.5" r="2.6"/><path d="M8.1 8.2c-.1-.4-.1-.4 0 0"/><path d="M2.9 8.5 2 5.5M13.1 8.5l.9-3"/></svg>
+          <span data-i18n="spatialPreview">3D</span>
         </button>
         <div class="preview-quality-popup" id="previewQualityPopup" role="menu" data-i18n="previewQualityTitle" data-i18n-attr="aria-label">
           <div class="pq-option active" role="menuitemradio" aria-checked="true" tabindex="-1" data-q="auto" data-i18n="previewQualityAuto">Auto (zoom-adaptive)</div>
@@ -913,6 +1033,7 @@
             <span id="imageCounterVisual" aria-hidden="true"></span>
             <span class="sr-only" id="imageCounterStatus" role="status" aria-live="polite" aria-atomic="true"></span>
           </span>
+          <span class="section-estimate" id="batchEstimate"></span>
         </div>
         <div class="section-header-right">
           <div class="card-size-bar" id="cardSizeBar" data-i18n="cardSize" data-i18n-attr="title" title="Photo card size">
@@ -975,6 +1096,7 @@
 
 <!-- Scripts -->
 <script src="js/core-utils.js"></script>
+<script src="js/heif.js"></script>
 <script src="js/config.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/frame-engine.js"></script>
@@ -1010,7 +1132,7 @@
       <ul>
         <li data-i18n="privacyConsentGeocode">Nominatim: latitude/longitude for place-name lookup</li>
         <li data-i18n="privacyConsentMap">OpenStreetMap: map tiles; ipapi only if device location is unavailable</li>
-        <li data-i18n="privacyConsentMapbox">Mapbox: latitude/longitude when generating a map overlay</li>
+        <li data-i18n="privacyConsentMapbox">Mapbox (only with a token you add): latitude/longitude when generating a map overlay</li>
       </ul>
       <p class="privacy-modal-note" data-i18n="privacyConsentChoice">Choose access for this browser session or remember the choice on this device. You can revoke it from Customize.</p>
     </div>
