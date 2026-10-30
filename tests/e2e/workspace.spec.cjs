@@ -89,4 +89,59 @@ test('desktop wheel scrolls the sidebar in both directions', async ({ page }) =>
   await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBe(120);
 });
 
+test('closed font picker does no positioning work during sidebar scrolling', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    const original = document.getElementById.bind(document);
+    window.fontPickerLookups = 0;
+    document.getElementById = id => {
+      if (id === 'fontFamily' || id === 'fontFamilyList') window.fontPickerLookups += 1;
+      return original(id);
+    };
+  });
+  const countScrollLookups = () => page.evaluate(() => {
+    window.fontPickerLookups = 0;
+    document.querySelector('#sidebarScroll').dispatchEvent(new Event('scroll'));
+    return window.fontPickerLookups;
+  });
+  expect(await countScrollLookups()).toBe(0);
+  const picker = page.locator('#fontFamily');
+  await picker.click();
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  expect(await countScrollLookups()).toBeGreaterThan(0);
+  await picker.press('Escape');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  expect(await countScrollLookups()).toBe(0);
+});
 
+test('mobile touch scroll retains native movement and horizontal slider control', async ({ browser, browserName }) => {
+  test.skip(browserName !== 'chromium', 'CDP touch input is available in Chromium');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  try {
+    await page.goto('/');
+    await page.locator('#tabSettingsBtn').click();
+    await expect(page.locator('#sidebarScroll')).toBeVisible();
+    const cdp = await context.newCDPSession(page);
+    const swipe = async (x, y, dx, dy) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 10; step += 1) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + dx * step / 10, y: y + dy * step / 10 }] });
+        await page.waitForTimeout(16);
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
+    const panel = page.locator('#sidebarScroll');
+    const bounds = await panel.boundingBox();
+    await swipe(bounds.x + 20, bounds.y + bounds.height * 0.7, 0, -200);
+    await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await panel.evaluate(element => { element.scrollTop = 0; });
+    const slider = page.locator('#thicknessRange');
+    const before = await slider.inputValue();
+    const box = await slider.boundingBox();
+    await swipe(box.x + box.width * 0.5, box.y + box.height / 2, 70, 0);
+    await expect.poll(() => slider.inputValue()).not.toBe(before);
+  } finally {
+    await context.close();
+  }
+});
