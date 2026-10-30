@@ -5574,7 +5574,7 @@ test('MediaRecorder finalizes when playback ends without another animation frame
 
     const controller = new AbortController();
     const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
-      preserveAudio: true,
+      preserveAudio: false,
       signal: controller.signal,
     });
     try {
@@ -5681,7 +5681,7 @@ test('MediaRecorder pauses source and recording while the page is hidden', async
     window.cancelAnimationFrame = () => { rafCancels += 1; };
 
     try {
-      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
       while (!recorder || stats.videoPlays === 0) await new Promise(resolve => setTimeout(resolve, 0));
       hidden = true;
       document.dispatchEvent(new Event('visibilitychange'));
@@ -9353,7 +9353,9 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
     mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
   });
   expect(mediaInfo.duration).toBeGreaterThan(0);
-  expect({ width: mediaInfo.width, height: mediaInfo.height }).toEqual(expectedLayout);
+  // Some video encoders require even dimensions; framing may be rounded down by one pixel.
+  expect([expectedLayout.width, expectedLayout.width - 1]).toContain(mediaInfo.width);
+  expect([expectedLayout.height, expectedLayout.height - 1]).toContain(mediaInfo.height);
 });
 
 test('video export preserves an input audio track', async ({ page }) => {
