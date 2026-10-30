@@ -124,6 +124,18 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('new theme defaults preserve saved appearance preferences', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => localStorage.setItem('instaframe_prefs', JSON.stringify({ theme: 'soft-white', accentColor: '#08798f' })));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'soft-white');
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
   await expect(page.locator('#samplePrint')).toBeVisible();
@@ -198,6 +210,7 @@ test('every accent choice keeps selected controls at WCAG contrast', async ({ pa
     { label: 'green', selector: '.accent-green' },
     { label: 'amber', selector: '.accent-amber' },
     { label: 'cyan', selector: '.accent-cyan' },
+    { label: 'ice blue', selector: '.accent-ice' },
   ];
 
   for (const { label, selector } of accents) {

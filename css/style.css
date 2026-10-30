@@ -483,6 +483,7 @@ html.is-booting::after {
 .accent-green { background: #059669; }
 .accent-amber { background: #d97706; }
 .accent-cyan { background: #08798f; }
+.accent-ice { background: #bdd7e3; }
 .accent-swatch:hover { transform: scale(1.1); }
 .accent-swatch.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);

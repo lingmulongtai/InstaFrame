@@ -7757,7 +7757,7 @@ function setupCustomizePanel() {
   const prefs = loadPrefs();
 
   // ── Theme ──────────────────────────────────────────────────────────────────
-  const savedTheme = prefs.theme || 'soft-white';
+  const savedTheme = prefs.theme || 'dark';
   applyTheme(savedTheme);
   document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
     if (r.value === savedTheme) r.checked = true;
@@ -7829,7 +7829,7 @@ function setupCustomizePanel() {
     });
   }
   // Restore saved accent (default to cyan)
-  const effectiveAccent = savedAccent || '#08798f';
+  const effectiveAccent = savedAccent || '#bdd7e3';
   _applyAccentColor(effectiveAccent);
   _activateSwatch(effectiveAccent);
 
@@ -8278,10 +8278,10 @@ function _restorePageResources() {
 // Apply theme & layout immediately (before paint) to avoid flash
 ;(function() {
   const p = loadPrefs();
-  applyTheme(p.theme || 'soft-white');
+  applyTheme(p.theme || 'dark');
   applyLayout(p.layout || 'left');
   applyEditorSize(p.editorSize || 'comfortable');
-  _applyAccentColor(p.accentColor || '#08798f');
+  _applyAccentColor(p.accentColor || '#bdd7e3');
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
