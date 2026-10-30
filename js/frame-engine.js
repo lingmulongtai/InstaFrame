@@ -4,6 +4,8 @@
 
 const FrameEngine = (() => {
 
+  const engineScriptUrl = document.currentScript?.src || document.baseURI;
+
   const MAX_CANVAS_DIMENSION = 16_384;
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
@@ -467,8 +469,8 @@ const FrameEngine = (() => {
       // Cover the canvas (object-fit: cover) plus a bleed of a few blur radii.
       // Blurring samples beyond the drawn image as transparent, so without the
       // bleed the edges fade out and JPEG exports show a dark rim.
-      const srcW = src.naturalWidth  || src.videoWidth  || src.width  || canvasW;
-      const srcH = src.naturalHeight || src.videoHeight || src.height || canvasH;
+      const srcW = src.naturalWidth  || src.videoWidth  || src.displayWidth  || src.width  || canvasW;
+      const srcH = src.naturalHeight || src.videoHeight || src.displayHeight || src.height || canvasH;
       const bleed = Math.ceil(radius * 3);
       const scale = Math.max((canvasW + bleed * 2) / srcW, (canvasH + bleed * 2) / srcH);
       const dw = Math.ceil(srcW * scale);
@@ -1504,6 +1506,198 @@ const FrameEngine = (() => {
     return failure;
   }
 
+  // StreamTarget may rewrite container headers. Keep Blob slices for the
+  // changed ranges rather than allocating another full-size output buffer.
+  function createBoundedVideoTarget(maxBytes) {
+    let parts = [];
+    let length = 0;
+    return {
+      write({ data, position }) {
+        const end = position + data.byteLength;
+        if (!Number.isSafeInteger(position) || position < 0 || end > maxBytes) throw resourceLimitError();
+        if (!data.byteLength) return;
+        const replacement = { start: position, end, blob: new Blob([data]) };
+        if (position === length) {
+          parts.push(replacement);
+          length = end;
+          return;
+        }
+        const next = [];
+        for (const part of parts) {
+          if (part.end <= position || part.start >= end) {
+            next.push(part);
+          } else {
+            if (part.start < position) next.push({ start: part.start, end: position, blob: part.blob.slice(0, position - part.start) });
+            if (part.end > end) next.push({ start: end, end: part.end, blob: part.blob.slice(end - part.start) });
+          }
+        }
+        next.push(replacement);
+        next.sort((a, b) => a.start - b.start);
+        parts = next;
+        length = Math.max(length, end);
+      },
+      finish(type) {
+        let offset = 0;
+        for (const part of parts) {
+          if (part.start !== offset) throw new Error('Video output contains an unwritten range');
+          offset = part.end;
+        }
+        if (!length || offset !== length) throw new Error('Video output is empty');
+        const result = new Blob(parts.map(part => part.blob), { type });
+        parts = [];
+        return result;
+      },
+      clear() { parts = []; },
+    };
+  }
+
+  /** Decode and encode each input frame without depending on playback speed. */
+  async function renderVideoFramesOffline(file, exif, settings, options) {
+    const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
+      outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale } = options;
+    if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
+        typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
+    const isMp4 = String(preferredMime || '').startsWith('video/mp4');
+    const isWebm = String(preferredMime || '').startsWith('video/webm');
+    if (!isMp4 && !isWebm) return null;
+
+    let input = null;
+    const sink = createBoundedVideoTarget(outputByteLimit);
+    let canvas = null;
+    let conversion = null;
+    let started = false;
+    let interruptionError = null;
+    let timer = null;
+    let rejectInterruption;
+    const interruption = new Promise((_, reject) => { rejectInterruption = reject; });
+    const interrupt = error => {
+      if (interruptionError) return;
+      interruptionError = error;
+      if (conversion) void conversion.cancel().catch(() => {});
+      rejectInterruption(error);
+    };
+    const abort = () => interrupt(new DOMException('Export cancelled', 'AbortError'));
+    const assertActive = () => { if (interruptionError) throw interruptionError; assertNotAborted(signal); };
+    const armGuard = (phase, timeout) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => interrupt(mediaTimeoutError(phase)), timeout);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    armGuard('metadata loading', resolveGuardTimeout(metadataTimeoutMs, VIDEO_METADATA_GUARD_MS));
+    try {
+      return await Promise.race([(async () => {
+        const libraryUrl = new URL('vendor/mediabunny.min.js', document.baseURI);
+        libraryUrl.search = new URL(engineScriptUrl).search;
+        let media;
+        try { media = await import(libraryUrl.href); }
+        catch (_) { return null; }
+        assertActive();
+        input = new media.Input({ source: new media.BlobSource(file, { maxCacheSize: 4 * 1024 * 1024 }), formats: media.ALL_FORMATS });
+        const videoTrack = await input.getPrimaryVideoTrack();
+        const audioTrack = preserveAudio ? await input.getPrimaryAudioTrack() : null;
+        assertActive();
+        if (!videoTrack || !await videoTrack.canDecode()) {
+          console.warn('Frame-by-frame video decoding is unavailable');
+          return null;
+        }
+        const [width, height, duration] = await Promise.all([
+          videoTrack.getDisplayWidth(), videoTrack.getDisplayHeight(), input.computeDuration(),
+        ]);
+        assertActive();
+        armGuard('encoder setup', resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS));
+        const layout = computeFrameLayout(width, height, settings, exif);
+        const bitrate = sourceBitrate
+          ? (InstaFrameCore.estimateVideoBitrateFromFile(file.size, duration) || videoBitsPerSecond)
+          : videoBitsPerSecond;
+        if (duration > 0 && duration * bitrate / 8 > outputByteLimit) throw resourceLimitError();
+        const scale = Math.max(0.1, Math.min(1, Number(outputScale) || 1));
+        const codec = isMp4 ? 'avc' : (preferredMime.includes('vp9') ? 'vp9' : 'vp8');
+        const dimensions = factor => ({
+          width: Math.max(2, Math.floor(layout.canvasW * factor / 2) * 2),
+          height: Math.max(2, Math.floor(layout.canvasH * factor / 2) * 2),
+        });
+        const supported = async factor => {
+          const size = dimensions(factor);
+          return media.canEncodeVideo(codec, { ...size, bitrate });
+        };
+        let chosenScale = scale;
+        if (!await supported(scale)) {
+          let low = 0.5 * scale;
+          let high = scale;
+          if (!await supported(low)) return null;
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            const middle = (low + high) / 2;
+            if (await supported(middle)) low = middle;
+            else high = middle;
+            assertActive();
+          }
+          chosenScale = low;
+        }
+        const { width: outWidth, height: outHeight } = dimensions(chosenScale);
+        assertSafeCanvasSize(outWidth, outHeight);
+        canvas = document.createElement('canvas');
+        canvas.width = outWidth;
+        canvas.height = outHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas rendering is unavailable');
+        ctx.scale(outWidth / layout.canvasW, outHeight / layout.canvasH);
+        await loadFrameFonts(settings, signal);
+        const writable = new WritableStream({ write: chunk => { assertActive(); sink.write(chunk); } });
+        const format = isMp4 ? new media.Mp4OutputFormat({ fastStart: false }) : new media.WebMOutputFormat();
+        const output = new media.Output({ format, target: new media.StreamTarget(writable) });
+        conversion = await media.Conversion.init({
+          input, output, tracks: 'primary', showWarnings: false,
+          copy: { shiftTolerance: 0.1 },
+          audio: { discard: !preserveAudio },
+          video: {
+            codec, bitrate, processedWidth: outWidth, processedHeight: outHeight,
+            allowTransformationMetadata: false,
+            process(sample) {
+              assertActive();
+              armGuard('frame progress', resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS));
+              drawVideoFrameSync(ctx, sample.toCanvasImageSource(), exif, settings, layout);
+              return canvas;
+            },
+          },
+        });
+        if (interruptionError) await conversion.cancel().catch(() => {});
+        assertActive();
+        if (!conversion.isValid || !conversion.utilizedTracks.includes(videoTrack) ||
+            (audioTrack && !conversion.utilizedTracks.includes(audioTrack))) {
+          console.warn('Frame-by-frame video export is unsupported:', conversion.discardedTracks.map(track => track.reason).join(', '));
+          return null;
+        }
+        if (chosenScale < scale) onAutoScale?.(outWidth, outHeight);
+        conversion.onProgress = progress => onProgress?.(Math.min(progress, 0.99));
+        started = true;
+        armGuard('frame progress', resolveGuardTimeout(progressTimeoutMs, VIDEO_PROGRESS_GUARD_MS));
+        await conversion.execute();
+        assertActive();
+        const blob = sink.finish(isMp4 ? 'video/mp4' : 'video/webm');
+        onProgress?.(1);
+        return blob;
+      })(), interruption]);
+    } catch (error) {
+      if (interruptionError) throw interruptionError;
+      if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+      if (error?.code === 'MEDIA_RESOURCE_LIMIT' || error?.code === 'MEDIA_TIMEOUT') throw error;
+      if (started) throw videoEncoderError(error);
+      console.warn('Frame-by-frame video export could not be initialized:', error);
+      return null;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      if (conversion && conversion.state !== 'done') {
+        if (interruptionError) void conversion.cancel().catch(() => {});
+        else await conversion.cancel().catch(() => {});
+      }
+      input?.dispose();
+      sink.clear();
+      releaseCanvasBackingStore(canvas);
+    }
+  }
+
   async function _renderVideoFrameWhenReady(file, exif, settings, {
     onProgress,
     preferredMime,
@@ -1515,11 +1709,21 @@ const FrameEngine = (() => {
     progressTimeoutMs,
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     outputScale = 1,
+    onAutoScale,
+    onRealtimeFallback,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
     const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
+    if (outputFrameRate === 60) {
+      const offline = await renderVideoFramesOffline(file, exif, settings, {
+        onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
+        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale,
+      });
+      if (offline) return offline;
+      onRealtimeFallback?.();
+    }
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
@@ -1723,6 +1927,11 @@ const FrameEngine = (() => {
             audioTrack = dest.stream.getAudioTracks()[0] || null;
           }
         } catch (_) { /* no audio support or no audio track */ }
+
+        if (sourceHasAudio === true && !audioTrack) {
+          fail(new Error('The source audio could not be captured for video export'));
+          return;
+        }
 
         // ── Build output stream: canvas video + original audio ──
         outputStream = canvas.captureStream(outputFrameRate);

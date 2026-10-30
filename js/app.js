@@ -2803,6 +2803,11 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
             updateItemStatus(item);
             showToast(t('msgVideoRetryReduced'), 'warn');
           },
+          onAutoScale: (width, height) => {
+            item.videoReduced = true;
+            showToast(tf('msgVideoEncoderScaled', { width, height }), 'warn');
+          },
+          onRealtimeFallback: () => showToast(t('msgVideoRealtimeFallback'), 'warn'),
           onProgress: p => {
             item.progress = p;
             const percent = Math.floor(p * 100);

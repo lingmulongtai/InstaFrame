@@ -45,6 +45,7 @@
     "exifr": "7.1.3",
     "jszip": "3.10.1",
     "leaflet": "1.9.4",
-    "libheif-js": "1.19.8"
+    "libheif-js": "1.19.8",
+    "mediabunny": "1.64.0"
   }
 }
