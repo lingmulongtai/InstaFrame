@@ -1183,6 +1183,7 @@ const FrameEngine = (() => {
    */
   async function _renderVideoWebCodecs(file, exif, settings, {
     onProgress,
+    onOutputSize,
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     videoBitsPerSecond = 10_000_000,
     sourceBitrate = false,
@@ -1340,6 +1341,7 @@ const FrameEngine = (() => {
               if (!buffer) throw new Error('WebM muxing produced no output');
               const byteLength = buffer.byteLength ?? buffer.length ?? 0;
               if (byteLength > maxOutputBytes) throw resourceLimitError();
+              onOutputSize?.(canvas.width, canvas.height);
               if (onProgress) onProgress(1);
               succeed(new Blob([buffer], { type: 'video/webm' }));
             } catch (error) {
@@ -1555,7 +1557,7 @@ const FrameEngine = (() => {
   async function renderVideoFramesOffline(file, exif, settings, options) {
     const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
       outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio,
-      hardwareAcceleration = 'no-preference' } = options;
+      onOutputSize, hardwareAcceleration = 'no-preference' } = options;
     if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
         typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
     const isMp4 = String(preferredMime || '').startsWith('video/mp4');
@@ -1676,6 +1678,7 @@ const FrameEngine = (() => {
         await conversion.execute();
         assertActive();
         const blob = sink.finish(isMp4 ? 'video/mp4' : 'video/webm');
+        onOutputSize?.(outWidth, outHeight);
         if (chosenScale < 1) onAutoScale?.(outWidth, outHeight);
         onProgress?.(1);
         return blob;
@@ -1712,6 +1715,7 @@ const FrameEngine = (() => {
     frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     outputScale = 1,
     onAutoScale,
+    onOutputSize,
     onRealtimeFallback,
     preferHardware = false,
     onMemoryFallback,
@@ -1724,7 +1728,7 @@ const FrameEngine = (() => {
     if (outputFrameRate === 60) {
       const offlineOptions = {
         onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale,
+        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize,
         onSourceAudio: hasAudio => { offlineSourceHasAudio = hasAudio; },
       };
       let offline = null;
@@ -1754,7 +1758,7 @@ const FrameEngine = (() => {
     if (!preserveAudio && canUseWebCodecs) {
       try {
         return await _renderVideoWebCodecs(file, exif, settings, {
-          onProgress,
+          onProgress, onOutputSize,
           videoBitsPerSecond,
           sourceBitrate,
           frameRate: outputFrameRate,
@@ -1995,6 +1999,8 @@ const FrameEngine = (() => {
             fail(resourceLimitError());
             return;
           }
+          try { onOutputSize?.(canvas.width, canvas.height); }
+          catch (error) { fail(error); return; }
           settled = true;
           cleanup();
           resolve(blob);

@@ -2810,9 +2810,9 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           },
           onAutoScale: (width, height) => {
             item.videoReduced = true;
-            item.videoOutputSize = { width, height };
             showToast(tf('msgVideoEncoderScaled', { width, height }), 'warn');
           },
+          onOutputSize: (width, height) => { item.videoOutputSize = { width, height }; },
           onMemoryFallback: () => {
             item.videoMemoryFallback = true;
             showToast(t('msgVideoMemoryFallback'), 'warn');
@@ -6241,7 +6241,8 @@ function _estimateItemOutput(item) {
     return { tooLarge: true };
   }
   if (item.isVideo && item.status === 'done' && item.videoOutputSize) {
-    size = { ...size, ...item.videoOutputSize, scaled: true };
+    const scaled = size.width !== item.videoOutputSize.width || size.height !== item.videoOutputSize.height;
+    size = { ...size, ...item.videoOutputSize, scaled };
   }
   let bytes = null;
   let spatialMode = null;
@@ -6249,7 +6250,8 @@ function _estimateItemOutput(item) {
     const bitrate = state.settings.exportVideoBitrate === 'source'
       ? InstaFrameCore.estimateVideoBitrateFromFile(item.file.size, item.sourceDuration)
       : state.settings.exportVideoBitrate * 1_000_000;
-    if (item.sourceDuration > 0 && bitrate) bytes = item.sourceDuration * bitrate / 8;
+    if (item.status === 'done' && item.videoBlob) bytes = item.videoBlob.size;
+    else if (item.sourceDuration > 0 && bitrate) bytes = item.sourceDuration * bitrate / 8;
   } else {
     bytes = _estimatePhotoBytes(item, size.width, size.height, size.sourceWidth, size.sourceHeight);
     if (_isSpatialItem(item)) {

@@ -385,11 +385,12 @@ test('reduced video dimensions and memory fallback remain visible after export',
     window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
       options.onMemoryFallback();
       options.onAutoScale(320, 200);
+      options.onOutputSize(320, 200);
       return new Blob([new Uint8Array([0])], { type: 'video/mp4' });
     };
     void window.generateAll();
   });
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
-  await expect(page.locator('#status-badge-1')).toContainText('Done · reduced · standard memory use');
+  await expect(page.locator('#status-badge-1')).toContainText('Done · reduced · standard processing');
   await expect(page.locator('#outputEstimate')).toContainText('320 × 200');
 });
