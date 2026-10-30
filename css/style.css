@@ -1416,7 +1416,7 @@ body[data-workspace="empty"] .photos-panel { display: none; }
   overflow: hidden;
   background: #2b2440;
 }
-.sample-print-photo svg { display: block; width: 100%; height: 100%; }
+.sample-print-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .sample-print-photo::after {
   content: '';
   position: absolute;
