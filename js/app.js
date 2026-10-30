@@ -5633,6 +5633,18 @@ async function renderLivePreview() {
       _disposeLiveVideoSource();
       return;
     }
+    // A thumbnail opens its own video decoder. Wait for it to release the
+    // source before opening the selected video's live preview decoder.
+    if (item.thumbnailPromise) {
+      _disposeLiveVideoSource();
+      await item.thumbnailPromise;
+      if (!_pageResourcesReleased && state.items.includes(item) &&
+          (state.selectedItemId || state.items[0]?.id) === item.id &&
+          !state.items.some(candidate => candidate.isVideo && candidate.status === 'processing')) {
+        scheduleLivePreview();
+      }
+      return;
+    }
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
