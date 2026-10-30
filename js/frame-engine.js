@@ -1556,8 +1556,9 @@ const FrameEngine = (() => {
   // MediaRecorder may emit fragmented MP4 with incomplete duration headers or
   // Opus audio. Repackage the video packets and convert audio to AAC so common
   // phone galleries can read the full duration and play the audio.
-  async function normalizeRecordedMp4(blob, { expectedDuration, expectAudio, maxBytes, signal, timeoutMs } = {}) {
+  async function normalizeRecordedMp4(blob, { expectedDuration, expectAudio, sourceFile, maxBytes, signal, timeoutMs } = {}) {
     let input = null;
+    let sourceInput = null;
     let verifiedInput = null;
     let converted = null;
     let timer = null;
@@ -1637,6 +1638,20 @@ const FrameEngine = (() => {
               Math.abs((verifiedAudioEnd - verifiedEnd) - (audioEnd - end)) > 0.25) {
             throw new Error('Compatible MP4 audio timing does not match the recording');
           }
+          if (sourceFile && expectAudio) {
+            sourceInput = new media.Input({ source: new media.BlobSource(sourceFile, { maxCacheSize: 4 * 1024 * 1024 }), formats: media.ALL_FORMATS });
+            const sourceVideo = await sourceInput.getPrimaryVideoTrack();
+            const sourceAudio = await sourceInput.getPrimaryAudioTrack();
+            if (!sourceVideo || !sourceAudio) throw new Error('Source audio could not be verified');
+            const [sourceVideoFirst, sourceAudioFirst, sourceAudioEnd] = await Promise.all([
+              sourceVideo.getFirstTimestamp(), sourceAudio.getFirstTimestamp(), sourceAudio.computeDuration(),
+            ]);
+            const audioTolerance = Math.max(0.35, (expectedDuration || 0) * 0.03);
+            if (Math.abs((verifiedAudioFirst - verifiedFirst) - (sourceAudioFirst - sourceVideoFirst)) > audioTolerance ||
+                (verifiedAudioEnd - verifiedFirst) < (sourceAudioEnd - sourceVideoFirst) - audioTolerance) {
+              throw new Error('Recorded audio does not cover the source audio');
+            }
+          }
         }
         if (interruptionError) throw interruptionError;
         return result;
@@ -1655,6 +1670,7 @@ const FrameEngine = (() => {
         else await converted.cancel().catch(() => {});
       }
       input?.dispose();
+      sourceInput?.dispose();
       verifiedInput?.dispose();
       target.clear();
     }
@@ -1913,6 +1929,7 @@ const FrameEngine = (() => {
       let visibilityPaused = false;
       let settled = false;
       let cleaned = false;
+      let playbackFinished = false;
 
       const cleanup = () => {
         if (cleaned) return;
@@ -2104,6 +2121,12 @@ const FrameEngine = (() => {
         };
         recorder.onstop = () => {
           if (settled) { cleanup(); return; }
+          if (!playbackFinished) {
+            const error = new Error('Video playback stopped before the source ended');
+            error.code = 'VIDEO_RECORDING_INCOMPLETE';
+            fail(error);
+            return;
+          }
           const blob = new Blob(chunks, { type: mimeType });
           if (blob.size > outputByteLimit) {
             fail(resourceLimitError());
@@ -2123,6 +2146,13 @@ const FrameEngine = (() => {
             fail(new Error('Video export was interrupted while the page was hidden'));
             return;
           }
+          if (duration > 0 && video.currentTime < duration - Math.max(0.25, duration * 0.01)) {
+            const error = new Error('Video playback ended before the source ended');
+            error.code = 'VIDEO_RECORDING_INCOMPLETE';
+            fail(error);
+            return;
+          }
+          playbackFinished = true;
           stopRecorderAfterFlush();
         };
 
@@ -2161,8 +2191,19 @@ const FrameEngine = (() => {
 
             if (!video.ended && !video.paused) {
               scheduleFrame();
-            } else {
+            } else if (video.ended) {
+              if (duration > 0 && mediaTime < duration - Math.max(0.25, duration * 0.01)) {
+                const error = new Error('Video playback ended before the source ended');
+                error.code = 'VIDEO_RECORDING_INCOMPLETE';
+                fail(error);
+                return;
+              }
+              playbackFinished = true;
               stopRecorderAfterFlush();
+            } else {
+              const error = new Error('Video playback paused before the source ended');
+              error.code = 'VIDEO_RECORDING_INCOMPLETE';
+              fail(error);
             }
           } catch (error) {
             fail(error);
@@ -2247,7 +2288,7 @@ const FrameEngine = (() => {
     });
     const result = recorded.type.startsWith('video/mp4')
       ? await normalizeRecordedMp4(recorded, {
-        expectedDuration: recordedDuration, expectAudio: sourceHasAudio !== false,
+        expectedDuration: recordedDuration, expectAudio: sourceHasAudio !== false, sourceFile: file,
         maxBytes: outputByteLimit, signal, timeoutMs: progressTimeoutMs,
       })
       : recorded;

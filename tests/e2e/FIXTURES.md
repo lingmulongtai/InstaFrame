@@ -8,6 +8,10 @@ ffmpeg -f lavfi -i "testsrc2=size=96x64:rate=30:duration=1" -f lavfi -i "sine=fr
 
 SHA-256: `526497965b907bd055f99e9616da9b9316dafa43404a77eceb8519508091d6fa`
 
+`fragmented-short-audio.mp4` uses the same command but changes the sine's `duration=1` to `duration=0.2`. It tests rejection of a recording whose audio ends before the source audio.
+
+SHA-256: `7fdb865ab0d2696836e1d1ed2f7a99f1cd38550b83149622fb2e48524cc4f676`
+
 `offline-60fps.mp4` is a one-second 320×180 H.264/AAC synthetic video at 60 fps. Four coloured quadrants identify orientation; a white flash and a 1 kHz tone both start at 0.5 seconds. `offline-60fps-rotated.mp4` contains the same streams with a 90-degree display matrix. FFmpeg 8.0.1 was used:
 
 ```text

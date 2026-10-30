@@ -2907,6 +2907,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       else if (e?.code === 'IMAGE_DECODE_TIMEOUT') _setLocalizedItemError(item, 'msgImageDecodeTimeout');
       else if (e?.code === 'VIDEO_EXPORT_UNAVAILABLE') _setLocalizedItemError(item, 'msgVideoExportUnavailable');
       else if (e?.code === 'VIDEO_MP4_FINALIZATION_FAILED') _setLocalizedItemError(item, 'msgVideoMp4FinalizationFailed');
+      else if (e?.code === 'VIDEO_RECORDING_INCOMPLETE') _setLocalizedItemError(item, 'msgVideoRecordingIncomplete');
       else if (item.isVideo && (e?.code === 'MEDIA_TIMEOUT' || e?.message === 'Video load failed')) {
         _setVideoFailureError(item, { timedOut: e?.code === 'MEDIA_TIMEOUT' });
       }
