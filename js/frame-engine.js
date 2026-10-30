@@ -1724,6 +1724,7 @@ const FrameEngine = (() => {
 
         // ── Build output stream: canvas video + original audio ──
         outputStream = canvas.captureStream(outputFrameRate);
+        const videoTrack = outputStream.getVideoTracks?.()[0];
         if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
@@ -1797,6 +1798,9 @@ const FrameEngine = (() => {
               : frameIndex !== lastDrawnFrame;
             if (shouldDraw) {
               drawVideoFrameSync(ctx, video, exif, settings, layout);
+              if (outputFrameRate === 60 && typeof videoTrack?.requestFrame === 'function') {
+                runBestEffortCleanup(() => videoTrack.requestFrame());
+              }
               lastDrawnFrame = frameIndex;
               lastDrawnMediaTime = mediaTime;
             }
