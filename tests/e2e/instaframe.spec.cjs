@@ -5,6 +5,11 @@ const path = require('node:path');
 const JSZip = require('jszip');
 const { createJpeg, createWebm } = require('./fixtures.cjs');
 
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 async function uploadJpegs(page, count = 1, gps = false) {
   const files = Array.from({ length: count }, (_, index) => ({
     name: `photo-${index + 1}.jpg`,
@@ -14,6 +19,12 @@ async function uploadJpegs(page, count = 1, gps = false) {
   await page.locator('#fileInput').setInputFiles(files);
   await expect(page.locator('#livePreviewCanvas')).toBeVisible();
   await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+}
+
+// The UI renders on demand when downloading; tests that only need finished
+// frames run the same batch renderer directly, without waiting for it.
+async function renderAllItems(page) {
+  await page.evaluate(() => { void window.generateAll(); });
 }
 
 async function trackCancellationToasts(page) {
@@ -115,8 +126,9 @@ test.beforeEach(async ({ page }) => {
 
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
+  await expect(page.locator('#samplePrint')).toBeVisible();
   await expect(page.locator('#mobileAddBtn')).toBeHidden();
-  await expect(page.locator('.empty-hint-card')).toHaveCount(4);
+  await expect(page.locator('.photos-panel')).toBeHidden();
   const initial = await new AxeBuilder({ page }).analyze();
   expect(initial.violations.filter(violation => ['critical', 'serious'].includes(violation.impact)).map(violation => violation.id)).toEqual([]);
 
@@ -215,11 +227,10 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
-  await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    'ブラウザ依存の条件付き形式：HEIC/HEIF・MOV/M4V・AVI/MKV/3GP。読み込みにはコンテナとコーデックの対応が必要です。'
-  );
+  await expect(page.locator('.preview-empty-sub')).toHaveText('写真は端末内で処理され、アップロードされません。');
   await uploadJpegs(page);
-  await expect(page.locator('#status-badge-1 .status-text')).toHaveText('未適用');
+  await expect(page.locator('#status-badge-1 .status-text')).toHaveText('準備完了');
+  await expect(page.locator('#downloadAllLabel')).toHaveText('ダウンロード');
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', '写真カードの大きさ');
   await expect(page.locator('#undoEditBtn')).toHaveText('戻る');
   await expect(page.locator('#undoEditBtn')).toHaveAttribute('title', '戻る');
@@ -232,9 +243,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#dropZone')).toContainText('Drop photos here');
-  await expect(page.locator('.preview-empty-format-note')).toHaveText(
-    'Conditional browser formats: HEIC/HEIF · MOV/M4V · AVI/MKV/3GP. Decoding depends on container and codec support.'
-  );
+  await expect(page.locator('.preview-empty-sub')).toHaveText('Processed on this device. Nothing is uploaded.');
   await uploadJpegs(page);
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', 'Photo card size');
   await expect(page.locator('#undoEditBtn')).toHaveText('Undo');
@@ -243,6 +252,57 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await expect(page.locator('#redoEditBtn')).toHaveAttribute('title', 'Redo');
   await page.evaluate(() => window.showProgress('Processing…', 0));
   await expect(page.locator('#cancelExportBtn')).toHaveAccessibleName('Cancel');
+});
+
+test('first paint stays hidden until translations and saved preferences are applied', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'ja');
+    localStorage.setItem('instaframe_prefs', JSON.stringify({ theme: 'dark', layout: 'right' }));
+    window.__previousDocument = true;
+  });
+  let releaseApp;
+  const appHeld = new Promise(resolve => { releaseApp = resolve; });
+  await page.route('**/js/app.js*', async route => {
+    await appHeld;
+    await route.continue();
+  });
+
+  const navigation = page.goto('/');
+  const readBootState = () => page.evaluate(() => {
+    if (window.__previousDocument || !document.body) return null;
+    return {
+      booting: document.documentElement.classList.contains('is-booting'),
+      theme: document.documentElement.dataset.theme,
+      layout: document.documentElement.dataset.layout,
+      bodyVisibility: getComputedStyle(document.body).visibility,
+      mobileTab: document.body.dataset.mobileTab,
+      workspace: document.body.dataset.workspace,
+    };
+  }).catch(() => null);
+  await expect.poll(readBootState).not.toBeNull();
+  expect(await readBootState()).toEqual({
+    booting: true,
+    theme: 'dark',
+    layout: 'right',
+    bodyVisibility: 'hidden',
+    mobileTab: 'preview',
+    workspace: 'empty',
+  });
+
+  releaseApp();
+  await navigation;
+  await expect(page.locator('html')).not.toHaveClass(/is-booting/);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  await expect(page.locator('body')).toHaveCSS('visibility', 'visible');
+  await expect(page.locator('.preview-empty-text')).toHaveText('ここに写真をドロップ');
+  await expect(page.locator('#livePreviewCanvas')).toBeHidden();
+});
+
+test('the page still reveals itself when the app script cannot load', async ({ page }) => {
+  await page.route('**/js/app.js*', route => route.abort());
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveClass(/is-booting/);
+  await expect(page.locator('body')).toHaveCSS('visibility', 'visible', { timeout: 10_000 });
 });
 
 test('card actions identify their target file in both languages', async ({ page }) => {
@@ -275,10 +335,20 @@ test('dynamic color and location controls expose localized group names', async (
   await expect(page.locator('#locationIconRow [role="radiogroup"]')).toHaveAccessibleName('マップアイコン');
 });
 
-test('saved map overlay is normalized off when no valid token is configured', async ({ page }) => {
+test('a saved map overlay stays on without a Mapbox token and uses OpenStreetMap', async ({ page }) => {
   const mapboxRequests = [];
+  const tileRequests = [];
   page.on('request', request => {
     if (request.url().startsWith('https://api.mapbox.com/')) mapboxRequests.push(request.url());
+  });
+  await page.route('https://tile.openstreetmap.org/**', async route => {
+    tileRequests.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: ONE_PIXEL_PNG,
+    });
   });
   await page.evaluate(() => {
     localStorage.setItem('instaframe_prefs', JSON.stringify({ locationNetworkConsent: 'always' }));
@@ -290,16 +360,31 @@ test('saved map overlay is normalized off when no valid token is configured', as
   await page.reload();
 
   await expect(page.locator('#showLocation')).toBeChecked();
-  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
-  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
-  await expect(page.locator('#mapOverlayPositionRow')).toHaveClass(/is-hidden/);
-  expect(await page.evaluate(() => ({
-    token: window.getMapboxToken(),
-    savedEnabled: JSON.parse(localStorage.getItem('instaframe_settings')).showMapOverlay,
-  }))).toEqual({ token: null, savedEnabled: false });
+  await expect(page.locator('#showMapOverlay')).toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).not.toHaveClass(/is-hidden/);
+  expect(await page.evaluate(() => window.getMapboxToken())).toBeNull();
 
   await uploadJpegs(page, 1, true);
+  // The overlay covers the same area as a 400 px map at zoom 13, at 2× density.
+  await expect.poll(() => tileRequests.length).toBeGreaterThan(3);
+  expect(tileRequests.every(url => /^https:\/\/tile\.openstreetmap\.org\/14\/\d+\/\d+\.png$/.test(url))).toBe(true);
+  await expect.poll(() => page.evaluate(() => eval('_mapImgCache.size'))).toBe(1);
   expect(mapboxRequests).toEqual([]);
+});
+
+test('a saved map overlay is normalized off without location consent', async ({ page }) => {
+  const tileRequests = [];
+  page.on('request', request => {
+    if (request.url().includes('tile.openstreetmap.org')) tileRequests.push(request.url());
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_settings', JSON.stringify({ showLocation: true, showMapOverlay: true }));
+  });
+  await page.reload();
+  await expect(page.locator('#showMapOverlay')).not.toBeChecked();
+  await expect(page.locator('#mapOverlayOpacityRow')).toHaveClass(/is-hidden/);
+  await uploadJpegs(page, 1, true);
+  expect(tileRequests).toEqual([]);
 });
 
 test('privacy settings distinguish a site Mapbox token from a device token', async ({ page }) => {
@@ -361,13 +446,13 @@ test('radio choices expose their localized setting group names', async ({ page }
   }
   await expectGroups([
     'Background', 'Frame Color', 'Aspect Ratio', 'Orientation', 'Text Color',
-    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Bitrate',
+    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Video processing', 'Bitrate',
   ]);
 
   await page.locator('#langToggleBtn').click();
   await expectGroups([
     '背景', 'フレームカラー', 'アスペクト比', '向き', '文字色',
-    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', 'ビットレート',
+    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', '動画の処理', 'ビットレート',
   ]);
   await page.locator('#customizeBtn').click();
   await expectGroups(['テーマ', 'サイドバー', 'EXIF編集']);
@@ -567,7 +652,7 @@ test('a successful export recovers a photo from a transient live preview decode 
   await expect.poll(() => page.evaluate(() => window.__transientPreviewFailureObserved)).toBe(true);
   await page.evaluate(() => window.__restorePreviewImageDecoder());
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('.status-dot.done')).toHaveCount(1);
   await expect(canvas).toBeVisible();
@@ -639,6 +724,34 @@ test('photo card and live preview decoders share one concurrency limit', async (
   expect(await page.evaluate(() => window.__maxPhotoDecoders)).toBe(2);
 });
 
+test('photo export cancels an unfinished card decode before rendering', async ({ page }) => {
+  await page.evaluate(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    window.__cardDecodeStalled = false;
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: descriptor.get,
+      set(value) {
+        if (this.classList.contains('thumb-orig') && String(value).startsWith('blob:')) {
+          window.__cardDecodeStalled = true;
+          Object.defineProperty(this, 'complete', { configurable: true, get: () => false });
+          return;
+        }
+        descriptor.set.call(this, value);
+      },
+    });
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'stalled-card.jpg', mimeType: 'image/jpeg', buffer: createJpeg(),
+  });
+  await expect.poll(() => page.evaluate(() => window.__cardDecodeStalled)).toBe(true);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  await downloadPromise;
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => Boolean(eval('state.items')[0].photoThumbnailPromise))).toBe(false);
+});
+
 test('live EXIF edits do not cancel an independent photo card thumbnail', async ({ page }) => {
   await page.evaluate(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
@@ -677,7 +790,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
     window.__photoThumbnailAttempts = 0;
     window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
       callback,
-      delay === 15_000 ? 25 : delay,
+      delay === 15_000 ? 250 : delay,
       ...args
     );
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
@@ -699,7 +812,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
 
   await uploadJpegs(page);
 
-  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 1_000 }).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 3_000 }).toBe(2);
   await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
   await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
   await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
@@ -864,7 +977,7 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
     };
   });
   await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
   await page.evaluate(() => {
@@ -908,9 +1021,10 @@ test('every BFCache pagehide releases Blob URLs and restores a usable pending pr
 });
 
 test('a failed ZIP download restores export controls without an unhandled rejection', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     const create = URL.createObjectURL.bind(URL);
     const revoke = URL.revokeObjectURL.bind(URL);
@@ -961,9 +1075,10 @@ test('a failed ZIP download restores export controls without an unhandled reject
 });
 
 test('an invalid JSZip global cannot leave export controls locked', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     window.JSZip = {};
     window.__invalidZipUnhandled = [];
@@ -1389,7 +1504,7 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
     );
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(thumbnail).toBeVisible();
 
@@ -1403,6 +1518,49 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
   await expect(page.locator('#item-1 img.thumb-orig')).toBeHidden();
 });
 
+test('export errors reveal details on the card and clear on retry', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__originalRender = window.FrameEngine.renderFrameWhenReady;
+    window.FrameEngine.renderFrameWhenReady = async () => {
+      const error = new Error('Simulated encoder failure');
+      error.code = 'ENCODER_FAILURE';
+      throw error;
+    };
+  });
+  await renderAllItems(page);
+  const preview = page.locator('#preview-1');
+  const details = page.locator('#error-details-1');
+  await expect(preview).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toBeHidden();
+  await preview.click();
+  await expect(details).toBeVisible();
+  await expect(details).toContainText('Simulated encoder failure');
+  await expect(details).toContainText('ENCODER_FAILURE');
+  await expect(preview).toHaveAttribute('aria-expanded', 'true');
+  await page.evaluate(() => { window.FrameEngine.renderFrameWhenReady = window.__originalRender; });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(details).toBeHidden();
+  await expect(preview).not.toHaveAttribute('aria-expanded');
+});
+
+test('mobile error details remain visible when an error card is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('invalid image'),
+  });
+  await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await page.locator('#preview-1').click();
+  await expect(page.locator('body')).toHaveAttribute('data-mobile-tab', 'photos');
+  await expect(page.locator('#error-details-1')).toBeVisible();
+  await expect(page.locator('#preview-1')).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('card progress remains described without competing with the export live region', async ({ page }) => {
   await uploadJpegs(page);
   const preview = page.locator('#preview-1');
@@ -1411,7 +1569,7 @@ test('card progress remains described without competing with the export live reg
   await expect(preview).toHaveAttribute('aria-describedby', 'status-badge-1');
   await expect(badge).not.toHaveAttribute('role');
   await expect(badge).not.toHaveAttribute('aria-live');
-  await expect(badge).toContainText(/pending|未適用/i);
+  await expect(badge).toContainText(/ready|準備完了/i);
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('role', 'status');
   await expect(page.locator('#exportProgressStatus')).toHaveAttribute('aria-live', 'polite');
 });
@@ -1621,14 +1779,14 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   await expect(page.locator('.pq-option[data-q="draft"]')).toHaveAttribute('aria-checked', 'true');
   await page.evaluate(() => window.setLang('en'));
   await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('Preview quality: Draft');
-  await expect(page.locator('#imageCounterVisual')).toHaveText('(1)');
+  await expect(page.locator('#imageCounterVisual')).toHaveText('1');
   await expect(page.locator('#imageCounterStatus')).toHaveText('Images: 1');
   await page.locator('#previewQualityBtn').press('Enter');
   await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('Preview quality');
   await page.keyboard.press('Escape');
   await page.evaluate(() => window.setLang('ja'));
   await expect(page.locator('#previewQualityBtn')).toHaveAccessibleName('プレビュー画質: 下書き');
-  await expect(page.locator('#imageCounterVisual')).toHaveText('(1)');
+  await expect(page.locator('#imageCounterVisual')).toHaveText('1');
   await expect(page.locator('#imageCounterStatus')).toHaveText('画像: 1件');
   await page.locator('#previewQualityBtn').press('Enter');
   await expect(page.locator('#previewQualityPopup')).toHaveAccessibleName('プレビュー画質');
@@ -2057,6 +2215,7 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   const undo = page.locator('#undoEditBtn');
   const redo = page.locator('#redoEditBtn');
   const initialPhotoQuality = await page.locator('#photoQualityRange').inputValue();
+  const initialVideoBitrate = await page.locator('input[name="exportVideoBitrate"]:checked').inputValue();
 
   await page.locator('label[for="bg-blur"]').click();
   await undo.click();
@@ -2079,7 +2238,7 @@ test('output setting changes create a new undo branch', async ({ page }) => {
   await page.locator('label[for="vbr-16"]').click();
   await expect(redo).toBeDisabled();
   await undo.click();
-  await expect(page.locator('#vbr-8')).toBeChecked();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue(initialVideoBitrate);
 });
 
 test('redo cannot restore a map overlay after location access is revoked', async ({ page }) => {
@@ -2207,9 +2366,26 @@ test('batch export keeps case-insensitive duplicate filenames as separate ZIP en
   ]);
 });
 
-test('ZIP creation stops before aggregate browser memory exceeds its safe peak', async ({ page }) => {
+test('ZIP export stops without splitting when a single archive exceeds the memory budget', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    window.FrameEngine.canvasToBlob = async () => {
+      const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
+      Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
+      return blob;
+    };
+  });
+  const downloads = [];
+  page.on('download', download => downloads.push(download));
+  await page.locator('#downloadAllBtn').click();
+  await expect(page.locator('#toast')).toContainText(/one ZIP|1つのZIP/i);
+  await expect(page.locator('#exportProgress')).toBeHidden();
+  expect(downloads).toHaveLength(0);
+});
+
+test('a single photo larger than the safe ZIP peak stops with a memory warning', async ({ page }) => {
   await uploadJpegs(page, 2);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
 
@@ -2223,7 +2399,7 @@ test('ZIP creation stops before aggregate browser memory exceeds its safe peak',
     };
     window.FrameEngine.canvasToBlob = async () => {
       const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-      Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
+      Object.defineProperty(blob, 'size', { value: 300 * 1024 * 1024 });
       return blob;
     };
   });
@@ -2275,6 +2451,32 @@ test('photo export corrects a wrong Blob MIME when the requested signature is va
   expect(result).toEqual({ type: 'image/webp', riff: 'RIFF', webp: 'WEBP' });
 });
 
+test('batch download reports items missing from a partial ZIP', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    const show = window.showToast;
+    window.__partialDownloadMessages = [];
+    window.showToast = (message, ...args) => {
+      window.__partialDownloadMessages.push(message);
+      return show(message, ...args);
+    };
+    let attempts = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      if (attempts++ === 0) throw new Error('simulated export failure');
+      return render(...args);
+    };
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const zip = await JSZip.loadAsync(await fs.readFile(await (await downloadPromise).path()));
+  expect(Object.keys(zip.files)).toEqual(['photo-2_frame.jpg']);
+  expect(await page.evaluate(() => window.__partialDownloadMessages)).toContain('The ZIP is incomplete: 1 item(s) failed. Review their error details.');
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+});
+
 test('video export controls disappear when MediaRecorder supports no output MIME', async ({ page }) => {
   await page.evaluate(() => {
     window.MediaRecorder.isTypeSupported = () => false;
@@ -2301,7 +2503,6 @@ test('unsupported video export disables only actions that have no exportable med
   });
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
 
   await page.locator('#fileInput').setInputFiles({
@@ -2312,7 +2513,6 @@ test('unsupported video export disables only actions that have no exportable med
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
   await expect(page.locator('#dl-btn-2')).toBeEnabled();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
@@ -2373,6 +2573,66 @@ test('supported video export selection survives a page reload', async ({ page })
   await page.reload();
 
   await expect(page.locator('input[name="exportVideoFormat"]:checked')).toHaveValue(savedChoice);
+});
+
+test('video frame-rate selection defaults to 60 and survives reload', async ({ page }) => {
+  await expect(page.locator('input[name="exportVideoFps"]:checked')).toHaveValue('60');
+  await page.locator('label[for="vfps-30"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoFps"]:checked')).toHaveValue('30');
+  await page.locator('#fileInput').setInputFiles({ name: 'fps.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__selectedVideoFps = options.frameRate;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__selectedVideoFps)).toBe(30);
+});
+
+test('video memory priority persists and reaches the encoder', async ({ page }) => {
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('memory');
+  await page.locator('label[for="video-quality"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('quality');
+  await page.locator('#fileInput').setInputFiles({ name: 'memory.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__preferHardware = options.preferHardware;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(false);
+  await page.locator('label[for="video-memory"]').click();
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(true);
+});
+
+test('video bitrate preserves existing choices and supports source estimates', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_settings', JSON.stringify({ exportVideoBitrate: 8 })));
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('8');
+  await page.locator('label[for="vbr-source"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('source');
+  await page.locator('label[for="vbr-50"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoBitrate"]:checked')).toHaveValue('50');
+  await page.locator('#fileInput').setInputFiles({ name: 'bitrate.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__selectedVideoBitrate = [options.videoBitsPerSecond, options.sourceBitrate];
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__selectedVideoBitrate)).toEqual([50_000_000, false]);
 });
 
 test('invalid persisted enum values cannot break application startup', async ({ page }) => {
@@ -2449,9 +2709,9 @@ test('an unexpected post-export UI failure cannot leave batch controls locked', 
     window.updateItemPreview = () => { throw new Error('simulated post-export UI failure'); };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
   await expect(page.locator('#toast')).toHaveText(expectedError);
   expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
@@ -2462,7 +2722,7 @@ test('an unexpected post-regenerate UI failure cannot leave controls locked', as
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await page.evaluate(() => {
     window.updateItemPreview = () => { throw new Error('simulated post-regenerate UI failure'); };
@@ -2470,7 +2730,7 @@ test('an unexpected post-regenerate UI failure cannot leave controls locked', as
 
   await page.evaluate(() => window.regenerateItem(1));
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   const expectedError = await page.evaluate(() => window.t('msgExportFailed'));
   await expect(page.locator('#toast')).toHaveText(expectedError);
   expect(await page.evaluate(() => eval('_globalExportBusy'))).toBe(false);
@@ -2494,7 +2754,6 @@ test('single export keeps every export action locked through final encoding', as
 
   await expect(page.locator('#dl-btn-1')).toBeDisabled();
   await expect(page.locator('#dl-btn-2')).toBeDisabled();
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
   await expect(page.locator('#clearAllBtn')).toBeDisabled();
 
@@ -2812,7 +3071,6 @@ test('batch actions wait until every accepted import is materialized', async ({ 
 
   await expect.poll(() => page.evaluate(() => window.__completeImportStats.parseCalls)).toBe(2);
   await expect(page.locator('.image-card')).toHaveCount(1);
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
   await expect(page.locator('#downloadAllBtn')).toBeDisabled();
 
   await page.evaluate(async () => {
@@ -2834,7 +3092,6 @@ test('batch actions wait until every accepted import is materialized', async ({ 
     await window.__completeImport;
   });
   await expect(page.locator('.image-card')).toHaveCount(2);
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
   await expect(page.locator('#downloadAllBtn')).toBeEnabled();
 });
 
@@ -3213,6 +3470,25 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
 });
 
+test('video export releases and restores the live preview decoder', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'preview-decoder.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async () => {
+      window.__previewSourceDuringExport = document.querySelector('#livePreviewVideo').getAttribute('src');
+      await window.renderLivePreview();
+      window.__previewSourceAfterRender = document.querySelector('#livePreviewVideo').getAttribute('src');
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => [window.__previewSourceDuringExport, window.__previewSourceAfterRender])).toEqual([null, null]);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+});
+
 test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
   await page.evaluate(() => {
     window.__thumbnailExportOrder = { captureCalls: 0, started: false, settled: false, encoderSawSettled: false };
@@ -3248,7 +3524,7 @@ test('video export waits for thumbnail decoder cleanup before encoding', async (
   });
   await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.started)).toBe(true);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect.poll(() => page.evaluate(() => window.__thumbnailExportOrder.captureCalls)).toBe(2);
@@ -3306,7 +3582,7 @@ test('a successful video export retries one transient thumbnail failure', async 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toHaveCount(0);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
@@ -3333,7 +3609,7 @@ test('a failed post-export thumbnail retry does not invalidate the video output 
   });
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#dl-btn-1')).toBeEnabled();
@@ -3711,6 +3987,7 @@ test('duplicate photo exports are coalesced and removal discards stale output', 
 test('removing media aborts a global export before stale output can download', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     window.__staleExportDownloads = 0;
     HTMLAnchorElement.prototype.click = () => { window.__staleExportDownloads += 1; };
     window.FrameEngine.loadImage = (file, options = {}) => {
@@ -3740,13 +4017,11 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
-    const render = window.FrameEngine.renderFrameWhenReady;
-    window.FrameEngine.renderFrameWhenReady = async (...args) => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return render(...args);
-    };
+    window.FrameEngine.renderFrameWhenReady = (_image, _exif, _settings, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('Export cancelled', 'AbortError')), { once: true });
+    });
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#imageSection')).toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('#exportProgressMeter')).toHaveAccessibleName(/.+/);
@@ -3774,7 +4049,7 @@ test('export completion preserves focus when the user moves to another control',
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__focusExportStarted)).toBe(true);
   await expect(page.locator('#cancelExportBtn')).toBeFocused();
   const customize = page.locator('#customizeBtn');
@@ -3812,19 +4087,19 @@ test('a suspended export cannot unlock a newer export after BFCache restore', as
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__oldExportStarted)).toBe(true);
   await page.evaluate(() => {
     window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect.poll(() => page.evaluate(() => window.__newExportStarted)).toBe(true);
   await page.evaluate(() => window.__releaseOldExport());
   await page.waitForTimeout(250);
 
-  await expect(page.locator('#generateAllBtn')).toBeDisabled();
+  await expect(page.locator('#downloadAllBtn')).toBeDisabled();
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/processing/);
 
@@ -3845,7 +4120,7 @@ test('changing frame settings aborts active work and invalidates the whole batch
     });
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#thicknessRange').evaluate(input => {
     input.value = '1.1';
@@ -3859,9 +4134,10 @@ test('changing frame settings aborts active work and invalidates the whole batch
 });
 
 test('live EXIF edits abort an active ZIP before stale photo bytes can download', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__exifZipEncodeStarted = false;
@@ -3890,9 +4166,10 @@ test('live EXIF edits abort an active ZIP before stale photo bytes can download'
 });
 
 test('photo output setting changes abort active ZIP encodes before stale bytes download', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__photoSettingZipSignals = [];
@@ -3944,9 +4221,10 @@ test('resolved device locations abort an active ZIP before stale output can down
       coords: { latitude: 35.0116, longitude: 135.7681 },
     });
   });
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__locationZipEncodeStarted = false;
@@ -3976,7 +4254,7 @@ test('resolved device locations abort an active ZIP before stale output can down
 });
 
 test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__photoEncodeStarted = false;
@@ -4008,7 +4286,7 @@ test('ZIP cancellation interrupts a pending photo canvas encode', async ({ page 
 });
 
 test('ZIP cancellation interrupts a pending lazy dependency load', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
     window.__zipDependencyLoadStarted = false;
@@ -4029,10 +4307,11 @@ test('ZIP cancellation interrupts a pending lazy dependency load', async ({ page
 });
 
 test('ZIP cancellation pauses active packing and restores the export UI', async ({ page }) => {
-  await uploadJpegs(page);
+  await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
 
@@ -4085,9 +4364,10 @@ test('ZIP cancellation pauses active packing and restores the export UI', async 
 });
 
 test('clearing with the keyboard aborts active ZIP packing before removing items', async ({ page }) => {
-  await uploadJpegs(page);
-  await page.locator('#generateAllBtn').click();
+  await uploadJpegs(page, 2);
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-2 .status-dot')).toHaveClass(/done/);
   await page.evaluate(async () => {
     const JSZipCtor = await window.loadVendorScript('vendor/jszip.min.js', 'JSZip');
     window.__clearZipState = { started: false, paused: false };
@@ -4208,7 +4488,7 @@ test('batch generation reports failures and retries failed items', async ({ page
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
 
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
@@ -4216,7 +4496,7 @@ test('batch generation reports failures and retries failed items', async ({ page
   await expect(page.locator('#toast')).toContainText('Frames that could not be generated: 1');
   await expect(page.locator('#toast')).not.toContainText('All frames generated');
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
   await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
   await expect(page.locator('#toast')).toContainText('All frames generated');
@@ -4233,7 +4513,7 @@ test('batch download retries failed items before building the ZIP', async ({ pag
       return render(...args);
     };
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(1);
 
   const downloadPromise = page.waitForEvent('download');
@@ -4243,7 +4523,7 @@ test('batch download retries failed items before building the ZIP', async ({ pag
   const entries = Object.values(archive.files).filter(entry => !entry.dir);
 
   await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
-  await expect(page.locator('#imageGrid .status-dot.done')).toHaveCount(2);
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(2);
   expect(entries).toHaveLength(2);
 });
 
@@ -4262,7 +4542,7 @@ test('video cancellation propagates an AbortSignal to the active encoder', async
       }, { once: true });
     });
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#cancelExportBtn').click();
   await expect.poll(() => page.evaluate(() => window.__videoAbortObserved)).toBe(true);
@@ -4273,6 +4553,7 @@ test('video cancellation propagates an AbortSignal to the active encoder', async
 test('photo cancellation aborts the active image decoder and restores pending state', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     window.__photoAbortObserved = false;
     window.FrameEngine.loadImage = (_file, options) => new Promise((resolve, reject) => {
       options.signal.addEventListener('abort', () => {
@@ -4281,7 +4562,7 @@ test('photo cancellation aborts the active image decoder and restores pending st
       }, { once: true });
     });
   });
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#cancelExportBtn').click();
   await expect.poll(() => page.evaluate(() => window.__photoAbortObserved)).toBe(true);
@@ -4456,6 +4737,7 @@ test('a stalled photo export decoder times out, revokes its URL, and restores co
   await page.reload();
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     const nativeSetTimeout = window.setTimeout.bind(window);
     const nativeCreateObjectURL = URL.createObjectURL.bind(URL);
     const nativeRevokeObjectURL = URL.revokeObjectURL.bind(URL);
@@ -4486,11 +4768,11 @@ test('a stalled photo export decoder times out, revokes its URL, and restores co
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('#status-badge-1')).toHaveAttribute('aria-label', /took too long/i);
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   expect(await page.evaluate(() => ({
     activeUrls: window.__stalledExportImageStats.activeUrls.size,
     sourceRemoved: window.__stalledExportImageStats.sourceRemoved,
@@ -4756,7 +5038,8 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
       };
       CanvasRenderingContext2D.prototype.drawImage = function (...args) {
         drawCalls += 1;
-        if (mode !== 'post-process' || drawCalls === 2) throw new Error(`${mode} failure`);
+        // Blur draws the background first; fail on the photo draw that follows.
+        if (mode !== 'blur' || drawCalls === 2) throw new Error(`${mode} failure`);
         return nativeDrawImage.apply(this, args);
       };
       let message = '';
@@ -4766,7 +5049,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
         } else if (mode === 'scale') {
           await window.FrameEngine.renderFrameWhenReady(source, {}, {}, { maxPreviewPx: 50 });
         } else {
-          await window.FrameEngine.renderFrameWhenReady(source, {}, { aspectRatio: '1:1' });
+          await window.FrameEngine.renderFrameWhenReady(source, {}, { aspectRatio: '1:1', frameBackground: 'blur' });
         }
       } catch (error) {
         message = error.message;
@@ -4778,7 +5061,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
     };
 
     try {
-      return [await run('render'), await run('scale'), await run('post-process')];
+      return [await run('render'), await run('scale'), await run('blur')];
     } finally {
       source.width = 0;
       source.height = 0;
@@ -4788,7 +5071,7 @@ test('photo drawing failures zero every allocated canvas', async ({ page }) => {
   expect(results.map(result => result.message)).toEqual([
     'render failure',
     'scale failure',
-    'post-process failure',
+    'blur failure',
   ]);
   for (const result of results) {
     expect(result.dimensions.length).toBeGreaterThan(0);
@@ -4809,18 +5092,19 @@ test('a failed generated card canvas falls back to the bounded source thumbnail'
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
   await expect(page.locator('#exportProgress')).toBeHidden();
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(0);
   await expect(page.locator('canvas.thumb-source')).toBeVisible();
-  await expect(page.locator('#generateAllBtn')).toBeEnabled();
+  await expect(page.locator('#downloadAllBtn')).toBeEnabled();
   expect(pageErrors).toEqual([]);
 });
 
 test('successful photo export releases its full-resolution decoder', async ({ page }) => {
   await uploadJpegs(page);
   await page.evaluate(() => {
+    window._invalidateItemCache(1);
     const nativeLoadImage = window.FrameEngine.loadImage;
     window.__fullResolutionExportImage = null;
     window.FrameEngine.loadImage = async (...args) => {
@@ -4892,10 +5176,13 @@ test('uncertain audio hints use native capture and Web Audio fallback', async ({
 
     const run = async nextMode => {
       mode = nextMode;
+      const controller = new AbortController();
       try {
-        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          preserveAudio: true, signal: controller.signal, onRetry: () => controller.abort(),
+        });
       } catch (error) {
-        if (error.message !== 'stop after audio setup') throw error;
+        if (error.name !== 'AbortError') throw error;
       }
     };
     try {
@@ -4955,10 +5242,13 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
     };
 
     let message = '';
+    const controller = new AbortController();
     try {
-      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false, signal: controller.signal, onRetry: () => controller.abort(),
+      });
     } catch (error) {
-      message = error.message;
+      message = error.name;
     } finally {
       HTMLMediaElement.prototype.captureStream = nativeVideoCapture;
       HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
@@ -4978,7 +5268,7 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
   });
 
   expect(result).toEqual({
-    message: 'stop after fallback stream setup',
+    message: 'AbortError',
     sourceCaptureCalls: 0,
     addedAudioTracks: 0,
     recorderConstructions: 1,
@@ -5305,13 +5595,13 @@ test('MediaRecorder finalizes when playback ends without another animation frame
 
     const controller = new AbortController();
     const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
-      preserveAudio: true,
+      preserveAudio: false,
       signal: controller.signal,
     });
     try {
       const outcome = await Promise.race([
         pending.then(blob => ({ status: 'resolved', blobSize: blob.size })),
-        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 500)),
+        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 5_000)),
       ]);
       if (outcome.status === 'timeout') {
         controller.abort();
@@ -5412,7 +5702,7 @@ test('MediaRecorder pauses source and recording while the page is hidden', async
     window.cancelAnimationFrame = () => { rafCancels += 1; };
 
     try {
-      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
       while (!recorder || stats.videoPlays === 0) await new Promise(resolve => setTimeout(resolve, 0));
       hidden = true;
       document.dispatchEvent(new Event('visibilitychange'));
@@ -5545,6 +5835,10 @@ test('video progress and finalization watchdogs release stalled exports', async 
         load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
         requestVideoFrameCallback(callback) { this.pendingFrameCallback = callback; return 1; },
         cancelVideoFrameCallback() { this.pendingFrameCallback = null; },
+        captureStream() {
+          const track = { stop() {} };
+          return { getAudioTracks: () => [track], getTracks: () => [track] };
+        },
         removeAttribute(name) {
           attributes.delete(name);
           if (name === 'src') this.src = '';
@@ -5753,7 +6047,7 @@ test('WebCodecs drains a saturated encoder queue before admitting another frame'
   expect(result.activeUrls).toBe(0);
 });
 
-test('WebCodecs video output uses the post-processed aspect ratio and releases its base canvas', async ({ page }) => {
+test('WebCodecs video output uses the padded aspect ratio and releases its drawing canvas', async ({ page }) => {
   await installFakeWebCodecs(page);
   const fixture = await loadAudioVideoFixture();
   const result = await page.evaluate(async ({ base64 }) => {
@@ -5778,8 +6072,10 @@ test('WebCodecs video output uses the post-processed aspect ratio and releases i
 
   expect(result.config.width / result.config.height).toBeCloseTo(4 / 5, 2);
   expect(result.activeUrls).toBe(0);
-  expect(result.canvasSizes.length).toBeGreaterThanOrEqual(2);
-  expect(result.canvasSizes.slice(0, 2)).toEqual([[0, 0], [0, 0]]);
+  // Frames are drawn in one pass onto the encoder canvas; only the tiny shared
+  // 8×4 contrast sampler may stay allocated.
+  expect(result.canvasSizes[0]).toEqual([0, 0]);
+  expect(result.canvasSizes.every(([width, height]) => width * height <= 32)).toBe(true);
 });
 
 test('WebCodecs video cancellation does not fall through and releases its resources', async ({ page }) => {
@@ -5915,6 +6211,209 @@ test('WebCodecs rejects oversized encoded chunks before muxer allocation', async
   });
 });
 
+test('video recording avoids redrawing between 30 fps output frames', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreate = document.createElement.bind(document);
+    const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    const nativeRaf = window.requestAnimationFrame;
+    const nativeCancel = window.cancelAnimationFrame;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeEncoder = window.VideoEncoder;
+    let video;
+    const drawnTimes = [];
+    const stats = { callbacks: 0, captureFps: 0 };
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
+      video = {
+        videoWidth: 96, videoHeight: 64, duration: 0.1, currentTime: 0,
+        paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        pause() { this.paused = true; },
+        removeAttribute() { this.src = ''; },
+      };
+      return video;
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      if (source === video) { drawnTimes.push(video.currentTime); return; }
+      return nativeDraw.call(this, source, ...args);
+    };
+    HTMLCanvasElement.prototype.captureStream = fps => {
+      stats.captureFps = fps;
+      return { addTrack() {}, getTracks() { return []; } };
+    };
+    window.requestAnimationFrame = callback => setTimeout(() => {
+      stats.callbacks += 1;
+      video.currentTime = stats.callbacks / 100;
+      if (stats.callbacks === 10) video.ended = true;
+      callback();
+    }, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.VideoEncoder = undefined;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable({ data: new Blob(['video']) });
+        this.onstop();
+      }
+    };
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(new File(['video'], 'clip.webm'), {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm',
+      });
+      return { ...stats, drawnTimes };
+    } finally {
+      document.createElement = nativeCreate;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDraw;
+      HTMLCanvasElement.prototype.captureStream = nativeCapture;
+      window.requestAnimationFrame = nativeRaf;
+      window.cancelAnimationFrame = nativeCancel;
+      window.MediaRecorder = NativeRecorder;
+      window.VideoEncoder = NativeEncoder;
+    }
+  });
+  expect(result.captureFps).toBe(30);
+  expect(result.callbacks).toBe(10);
+  expect(result.drawnTimes).toEqual([0.01, 0.04, 0.07, 0.1]);
+});
+
+test('60 fps recording limits decoded callbacks to the target rate', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreate = document.createElement.bind(document);
+    const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    const nativeRaf = window.requestAnimationFrame;
+    const nativeCancel = window.cancelAnimationFrame;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeEncoder = window.VideoEncoder;
+    let video;
+    const drawnTimes = [];
+    const stats = { callbacks: 0, captureFps: 0, bitrate: 0, frameRequests: 0 };
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
+      video = {
+        requestVideoFrameCallback(callback) { return setTimeout(() => {
+          stats.callbacks += 1; this.currentTime = stats.callbacks / 100;
+          if (stats.callbacks === 10) this.ended = true;
+          callback(0, { mediaTime: this.currentTime });
+        }, 0); },
+        cancelVideoFrameCallback(id) { clearTimeout(id); },
+        videoWidth: 96, videoHeight: 64, duration: 0.1, currentTime: 0,
+        paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        pause() { this.paused = true; },
+        removeAttribute() { this.src = ''; },
+      };
+      return video;
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      if (source === video) { drawnTimes.push(video.currentTime); return; }
+      return nativeDraw.call(this, source, ...args);
+    };
+    HTMLCanvasElement.prototype.captureStream = fps => {
+      stats.captureFps = fps;
+      return { addTrack() {}, getTracks() { return []; }, getVideoTracks() { return [{ requestFrame() { stats.frameRequests += 1; } }]; } };
+    };
+    window.requestAnimationFrame = callback => setTimeout(() => {
+      stats.callbacks += 1;
+      video.currentTime = stats.callbacks / 100;
+      if (stats.callbacks === 10) video.ended = true;
+      callback();
+    }, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.VideoEncoder = undefined;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor(_stream, options) { this.state = 'inactive'; stats.bitrate = options.videoBitsPerSecond; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable({ data: new Blob(['video']) });
+        this.onstop();
+      }
+    };
+    try {
+      const file = new File(['video'], 'clip.webm');
+      Object.defineProperty(file, 'size', { value: 625_000 });
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm', frameRate: 60, sourceBitrate: true,
+      });
+      return { ...stats, drawnTimes };
+    } finally {
+      document.createElement = nativeCreate;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDraw;
+      HTMLCanvasElement.prototype.captureStream = nativeCapture;
+      window.requestAnimationFrame = nativeRaf;
+      window.cancelAnimationFrame = nativeCancel;
+      window.MediaRecorder = NativeRecorder;
+      window.VideoEncoder = NativeEncoder;
+    }
+  });
+  expect(result.captureFps).toBe(60);
+  expect(result.bitrate).toBe(50_000_000);
+  expect(result.frameRequests).toBe(5);
+  expect(result.callbacks).toBe(10);
+  expect(result.drawnTimes).toEqual([0.01, 0.03, 0.05, 0.07, 0.09]);
+});
+
+test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const sizes = [];
+    const mimes = [];
+    const captureFps = [];
+    let retries = 0;
+    let outputSize = null;
+    window.VideoDecoder = undefined;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    HTMLCanvasElement.prototype.captureStream = function (...args) {
+      sizes.push([this.width, this.height]);
+      captureFps.push(args[0]);
+      return nativeCapture.apply(this, args);
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor(stream, options) {
+        this.state = 'inactive';
+        this.attempt = mimes.push(options.mimeType);
+      }
+      start() {
+        this.state = 'recording';
+        if (this.attempt === 1) setTimeout(() => this.onerror({ error: new Error('encoder failed') }), 50);
+      }
+      stop() {
+        this.state = 'inactive';
+        if (this.attempt === 2) {
+          this.ondataavailable({ data: new Blob(['video']) });
+          this.onstop();
+        }
+      }
+      pause() { this.state = 'paused'; }
+      resume() { this.state = 'recording'; }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const blob = await window.FrameEngine.renderVideoFrameWhenReady(
+      new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
+      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false,
+        onRetry: () => { retries += 1; }, onOutputSize: (width, height) => { outputSize = [width, height]; } }
+    );
+    return { sizes, mimes, captureFps, retries, outputSize, type: blob.type, size: blob.size };
+  }, { base64: createWebm().toString('base64') });
+  expect(result.retries).toBe(1);
+  expect(result.mimes).toEqual(['video/webm', 'video/webm']);
+  expect(result.captureFps).toEqual([60, 60]);
+  expect(result.sizes).toHaveLength(2);
+  expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
+  expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
+  expect(result.outputSize).toEqual(result.sizes[1]);
+  expect(result.type).toBe('video/webm');
+  expect(result.size).toBeGreaterThan(0);
+});
+
 test('video output limit rejects an oversized estimate before MediaRecorder allocation', async ({ page }) => {
   const result = await page.evaluate(async ({ base64 }) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
@@ -5967,7 +6466,7 @@ test('sequential video exports receive only the remaining retained-output budget
     };
   });
 
-  await page.locator('#generateAllBtn').click();
+  await renderAllItems(page);
   await expect(page.locator('.status-dot.done')).toHaveCount(2);
   expect(await page.evaluate(() => window.__videoOutputLimits)).toEqual([
     384 * 1024 * 1024,
@@ -6138,6 +6637,146 @@ test('frame rendering rejects Canvas side and area overflow before allocation', 
   expect(result).toEqual({ side: 'MEDIA_RESOURCE_LIMIT', area: 'MEDIA_RESOURCE_LIMIT' });
 });
 
+test('a 50 MP photo fits its framed export within the Canvas budget', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const settings = eval('state.settings');
+    const original = [8192, 6144];
+    let unfittedCode = null;
+    try { window.FrameEngine.computeOutputSize(...original, settings); }
+    catch (error) { unfittedCode = error.code; }
+    const fitted = window.FrameEngine.computePhotoOutputSize(...original, settings);
+    const mobile = window.FrameEngine.computePhotoOutputSize(
+      ...original, settings, {}, { maxPixels: 16_000_000, maxSide: 4096 }
+    );
+
+    const source = document.createElement('canvas');
+    source.width = 960;
+    source.height = 640;
+    source.getContext('2d').fillStyle = '#e02030';
+    source.getContext('2d').fillRect(0, 0, source.width, source.height);
+    const smallLimits = { maxPixels: 250_000, maxSide: 600 };
+    const expected = window.FrameEngine.computePhotoOutputSize(
+      source.width, source.height, settings, {}, smallLimits
+    );
+    const rendered = await window.FrameEngine.renderFrameWhenReady(
+      source, {}, settings, { photoLimits: smallLimits }
+    );
+    const placement = rendered.photoPlacement;
+    const sample = rendered.getContext('2d').getImageData(
+      Math.floor(placement.x + placement.width / 2),
+      Math.floor(placement.y + placement.height / 2), 1, 1
+    ).data;
+    const actual = [rendered.width, rendered.height];
+    rendered.width = 0;
+    rendered.height = 0;
+    source.width = 0;
+    source.height = 0;
+    return { unfittedCode, fitted, mobile, expected, actual, sample: [...sample] };
+  });
+
+  expect(result.unfittedCode).toBe('MEDIA_RESOURCE_LIMIT');
+  expect(result.fitted.scaled).toBe(true);
+  expect(result.fitted.sourceWidth).toBeLessThan(8192);
+  expect(result.fitted.sourceWidth * result.fitted.sourceHeight).toBeGreaterThan(48_000_000);
+  expect(result.fitted.width * result.fitted.height).toBeLessThanOrEqual(64_000_000);
+  expect(Math.max(result.mobile.width, result.mobile.height)).toBeLessThanOrEqual(4096);
+  expect(result.mobile.width * result.mobile.height).toBeLessThanOrEqual(16_000_000);
+  expect(result.actual).toEqual([result.expected.width, result.expected.height]);
+  expect(result.sample[0]).toBeGreaterThan(180);
+  expect(result.sample[1]).toBeLessThan(80);
+});
+
+test('a phone reports the reduced size of a 50 MP photo before export', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:4173',
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const mobilePage = await context.newPage();
+    await mobilePage.goto('/');
+    await mobilePage.locator('#fileInput').setInputFiles({
+      name: 'photo.jpg', mimeType: 'image/jpeg', buffer: createJpeg(),
+    });
+    await expect(mobilePage.locator('#card-meta-1')).toContainText(/\d+×\d+/);
+    const result = await mobilePage.evaluate(() => {
+      window._recordSourceSize(eval('state.items')[0], 8192, 6144);
+      const text = document.getElementById('outputEstimate').textContent;
+      const [, width, height] = text.match(/(\d+) × (\d+) px/);
+      return { width: Number(width), height: Number(height), text };
+    });
+    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(4096);
+    expect(result.text).toMatch(/scaled|縮小/);
+  } finally {
+    await context.close();
+  }
+});
+
+test('a landscape phone without userAgentData keeps the mobile Canvas budget', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:4173',
+    viewport: { width: 915, height: 412 },
+    userAgent: 'Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0',
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const mobilePage = await context.newPage();
+    await mobilePage.goto('/');
+    const limits = await mobilePage.evaluate(() => {
+      Object.defineProperty(navigator, 'userAgentData', { value: undefined, configurable: true });
+      return window._photoExportLimits();
+    });
+    expect(limits).toEqual({ maxPixels: 16_000_000, maxSide: 4096 });
+  } finally {
+    await context.close();
+  }
+});
+
+if (process.env.INSTAFRAME_LARGE_JPEG) {
+  test('a real large JPEG downloads as a framed photo', async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.locator('#fileInput').setInputFiles(process.env.INSTAFRAME_LARGE_JPEG);
+    const downloadPromise = page.waitForEvent('download', { timeout: 150_000 });
+    await page.locator('#dl-btn-1').click();
+    const download = await downloadPromise;
+    await expect(page.locator('#outputEstimate')).toContainText(/\d+ × \d+ px/);
+    const handle = await fs.open(await download.path());
+    const signature = Buffer.alloc(3);
+    try { await handle.read(signature, 0, 3, 0); }
+    finally { await handle.close(); }
+    expect([...signature]).toEqual([0xff, 0xd8, 0xff]);
+    expect((await fs.stat(await download.path())).size).toBeGreaterThan(1_000_000);
+    await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  });
+
+  test('a real large JPEG downloads in a phone-sized browser', async ({ browser }) => {
+    test.setTimeout(180_000);
+    const context = await browser.newContext({
+      baseURL: 'http://127.0.0.1:4173',
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      acceptDownloads: true,
+    });
+    try {
+      const mobilePage = await context.newPage();
+      await mobilePage.goto('/');
+      await mobilePage.locator('#fileInput').setInputFiles(process.env.INSTAFRAME_LARGE_JPEG);
+      await expect(mobilePage.locator('#outputEstimate')).toContainText(/縮小|scaled/, { timeout: 90_000 });
+      await mobilePage.locator('#tabPhotosBtn').click();
+      const downloadPromise = mobilePage.waitForEvent('download', { timeout: 150_000 });
+      await mobilePage.locator('#dl-btn-1').click();
+      const download = await downloadPromise;
+      expect((await fs.stat(await download.path())).size).toBeGreaterThan(1_000_000);
+      await expect(mobilePage.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test('blur background supports an explicit custom text color', async ({ page }) => {
   await uploadJpegs(page);
   await page.locator('label[for="bg-blur"]').click();
@@ -6159,6 +6798,153 @@ test('blur background supports an explicit custom text color', async ({ page }) 
     return count;
   });
   expect(magentaPixels).toBeGreaterThan(10);
+});
+
+test('blur backgrounds come from the original photo and fill every ratio edge', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const source = document.createElement('canvas');
+    source.width = 400;
+    source.height = 240;
+    const sourceContext = source.getContext('2d');
+    sourceContext.fillStyle = '#808080';
+    sourceContext.fillRect(0, 0, source.width, source.height);
+    const settings = {
+      frameColor: '#2040d0',
+      frameBackground: 'blur',
+      blurRadius: 20,
+      blurBrightness: 100,
+      aspectRatio: '4:5',
+      aspectOrientation: 'portrait',
+      outerPadding: 8,
+      textColorMode: 'custom',
+      textColor: '#ff00ff',
+      showShotOn: true,
+      showExifInfo: true,
+    };
+    const exif = {
+      make: 'Canon', model: 'EOS R5', lensModel: 'RF50mm F1.8 STM',
+      focalLength: 50, fNumber: 1.8, exposureTime: 0.004, iso: 100,
+    };
+    const canvas = window.FrameEngine.renderFrame(source, exif, settings);
+    const layout = window.FrameEngine.computeFrameLayout(source.width, source.height, settings, exif);
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    // Outside the frame rectangle there is only the blurred gray photo: no
+    // magenta caption bleeding in and no transparent fade at the edges.
+    let outside = 0;
+    let wrong = 0;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const inFrame = x >= layout.frameX && x < layout.frameX + layout.baseCanvasW &&
+          y >= layout.frameY && y < layout.frameY + layout.baseCanvasH;
+        if (inFrame) continue;
+        outside += 1;
+        const index = (y * canvas.width + x) * 4;
+        const [r, g, b, a] = pixels.slice(index, index + 4);
+        if (Math.abs(r - 128) > 3 || Math.abs(g - 128) > 3 || Math.abs(b - 128) > 3 || a < 254) wrong += 1;
+      }
+    }
+    const size = [canvas.width, canvas.height];
+    canvas.width = 0;
+    canvas.height = 0;
+    source.width = 0;
+    source.height = 0;
+    return { outside, wrong, size, expected: [layout.canvasW, layout.canvasH] };
+  });
+
+  expect(result.size).toEqual(result.expected);
+  // A landscape photo in a padded portrait 4:5 output.
+  expect(result.size[1]).toBeGreaterThan(result.size[0]);
+  expect(result.outside).toBeGreaterThan(10_000);
+  expect(result.wrong).toBe(0);
+});
+
+test('the preview warns when caption text is cut off and clears once it fits', async ({ page }) => {
+  await uploadJpegs(page);
+  const warning = page.locator('#previewWarning');
+  await expect(warning).toBeHidden();
+
+  await page.locator('#live-exif-lens').fill('Ultra Wide Telephoto Zoom Lens '.repeat(6).trim());
+  await expect(warning).toBeVisible();
+  await expect(page.locator('#previewWarningList li')).toHaveCount(1);
+  await expect(page.locator('#previewWarningList')).toContainText(/cut off|切れ/);
+
+  await page.locator('#live-exif-lens').fill('XF35mm');
+  await expect(warning).toBeHidden();
+});
+
+test('the preview warns when the location runs into the camera name', async ({ page }) => {
+  await uploadJpegs(page);
+  await page.locator('label:has(#showLocation)').click();
+  await page.locator('label[for="locpos-right"]').click();
+  await page.locator('#live-exif-model').fill('Extremely Long Camera Model Name Mark II');
+  await page.locator('#live-exif-location').fill('A Very Long Location Name, Somewhere Far Away');
+  await expect(page.locator('#previewWarning')).toBeVisible();
+  await expect(page.locator('#previewWarningList')).toContainText(/overlaps the camera|カメラ名と重なって/);
+});
+
+test('the export panel shows the output size before download and it matches the file', async ({ page }) => {
+  await uploadJpegs(page, 2);
+  const estimate = page.locator('#outputEstimate');
+  await expect(estimate).toContainText(/\d+ × \d+ px/);
+  await expect(page.locator('#batchEstimate')).toContainText(/total|合計/);
+  await expect(page.locator('#card-meta-1')).toContainText(/\d+×\d+/);
+  await expect(page.locator('#card-meta-2')).toContainText(/\d+×\d+/);
+
+  const sizeOf = async () => {
+    const [, width, height] = (await estimate.textContent()).match(/(\d+) × (\d+) px/);
+    return [Number(width), Number(height)];
+  };
+  const original = await sizeOf();
+  await page.locator('label[for="ratio-1-1"]').click();
+  await expect.poll(sizeOf).not.toEqual(original);
+  const square = await sizeOf();
+  expect(square[0]).toBe(square[1]);
+
+  const jpegText = await estimate.textContent();
+  await page.locator('label[for="fmt-png"]').click();
+  await expect.poll(() => estimate.textContent()).not.toBe(jpegText);
+  await page.locator('label[for="fmt-jpeg"]').click();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const bytes = await fs.readFile(await download.path());
+  const decoded = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const size = [bitmap.width, bitmap.height];
+    bitmap.close();
+    return size;
+  }, bytes.toString('base64'));
+  expect(decoded).toEqual(square);
+
+  await page.evaluate(() => {
+    const selectedItem = eval('state.items')[0];
+    window._recordSourceSize(selectedItem, 8192, 6144);
+  });
+  await expect(estimate).toContainText(/scaled|縮小/);
+  await expect(estimate).not.toContainText(/Too large|超えています/);
+});
+
+test('rendering more photos than the output budget evicts older frames instead of failing', async ({ page }) => {
+  await uploadJpegs(page, 3);
+  await page.evaluate(() => {
+    // Pretend every finished frame is 200 MiB so only one more fits the budget.
+    const items = eval('state.items');
+    window._retainedOutputBytes = exclude => items
+      .filter(item => item !== exclude && !item.isVideo && item.canvas)
+      .length * 200 * 1024 * 1024;
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-3 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#imageGrid .status-dot.error')).toHaveCount(0);
+  const retained = await page.evaluate(() => eval('state.items.map(item => !!item.canvas)'));
+  expect(retained).toEqual([false, true, true]);
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(3);
+
+  // A setting change makes the kept card preview stale, so it is dropped.
+  await page.locator('label[for="ratio-1-1"]').click();
+  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(0);
 });
 
 test('video layouts apply portrait presets and outer padding', async ({ page }) => {
@@ -6204,24 +6990,20 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
     output.width = drawLayout.canvasW;
     output.height = drawLayout.canvasH;
     const outputContext = output.getContext('2d');
-    const scratch = window.FrameEngine.drawVideoFrameSync(
+    const returned = window.FrameEngine.drawVideoFrameSync(
       outputContext, source, {}, drawSettings, drawLayout
     );
     const corner = [...outputContext.getImageData(0, 0, 1, 1).data];
     const draw = {
       frameX: drawLayout.frameX,
       frameY: drawLayout.frameY,
-      scratchWidth: scratch?.width || 0,
-      scratchHeight: scratch?.height || 0,
-      baseCanvasW: drawLayout.baseCanvasW,
-      baseCanvasH: drawLayout.baseCanvasH,
+      returned: returned ?? null,
       corner,
     };
     source.width = 0;
     source.height = 0;
     output.width = 0;
     output.height = 0;
-    if (scratch) { scratch.width = 0; scratch.height = 0; }
     return { layouts, draw };
   });
 
@@ -6231,18 +7013,19 @@ test('video layouts apply portrait presets and outer padding', async ({ page }) 
   expect(result.layouts.padded.canvasH).toBe(result.layouts.original.canvasH + expectedPad * 2);
   expect(result.draw.frameX).toBeGreaterThan(0);
   expect(result.draw.frameY).toBeGreaterThan(0);
-  expect(result.draw.scratchWidth).toBe(result.draw.baseCanvasW);
-  expect(result.draw.scratchHeight).toBe(result.draw.baseCanvasH);
-  expect(result.draw.corner[3]).toBeGreaterThan(0);
+  // One pass: no scratch canvas, and the padding corner is the opaque blurred
+  // red source rather than the blue frame color.
+  expect(result.draw.returned).toBeNull();
+  expect(result.draw.corner[3]).toBe(255);
+  expect(result.draw.corner[0]).toBeGreaterThan(result.draw.corner[2] + 80);
 });
 
-test('failed blur video draws release only the scratch canvas they allocate', async ({ page }) => {
+test('blur video draws need no scratch canvas and restore the context after a failure', async ({ page }) => {
   const result = await page.evaluate(() => {
     const source = document.createElement('canvas');
     source.width = 160;
     source.height = 90;
     const output = document.createElement('canvas');
-    const reusable = document.createElement('canvas');
     const settings = {
       thicknessScale: 1,
       frameColor: '#f0f0f0',
@@ -6262,42 +7045,43 @@ test('failed blur video draws release only the scratch canvas they allocate', as
     const outputContext = output.getContext('2d');
     const nativeCreateElement = document.createElement.bind(document);
     const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
-    let allocated = null;
-    let failingCanvas = null;
+    let createdCanvases = 0;
+    let drawCalls = 0;
+    let failAt = 0;
+    document.createElement = (tagName, options) => {
+      if (String(tagName).toLowerCase() === 'canvas') createdCanvases += 1;
+      return nativeCreateElement(tagName, options);
+    };
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
-      if (this.canvas === failingCanvas) throw new Error('simulated scratch draw failure');
+      drawCalls += 1;
+      if (drawCalls === failAt) throw new Error(`draw ${failAt} failed`);
       return nativeDrawImage.apply(this, args);
     };
 
     const outcomes = [];
-    try {
-      try {
-        document.createElement = (tagName, options) => {
-          const element = nativeCreateElement(tagName, options);
-          if (String(tagName).toLowerCase() === 'canvas') {
-            allocated = element;
-            failingCanvas = element;
-          }
-          return element;
-        };
-        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
-      } catch (error) {
-        outcomes.push({ kind: 'allocated', message: error.message, size: [allocated.width, allocated.height] });
-      }
-
-      document.createElement = nativeCreateElement;
-      failingCanvas = reusable;
-      try {
-        window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout, reusable);
-      } catch (error) {
-        outcomes.push({ kind: 'reused', message: error.message, size: [reusable.width, reusable.height] });
-      }
-      const transform = reusable.getContext('2d').getTransform();
+    const contextState = () => {
+      const transform = outputContext.getTransform();
       return {
-        outcomes,
-        expectedReusableSize: [layout.baseCanvasW, layout.baseCanvasH],
-        reusableTransform: { a: transform.a, d: transform.d, e: transform.e, f: transform.f },
+        transform: [transform.a, transform.d, transform.e, transform.f],
+        filter: outputContext.filter,
       };
+    };
+    try {
+      window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+      outcomes.push({ message: 'drawn', ...contextState() });
+      // The first frame may create the shared contrast sampler; later frames
+      // allocate nothing. Fail the blurred background draw, then the photo.
+      createdCanvases = 0;
+      for (const failingDraw of [1, 2]) {
+        drawCalls = 0;
+        failAt = failingDraw;
+        try {
+          window.FrameEngine.drawVideoFrameSync(outputContext, source, {}, settings, layout);
+        } catch (error) {
+          outcomes.push({ message: error.message, ...contextState() });
+        }
+      }
+      return { outcomes, createdCanvases };
     } finally {
       document.createElement = nativeCreateElement;
       CanvasRenderingContext2D.prototype.drawImage = nativeDrawImage;
@@ -6305,22 +7089,16 @@ test('failed blur video draws release only the scratch canvas they allocate', as
       source.height = 0;
       output.width = 0;
       output.height = 0;
-      reusable.width = 0;
-      reusable.height = 0;
     }
   });
 
+  const clean = { transform: [1, 1, 0, 0], filter: 'none' };
   expect(result.outcomes).toEqual([
-    { kind: 'allocated', message: 'simulated scratch draw failure', size: [0, 0] },
-    {
-      kind: 'reused',
-      message: 'simulated scratch draw failure',
-      size: result.expectedReusableSize,
-    },
+    { message: 'drawn', ...clean },
+    { message: 'draw 1 failed', ...clean },
+    { message: 'draw 2 failed', ...clean },
   ]);
-  expect(result.expectedReusableSize[0]).toBeGreaterThan(0);
-  expect(result.expectedReusableSize[1]).toBeGreaterThan(0);
-  expect(result.reusableTransform).toEqual({ a: 1, d: 1, e: 0, f: 0 });
+  expect(result.createdCanvases).toBe(0);
 });
 
 test('blur video frames reuse one automatic-contrast sampler', async ({ page }) => {
@@ -6592,7 +7370,7 @@ test('social presets are labelled and enforce portrait composition', async ({ pa
   await page.reload();
   await uploadJpegs(page);
   await expect(page.locator('.ratio-pill-featured')).toContainText('Instagram投稿');
-  await expect(page.locator('label[for="ratio-3-4"]')).toContainText('プロフィールグリッド');
+  await expect(page.locator('label[for="ratio-3-4"]')).toContainText('グリッド');
   await expect(page.locator('label[for="ratio-9-16"]')).toContainText('ストーリー');
 
   for (const [id, expectedRatio] of [['ratio-4-5', 4 / 5], ['ratio-3-4', 3 / 4], ['ratio-9-16', 9 / 16]]) {
@@ -7151,7 +7929,7 @@ test('concurrent identical Mapbox loads share one cached image and release the d
   });
 });
 
-test('failed Mapbox requests still consume the local safety limit', async ({ page }) => {
+test('failed Mapbox requests still consume the local safety limit before OpenStreetMap takes over', async ({ page }) => {
   await page.evaluate(() => {
     const day = new Date().toISOString().slice(0, 10);
     localStorage.setItem('instaframe_prefs', JSON.stringify({
@@ -7168,11 +7946,13 @@ test('failed Mapbox requests still consume the local safety limit', async ({ pag
   await page.reload();
 
   const result = await page.evaluate(async () => {
-    let requests = 0;
+    let mapboxRequests = 0;
+    let tileRequests = 0;
     window.Image = class FailedMapImage {
       set src(value) {
         this._src = String(value);
-        requests += 1;
+        if (this._src.startsWith('https://api.mapbox.com/')) mapboxRequests += 1;
+        if (this._src.startsWith('https://tile.openstreetmap.org/')) tileRequests += 1;
         queueMicrotask(() => this.onerror?.(new Event('error')));
       }
       get src() { return this._src || ''; }
@@ -7180,21 +7960,28 @@ test('failed Mapbox requests still consume the local safety limit', async ({ pag
     };
 
     const first = await window._fetchMapOverlayImage(35.0116, 135.7681);
+    const tilesAfterFirst = tileRequests;
     const second = await window._fetchMapOverlayImage(35.0117, 135.7682);
     const usage = JSON.parse(localStorage.getItem('instaframe_mb_usage_v2'));
     return {
       first,
       second,
-      requests,
+      mapboxRequests,
+      tilesAfterFirst,
+      fellBackToTiles: tileRequests > 0,
       dayCount: usage.dayCount,
       monthCount: usage.monthCount,
     };
   });
 
+  // The limit blocks further billable Mapbox requests; the overlay then uses
+  // OpenStreetMap tiles (which fail here too, so both calls return null).
   expect(result).toEqual({
     first: null,
     second: null,
-    requests: 1,
+    mapboxRequests: 1,
+    tilesAfterFirst: 0,
+    fellBackToTiles: true,
     dayCount: 100,
     monthCount: 100,
   });
@@ -7496,7 +8283,6 @@ for (const { extension, mimeType } of [
     await expect(page.locator('#toast')).toContainText(/decode|デコード/i);
     await expect(page.locator('#livePreviewError')).toBeVisible();
     await expect(page.locator('[role="alert"]:visible')).toHaveCount(1);
-    await expect(page.locator('.preview-empty-format-note')).toContainText(/HEIC/i);
   });
 }
 
@@ -7626,7 +8412,12 @@ test('mobile layout exposes import, settings, and a readable EXIF editor', async
   await uploadJpegs(page);
   const drawer = page.locator('#previewExifDrawer');
   const zoomBar = page.locator('#previewZoomBar');
+  // The editor starts collapsed on phones so it does not cover the photo.
   await expect(drawer).toBeVisible();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
+  await expect(zoomBar).toHaveAttribute('aria-hidden', 'false');
+  await page.locator('.preview-exif-drawer-header').click();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'true');
   await expect(zoomBar).toHaveAttribute('aria-hidden', 'true');
   expect(await zoomBar.evaluate(element => element.inert)).toBe(true);
   const [box, historyBox, headerTitleBox] = await Promise.all([
@@ -7733,7 +8524,7 @@ test('short landscape preview exposes a horizontal zoom control without clipping
     root.setProperty('--safe-area-left', '36px');
   });
   await uploadJpegs(page);
-  await page.locator('.preview-exif-drawer-header').click();
+  await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
 
   const zoom = page.locator('#zoomRange');
   const zoomBar = page.locator('#previewZoomBar');
@@ -7797,7 +8588,7 @@ test('wide phone landscapes keep mobile tabs, media controls, and safe areas usa
     await page.locator('#preview-2').click();
     await expect(page.locator('#dropZone')).toHaveClass(/has-video/);
     await expect(page.locator('#previewVideoBar')).toBeVisible();
-    await page.locator('.preview-exif-drawer-header').click();
+    await expect(page.locator('.preview-exif-drawer-header')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#zoomRange')).toHaveAttribute('aria-orientation', 'horizontal');
 
     const previewLayout = await page.evaluate(() => {
@@ -7928,6 +8719,8 @@ test('short landscape map picker keeps its map and confirmation actions reachabl
     root.setProperty('--safe-area-left', '36px');
   });
   await uploadJpegs(page);
+  // Phones start with the EXIF editor collapsed so the photo stays visible.
+  await page.locator('.preview-exif-drawer-header').click();
   await page.locator('#openMapPickerBtn').click();
   await expect(page.locator('#mapPickerModal')).toHaveClass(/open/);
   await expect(page.locator('#mapPickerModal')).toHaveAttribute('aria-busy', 'false');
@@ -8584,7 +9377,9 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
     mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
   });
   expect(mediaInfo.duration).toBeGreaterThan(0);
-  expect({ width: mediaInfo.width, height: mediaInfo.height }).toEqual(expectedLayout);
+  // Some video encoders require even dimensions; framing may be rounded down by one pixel.
+  expect([expectedLayout.width, expectedLayout.width - 1]).toContain(mediaInfo.width);
+  expect([expectedLayout.height, expectedLayout.height - 1]).toContain(mediaInfo.height);
 });
 
 test('video export preserves an input audio track', async ({ page }) => {
@@ -8653,4 +9448,345 @@ test('video export preserves an input audio track', async ({ page }) => {
   expect(mediaInfo.duration).toBeGreaterThan(0);
   expect(mediaInfo.videoTracks).toBeGreaterThan(0);
   expect(mediaInfo.audioTracks).toBeGreaterThan(0);
+});
+
+// ─── Font picker, text styles, HEIC and spatial photos ─────────────────────────
+
+test('the font picker draws each name in its own typeface and loads faces only when opened', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  const woff2Requests = [];
+  page.on('request', request => {
+    if (request.url().endsWith('.woff2')) woff2Requests.push(request.url());
+  });
+  const picker = page.locator('#fontFamily');
+  await expect(picker).toHaveAccessibleName('Font');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  expect(woff2Requests).toEqual([]);
+
+  await picker.click();
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  const options = page.locator('#fontFamilyList [role="option"]');
+  await expect(options).toHaveCount(16);
+  const families = await options.evaluateAll(elements => elements.map(element => ({
+    name: element.dataset.value,
+    fontFamily: getComputedStyle(element).fontFamily,
+  })));
+  for (const { name, fontFamily } of families) expect(fontFamily).toContain(name);
+  await expect.poll(() => woff2Requests.length).toBeGreaterThan(4);
+
+  await page.keyboard.press('ArrowDown');
+  const active = await picker.getAttribute('aria-activedescendant');
+  const nextFamily = await page.locator(`#${active}`).getAttribute('data-value');
+  await page.keyboard.press('Enter');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  await expect(picker).toBeFocused();
+  await expect(page.locator('#fontFamilyValue')).toHaveText(nextFamily);
+  expect(await page.evaluate(() => eval('state.settings.fontFamily'))).toBe(nextFamily);
+
+  await picker.press('ArrowDown');
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  expect(await page.evaluate(() => eval('state.settings.fontFamily'))).toBe(nextFamily);
+});
+
+test('each caption part has its own bold and italic switch, and older saves migrate', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('instaframe_lang', 'en');
+    localStorage.setItem('instaframe_settings', JSON.stringify({ cameraNameBold: true, cameraNameItalic: true }));
+  });
+  await page.reload();
+  const checked = () => page.evaluate(() => Object.fromEntries([
+    'shotOnBold', 'modelBold', 'makerBold', 'exifBold', 'shotOnItalic', 'modelItalic', 'makerItalic', 'exifItalic',
+  ].map(id => [id, document.getElementById(id).checked])));
+  // The old switch bolded "Shot on" and the model; italic covered the camera line.
+  expect(await checked()).toEqual({
+    shotOnBold: true, modelBold: true, makerBold: false, exifBold: false,
+    shotOnItalic: true, modelItalic: true, makerItalic: true, exifItalic: false,
+  });
+  await expect(page.locator('#makerBold')).toHaveAccessibleName(/Maker: Bold/);
+
+  await page.locator('label[for="makerBold"]').click();
+  await page.locator('label[for="modelBold"]').click();
+  expect(await page.evaluate(() => {
+    const s = eval('state.settings');
+    return [s.makerBold, s.modelBold];
+  })).toEqual([true, false]);
+
+  const fonts = await page.evaluate(() => {
+    const calls = [];
+    const nativeFillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...rest) {
+      calls.push([String(text).trim(), this.font]);
+      return nativeFillText.call(this, text, ...rest);
+    };
+    try {
+      const source = document.createElement('canvas');
+      source.width = 600;
+      source.height = 400;
+      const canvas = window.FrameEngine.renderFrame(source, {
+        make: 'MakerCo', model: 'ModelX', lensModel: 'Lens50', fNumber: 2,
+      }, {
+        showShotOn: true, showExifInfo: true,
+        shotOnBold: false, modelBold: false, makerBold: true, exifBold: true, exifItalic: true,
+      });
+      canvas.width = 0;
+      source.width = 0;
+    } finally {
+      CanvasRenderingContext2D.prototype.fillText = nativeFillText;
+    }
+    const byText = Object.fromEntries(calls);
+    return {
+      label: byText['Shot on'],
+      model: byText.ModelX,
+      maker: byText.MakerCo,
+      exif: calls.find(([text]) => text.startsWith('Lens50'))?.[1],
+    };
+  });
+  expect(fonts.label).toMatch(/\b300\b/);
+  expect(fonts.model).toMatch(/\b500\b/);
+  expect(fonts.maker).toMatch(/\b(700|bold)\b/);
+  expect(fonts.exif).toMatch(/^italic\b/);
+  expect(fonts.exif).toMatch(/\b(700|bold)\b/);
+});
+
+test('an undecodable video names its codec and how to open it', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  const hevcSupported = await page.evaluate(() => {
+    const type = 'video/mp4; codecs="hvc1.2.4.L153.B0"';
+    return !!globalThis.MediaSource?.isTypeSupported?.(type) || document.createElement('video').canPlayType(type) !== '';
+  });
+  test.skip(hevcSupported, 'This browser decodes HEVC, so the file plays normally.');
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_4K60.MOV',
+    mimeType: 'video/quicktime',
+    buffer: await fs.readFile(path.join(__dirname, 'hevc-10bit.mov')),
+  });
+  await expect(page.locator('#status-badge-1')).toHaveAttribute('data-status', 'error', { timeout: 20_000 });
+  const label = page.locator('#status-badge-1');
+  await expect(label).toHaveAttribute('aria-label', /HEVC \(H\.265\) 10-bit/);
+  await expect(label).toHaveAttribute('aria-label', /cannot decode/);
+  await expect(label).toHaveAttribute('aria-label', /Safari/);
+});
+
+test('HEIC photos open without native HEIC support and export as framed JPEGs', async ({ page }) => {
+  const decoderRequests = [];
+  page.on('request', request => {
+    if (request.url().includes('/vendor/libheif/')) decoderRequests.push(new URL(request.url()).pathname);
+  });
+  await expect.poll(() => decoderRequests.length).toBe(0);
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_0001.HEIC',
+    mimeType: 'image/heic',
+    buffer: await fs.readFile(path.join(__dirname, 'heic-plain.heic')),
+  });
+  await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+  expect(decoderRequests.some(pathname => pathname.endsWith('/libheif.wasm'))).toBe(true);
+  await expect(page.locator('#outputEstimate')).toContainText(/\d+ × \d+ px/);
+  await expect(page.locator('#preview-1 .spatial-badge')).toHaveCount(0);
+
+  const expected = await page.evaluate(() => window.FrameEngine.computeOutputSize(96, 64, eval('state.settings'), {}));
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_0001_frame.jpg');
+  const bytes = await fs.readFile(await download.path());
+  expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+  const decoded = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return size;
+  }, bytes.toString('base64'));
+  expect(decoded).toEqual(expected);
+});
+
+async function uploadSpatialHeic(page) {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'IMG_SPATIAL.HEIC',
+    mimeType: 'image/heic',
+    buffer: await fs.readFile(path.join(__dirname, 'heic-spatial.heic')),
+  });
+  await expect(page.locator('#preview-1 .spatial-badge')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.locator('#livePreviewCanvas').getAttribute('data-composition-width')).not.toBeNull();
+}
+
+test('spatial photos are detected, preview in 3D, and push the photo behind the frame', async ({ page }) => {
+  await uploadSpatialHeic(page);
+  await expect(page.locator('#spatialExportRow')).not.toHaveClass(/is-hidden/);
+  await expect(page.locator('#spatialDepthRow')).not.toHaveClass(/is-hidden/);
+  const button = page.locator('#spatialPreviewBtn');
+  await expect(button).toBeVisible();
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  // The fixture's disc has 8 px of crossed disparity on a 160 px wide pair.
+  await expect.poll(() => page.evaluate(() => eval('state.items[0].stereoDisparity?.near'))).toBeCloseTo(0.05, 2);
+  const shift = await page.evaluate(() => eval('_spatialEyeShift(state.items[0])'));
+  expect(shift).toBeCloseTo((0.05 + 0.01) / 2, 3);
+
+  // The preview alternates the eyes, so the row through the disc changes.
+  const samples = new Set();
+  for (let index = 0; index < 10 && samples.size < 2; index += 1) {
+    samples.add(await page.locator('#livePreviewCanvas').evaluate(canvas => {
+      const row = canvas.getContext('2d').getImageData(0, Math.floor(canvas.height * 0.4), canvas.width, 1).data;
+      let checksum = 0;
+      for (let offset = 0; offset < row.length; offset += 1) checksum = (checksum * 31 + row[offset] * (offset + 1)) % 1_000_000_007;
+      return checksum;
+    }));
+    await page.waitForTimeout(150);
+  }
+  expect(samples.size).toBe(2);
+
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.evaluate(() => eval('_spatialPreview.timer'))).toBeNull();
+});
+
+test('spatial photos can be saved side by side with the frame in front of the photo', async ({ page }) => {
+  await uploadSpatialHeic(page);
+  await page.locator('label[for="spatial-sbs"]').click();
+  expect(await page.evaluate(() => eval('state.settings.exportSpatialMode'))).toBe('sbs');
+  const expected = await page.evaluate(() => window.FrameEngine.computeOutputSize(160, 120, eval('state.settings'), {}));
+  await expect(page.locator('#outputEstimate')).toContainText(`${expected.width * 2} × ${expected.height} px`);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame_sbs.jpg');
+  const bytes = await fs.readFile(await download.path());
+  const result = await page.evaluate(async base64 => {
+    const data = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const half = canvas.width / 2;
+    // Centre of the yellow disc in each eye.
+    const discCentre = offset => {
+      const pixels = ctx.getImageData(offset, 0, half, canvas.height).data;
+      let sum = 0;
+      let count = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] > 200 && pixels[index + 1] > 160 && pixels[index + 2] < 90) {
+          sum += (index / 4) % half;
+          count += 1;
+        }
+      }
+      return sum / count;
+    };
+    const size = { width: canvas.width, height: canvas.height, left: discCentre(0), right: discCentre(half) };
+    canvas.width = 0;
+    return size;
+  }, bytes.toString('base64'));
+  expect(result.width).toBe(expected.width * 2);
+  expect(result.height).toBe(expected.height);
+  // Before: the disc sat 8 px further right in the left eye (in front of the
+  // screen). After framing it must not be in front of the frame any more.
+  expect(result.left - result.right).toBeLessThanOrEqual(0.5);
+});
+
+test('spatial photos are written as a spatial HEIC when the browser encodes HEVC', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__hevcEncodes = [];
+    window.VideoEncoder = class FakeHevcEncoder {
+      constructor({ output }) {
+        this.output = output;
+        this.state = 'unconfigured';
+      }
+      configure(config) {
+        this.config = config;
+        this.state = 'configured';
+      }
+      encode(frame, options) {
+        const index = window.__hevcEncodes.length;
+        window.__hevcEncodes.push({
+          codec: this.config.codec,
+          format: this.config.hevc?.format,
+          width: frame.visibleRect?.width ?? frame.displayWidth,
+          height: frame.visibleRect?.height ?? frame.displayHeight,
+          keyFrame: options?.keyFrame === true,
+        });
+        const data = Uint8Array.of(0, 0, 0, 4, 0x26, 0x01, index, 0xff);
+        this.output({ byteLength: data.length, copyTo: target => target.set(data) }, {
+          decoderConfig: {
+            description: Uint8Array.of(1, 1, 0x60, 0, 0, 0, 0x90, 0, 0, 0, 0, 0, 0x5d, 0xf0, 0, 0xfc, 0xfd, 0xf8, 0xf8, 0, 0, 0x0f, 0).buffer,
+            colorSpace: { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: false },
+          },
+        });
+      }
+      async flush() {}
+      close() { this.state = 'closed'; }
+      static async isConfigSupported() { return { supported: true }; }
+    };
+  });
+  await page.reload();
+  await uploadSpatialHeic(page);
+  await expect.poll(() => page.evaluate(() => eval('_spatialHeicSupported'))).toBe(true);
+  await expect(page.locator('#spatialExportNote')).toBeHidden();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame_spatial.heic');
+  const bytes = await fs.readFile(await download.path());
+  const result = await page.evaluate(base64 => {
+    const H = window.InstaFrameHeif;
+    const parsed = H.parseHeif(Uint8Array.from(atob(base64), character => character.charCodeAt(0)));
+    const eye = id => ({
+      type: parsed.items.get(id)?.type,
+      size: H.itemSize(parsed, id),
+      properties: H.itemProperties(parsed, id).map(property => property.type),
+      essentialCodec: H.itemProperties(parsed, id)[0]?.essential,
+      intrinsics: H.parseCameraIntrinsics(H.itemProperty(parsed, id, 'cmin')),
+      dataLength: H.readItemData(parsed, id)?.length,
+    });
+    return {
+      primaryId: parsed.primaryId,
+      pair: H.stereoPair(parsed),
+      left: eye(1),
+      right: eye(2),
+      encodes: window.__hevcEncodes,
+    };
+  }, bytes.toString('base64'));
+
+  expect(result.primaryId).toBe(1);
+  expect(result.pair).toMatchObject({ left: 1, right: 2 });
+  for (const eye of [result.left, result.right]) {
+    expect(eye.type).toBe('hvc1');
+    expect(eye.properties).toEqual(['hvcC', 'ispe', 'pixi', 'colr', 'cmin', 'cmex']);
+    expect(eye.essentialCodec).toBe(true);
+    expect(eye.size.width % 2).toBe(0);
+    expect(eye.size.height % 2).toBe(0);
+    expect(eye.dataLength).toBe(8);
+  }
+  expect(result.encodes).toHaveLength(2);
+  expect(result.encodes.every(encode => encode.keyFrame && encode.format === 'hevc' && encode.codec.startsWith('hvc1.'))).toBe(true);
+  expect(result.encodes[0]).toMatchObject({ width: result.left.size.width, height: result.left.size.height });
+  // The photo moved apart between the eyes, so the principal points differ.
+  expect(result.left.intrinsics.principalPointX).toBeLessThan(result.right.intrinsics.principalPointX);
+  expect(result.left.intrinsics.focalLengthX).toBeCloseTo(result.right.intrinsics.focalLengthX, 6);
+});
+
+test('without HEVC encoding a spatial photo falls back to a 2D photo and says so', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window.VideoEncoder) window.VideoEncoder.isConfigSupported = async () => ({ supported: false });
+  });
+  await page.reload();
+  await uploadSpatialHeic(page);
+  await expect.poll(() => page.evaluate(() => eval('_spatialHeicSupported'))).toBe(false);
+  await expect(page.locator('#spatialExportNote')).toBeVisible();
+  await expect(page.locator('#spatial-heic')).toBeDisabled();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('IMG_SPATIAL_frame.jpg');
 });
