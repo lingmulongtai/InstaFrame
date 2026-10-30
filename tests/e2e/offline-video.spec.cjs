@@ -150,6 +150,123 @@ for (const [fixture, rotated, mime, codec, preferHardware, fps = 60] of [
   });
 }
 
+test('fragmented MP4 recording is finalized with AAC and unchanged video packets', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.VideoDecoder || !window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const file = new Blob([Uint8Array.from(atob(content), char => char.charCodeAt(0))], { type: 'video/mp4' });
+    const options = { expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024 };
+    const output = await window.FrameEngine.normalizeRecordedMp4(file, options);
+    const original = new media.Input({ source: new media.BlobSource(file), formats: media.ALL_FORMATS });
+    const finalized = new media.Input({ source: new media.BlobSource(output), formats: media.ALL_FORMATS });
+    try {
+      const inVideo = await original.getPrimaryVideoTrack();
+      const outVideo = await finalized.getPrimaryVideoTrack();
+      const outAudio = await finalized.getPrimaryAudioTrack();
+      const hashes = async track => {
+        const result = [];
+        for await (const packet of new media.EncodedPacketSink(track).packets()) {
+          const digest = await crypto.subtle.digest('SHA-256', packet.data);
+          result.push(Array.from(new Uint8Array(digest)).join(','));
+        }
+        return result;
+      };
+      const bytes = new Uint8Array(await output.arrayBuffer());
+      const view = new DataView(bytes.buffer);
+      const boxes = [];
+      for (let offset = 0; offset + 8 <= bytes.length;) {
+        let size = view.getUint32(offset);
+        if (size === 1) size = Number(view.getBigUint64(offset + 8));
+        if (!size) size = bytes.length - offset;
+        if (size < 8 || offset + size > bytes.length) throw new Error('Invalid MP4 box');
+        boxes.push(String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)));
+        offset += size;
+      }
+      const tooShort = await window.FrameEngine.normalizeRecordedMp4(file, { ...options, expectedDuration: 3 })
+        .then(() => null, error => ({ code: error.code, message: error.message }));
+      return {
+        inHashes: await hashes(inVideo), outHashes: await hashes(outVideo),
+        audioCodec: await outAudio.getCodec(), boxes, duration: await outVideo.computeDuration(), tooShort,
+      };
+    } finally { original.dispose(); finalized.dispose(); }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.inHashes.length).toBe(30);
+  expect(result.outHashes).toEqual(result.inHashes);
+  expect(result.audioCodec).toBe('aac');
+  expect(result.boxes).toContain('moov');
+  expect(result.boxes).not.toContain('moof');
+  expect(result.duration).toBeGreaterThan(0.9);
+  expect(result.tooShort.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.tooShort.message).toMatch(/ended before/);
+});
+
+test('30 fps MediaRecorder fallback finalizes its MP4 before reporting success', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const bytes = Uint8Array.from(atob(content), char => char.charCodeAt(0));
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    const raf = window.requestAnimationFrame;
+    const cancelRaf = window.cancelAnimationFrame;
+    const progress = [];
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 1, currentTime: 0, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; queueMicrotask(() => { this.currentTime = 1; this.ended = true; this.onended?.(); }); return Promise.resolve(); },
+        pause() { this.paused = true; }, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    window.VideoDecoder = undefined;
+    window.requestAnimationFrame = () => 123;
+    window.cancelAnimationFrame = () => {};
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([bytes], { type: 'video/mp4' }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    };
+    try {
+      const blob = await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.mp4'), {}, {}, {
+        frameRate: 30, preferredMime: 'video/mp4', preserveAudio: false, onProgress: value => progress.push(value),
+      });
+      const input = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
+      try {
+        const video = await input.getPrimaryVideoTrack();
+        const audio = await input.getPrimaryAudioTrack();
+        return { audioCodec: await audio.getCodec(), duration: await video.computeDuration(), progress };
+      } finally { input.dispose(); }
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+      window.requestAnimationFrame = raf;
+      window.cancelAnimationFrame = cancelRaf;
+    }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.audioCodec).toBe('aac');
+  expect(result.duration).toBeGreaterThan(0.9);
+  expect(result.progress.at(-1)).toBe(1);
+});
+
 test('frame-by-frame setup can time out and be cancelled while metadata is stalled', async ({ page }) => {
   await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({
     contentType: 'application/javascript',
