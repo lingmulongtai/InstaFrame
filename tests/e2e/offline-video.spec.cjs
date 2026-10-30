@@ -253,3 +253,57 @@ test('frame-by-frame output scales to encoder support and enforces its byte limi
   expect(result.size.width).toBeGreaterThan(180);
   expect(result.code).toBe('MEDIA_RESOURCE_LIMIT');
 });
+
+test('realtime fallback refuses silent output when audio capture is unavailable', async ({ page }) => {
+  await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({
+    contentType: 'application/javascript',
+    body: `export const ALL_FORMATS = [];
+      export class BlobSource { constructor() {} }
+      export class Input {
+        async getPrimaryVideoTrack() { return { canDecode: async () => false }; }
+        async getPrimaryAudioTrack() { return {}; }
+        dispose() {}
+      }`,
+  }));
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'offline-60fps.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    window.VideoDecoder ||= class {};
+    window.VideoEncoder ||= class {};
+    window.VideoFrame ||= class {};
+    const bytes = Uint8Array.from(atob(content), character => character.charCodeAt(0));
+    const file = new File([bytes], 'fixture.mp4', { type: 'video/mp4' });
+    // A partial header scan cannot identify this audio track.
+    file.slice = () => new Blob([new Uint8Array([0])]);
+    HTMLMediaElement.prototype.captureStream = () => ({ getAudioTracks: () => [], getTracks: () => [] });
+    window.AudioContext = class { constructor() { throw new Error('Audio capture unavailable'); } };
+    let recorders = 0;
+    window.MediaRecorder = class { constructor() { recorders += 1; throw new Error('Unexpected recorder'); } };
+    let fallbacks = 0;
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preferredMime: 'video/mp4', frameRate: 60, onRealtimeFallback: () => { fallbacks += 1; },
+      });
+      return { message: 'resolved', recorders, fallbacks };
+    } catch (error) { return { message: error.message, recorders, fallbacks }; }
+  }, base64);
+  expect(result).toEqual({ message: 'The source audio could not be captured for video export', recorders: 0, fallbacks: 1 });
+});
+
+test('the completed item retains the realtime fallback and reduced-size notice', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles(path.join(__dirname, 'offline-60fps.mp4'));
+  await expect(page.locator('.image-card')).toHaveCount(1);
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      options.onAutoScale(320, 200);
+      options.onRealtimeFallback();
+      return new Blob([new Uint8Array([0])], { type: 'video/mp4' });
+    };
+    void window.generateAll();
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(page.locator('#status-badge-1')).toContainText('Done · reduced · real-time recording');
+});

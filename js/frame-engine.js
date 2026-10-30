@@ -1554,7 +1554,7 @@ const FrameEngine = (() => {
   /** Decode and encode each input frame without depending on playback speed. */
   async function renderVideoFramesOffline(file, exif, settings, options) {
     const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-      outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale } = options;
+      outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio } = options;
     if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
         typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
     const isMp4 = String(preferredMime || '').startsWith('video/mp4');
@@ -1597,6 +1597,7 @@ const FrameEngine = (() => {
         const videoTrack = await input.getPrimaryVideoTrack();
         const audioTrack = preserveAudio ? await input.getPrimaryAudioTrack() : null;
         assertActive();
+        onSourceAudio?.(!!audioTrack);
         if (!videoTrack || !await videoTrack.canDecode()) {
           console.warn('Frame-by-frame video decoding is unavailable');
           return null;
@@ -1716,10 +1717,12 @@ const FrameEngine = (() => {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
     const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
+    let offlineSourceHasAudio = null;
     if (outputFrameRate === 60) {
       const offline = await renderVideoFramesOffline(file, exif, settings, {
         onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
         outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale,
+        onSourceAudio: hasAudio => { offlineSourceHasAudio = hasAudio; },
       });
       if (offline) return offline;
       onRealtimeFallback?.();
@@ -1756,7 +1759,7 @@ const FrameEngine = (() => {
     await loadFrameFonts(settings, signal);
 
     const sourceHasAudio = preserveAudio
-      ? await _fileHasAudioTrackHint(file, signal)
+      ? (offlineSourceHasAudio ?? await _fileHasAudioTrackHint(file, signal))
       : false;
 
     return new Promise((resolve, reject) => {
@@ -1928,7 +1931,7 @@ const FrameEngine = (() => {
           }
         } catch (_) { /* no audio support or no audio track */ }
 
-        if (sourceHasAudio === true && !audioTrack) {
+        if (sourceHasAudio !== false && !audioTrack) {
           fail(new Error('The source audio could not be captured for video export'));
           return;
         }
