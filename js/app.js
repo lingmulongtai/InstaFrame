@@ -2768,6 +2768,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   item.status   = 'processing';
   item.progress = 0;
   item.videoReduced = false;
+  item.videoRealtimeFallback = false;
   updateItemStatus(item);
 
   try {
@@ -2807,7 +2808,10 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
             item.videoReduced = true;
             showToast(tf('msgVideoEncoderScaled', { width, height }), 'warn');
           },
-          onRealtimeFallback: () => showToast(t('msgVideoRealtimeFallback'), 'warn'),
+          onRealtimeFallback: () => {
+            item.videoRealtimeFallback = true;
+            showToast(t('msgVideoRealtimeFallback'), 'warn');
+          },
           onProgress: p => {
             item.progress = p;
             const percent = Math.floor(p * 100);
@@ -6044,8 +6048,10 @@ function updateItemStatus(item) {
     text.textContent = `${Math.round(item.progress * 100)}%`;
   } else {
     const statusKey = item.status === 'error' ? 'statusErrorDetails'
-      : item.status === 'done' && item.videoReduced ? 'statusDoneReduced'
-        : `status${capitalize(item.status)}`;
+      : item.status === 'done' && item.videoRealtimeFallback
+        ? (item.videoReduced ? 'statusDoneReducedRealtime' : 'statusDoneRealtime')
+        : item.status === 'done' && item.videoReduced ? 'statusDoneReduced'
+          : `status${capitalize(item.status)}`;
     text.textContent = t(statusKey);
   }
 }
