@@ -1676,7 +1676,7 @@ const FrameEngine = (() => {
         await conversion.execute();
         assertActive();
         const blob = sink.finish(isMp4 ? 'video/mp4' : 'video/webm');
-        if (chosenScale < scale) onAutoScale?.(outWidth, outHeight);
+        if (chosenScale < 1) onAutoScale?.(outWidth, outHeight);
         onProgress?.(1);
         return blob;
       })(), interruption]);

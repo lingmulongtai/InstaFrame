@@ -731,6 +731,18 @@
           </div>
         </div>
 
+        <!-- Prefer a lower-memory encoder when exporting at 60 fps -->
+        <div class="setting-row">
+          <div class="setting-label" id="videoMemoryModeLabel" data-i18n="videoMemoryMode">Video processing</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="videoMemoryModeLabel" aria-describedby="videoMemoryModeHint">
+              <div class="ratio-pill"><input type="radio" name="videoMemoryMode" id="video-memory" value="memory" checked><label for="video-memory" data-i18n="videoMemoryPriority">Save memory</label></div>
+              <div class="ratio-pill"><input type="radio" name="videoMemoryMode" id="video-quality" value="quality"><label for="video-quality" data-i18n="videoQualityPriority">Prefer quality</label></div>
+            </div>
+            <div class="setting-hint" id="videoMemoryModeHint" data-i18n="videoMemoryModeHint">At 60 fps, saving memory prefers hardware encoding; output dimensions may be reduced. Prefer quality allows higher memory use.</div>
+          </div>
+        </div>
+
         <!-- Video bitrate -->
         <div class="setting-row">
           <div class="setting-label" id="exportVideoBitrateLabel" data-i18n="exportBitrateLabel">Bitrate</div>

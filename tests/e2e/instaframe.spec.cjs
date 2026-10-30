@@ -2592,6 +2592,27 @@ test('video frame-rate selection defaults to 60 and survives reload', async ({ p
   expect(await page.evaluate(() => window.__selectedVideoFps)).toBe(30);
 });
 
+test('video memory priority persists and reaches the encoder', async ({ page }) => {
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('memory');
+  await page.locator('label[for="video-quality"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="videoMemoryMode"]:checked')).toHaveValue('quality');
+  await page.locator('#fileInput').setInputFiles({ name: 'memory.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__preferHardware = options.preferHardware;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(false);
+  await page.locator('label[for="video-memory"]').click();
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__preferHardware)).toBe(true);
+});
+
 test('video bitrate preserves existing choices and supports source estimates', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('instaframe_settings', JSON.stringify({ exportVideoBitrate: 8 })));
   await page.reload();
