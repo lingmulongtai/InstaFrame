@@ -8,7 +8,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
   const MAX_PENDING_VIDEO_ENCODES = 4;
-  const VIDEO_CAPTURE_FPS = 30;
+  const DEFAULT_VIDEO_CAPTURE_FPS = 30;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
   const IMAGE_ENCODE_GUARD_MS = 60_000;
@@ -1179,6 +1179,7 @@ const FrameEngine = (() => {
    */
   async function _renderVideoWebCodecs(file, exif, settings, {
     onProgress,
+    frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     videoBitsPerSecond = 10_000_000,
     maxOutputBytes = MAX_ESTIMATED_VIDEO_BYTES,
     metadataTimeoutMs = VIDEO_METADATA_GUARD_MS,
@@ -1267,7 +1268,7 @@ const FrameEngine = (() => {
           if (duration > 0 && duration * videoBitsPerSecond / 8 > maxOutputBytes) {
             throw resourceLimitError();
           }
-          const fps        = 30;
+          const fps        = frameRate;
           const frameDurUs = Math.round(1_000_000 / fps);
 
           // This optional fast path is enabled only when a compatible muxer
@@ -1505,11 +1506,13 @@ const FrameEngine = (() => {
     maxOutputBytes,
     metadataTimeoutMs,
     progressTimeoutMs,
+    frameRate = DEFAULT_VIDEO_CAPTURE_FPS,
     outputScale = 1,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
+    const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
     const canUseWebCodecs = typeof VideoEncoder !== 'undefined'
@@ -1521,6 +1524,7 @@ const FrameEngine = (() => {
         return await _renderVideoWebCodecs(file, exif, settings, {
           onProgress,
           videoBitsPerSecond,
+          frameRate: outputFrameRate,
           maxOutputBytes: outputByteLimit,
           metadataTimeoutMs,
           progressTimeoutMs,
@@ -1555,6 +1559,7 @@ const FrameEngine = (() => {
       let canvas = null;
       let recorder = null;
       let rafId = null;
+      let frameCallbackId = null;
       let stopTimer = null;
       let metadataTimer = null;
       let progressTimer = null;
@@ -1570,6 +1575,8 @@ const FrameEngine = (() => {
         video.onended = null;
         video.onerror = null;
         if (rafId != null) cancelAnimationFrame(rafId);
+        if (frameCallbackId != null) runBestEffortCleanup(() => video.cancelVideoFrameCallback?.(frameCallbackId));
+        frameCallbackId = null;
         if (stopTimer != null) clearTimeout(stopTimer);
         if (metadataTimer != null) clearTimeout(metadataTimer);
         if (progressTimer != null) clearTimeout(progressTimer);
@@ -1643,6 +1650,10 @@ const FrameEngine = (() => {
           cancelAnimationFrame(rafId);
           rafId = null;
         }
+        if (frameCallbackId != null) {
+          runBestEffortCleanup(() => video.cancelVideoFrameCallback?.(frameCallbackId));
+          frameCallbackId = null;
+        }
         armFinalizationWatchdog();
         stopTimer = setTimeout(() => {
           stopTimer = null;
@@ -1703,7 +1714,7 @@ const FrameEngine = (() => {
         } catch (_) { /* no audio support or no audio track */ }
 
         // ── Build output stream: canvas video + original audio ──
-        outputStream = canvas.captureStream(VIDEO_CAPTURE_FPS);
+        outputStream = canvas.captureStream(outputFrameRate);
         if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
@@ -1756,13 +1767,22 @@ const FrameEngine = (() => {
           stopRecorderAfterFlush();
         };
 
-        function drawLoop() {
+        const useVideoFrames = outputFrameRate === 60 &&
+          typeof video.requestVideoFrameCallback === 'function' &&
+          typeof video.cancelVideoFrameCallback === 'function';
+        function scheduleFrame() {
+          if (useVideoFrames) frameCallbackId = video.requestVideoFrameCallback(drawLoop);
+          else rafId = requestAnimationFrame(drawLoop);
+        }
+        function drawLoop(_now, metadata) {
           try {
             rafId = null;
+            frameCallbackId = null;
+            if (settled || visibilityPaused) return;
             assertNotAborted(signal);
-            const mediaTime = Number(video.currentTime) || 0;
-            const frameIndex = Math.floor(mediaTime * VIDEO_CAPTURE_FPS);
-            if (frameIndex !== lastDrawnFrame) {
+            const mediaTime = Number(metadata?.mediaTime ?? video.currentTime) || 0;
+            const frameIndex = Math.floor(mediaTime * outputFrameRate);
+            if (useVideoFrames || frameIndex !== lastDrawnFrame) {
               drawVideoFrameSync(ctx, video, exif, settings, layout);
               lastDrawnFrame = frameIndex;
             }
@@ -1774,7 +1794,7 @@ const FrameEngine = (() => {
             if (onProgress && duration > 0) onProgress(Math.min(mediaTime / duration, 1));
 
             if (!video.ended && !video.paused) {
-              rafId = requestAnimationFrame(drawLoop);
+              scheduleFrame();
             } else {
               stopRecorderAfterFlush();
             }
@@ -1795,7 +1815,7 @@ const FrameEngine = (() => {
                   visibilityHandler?.();
                   return;
                 }
-                if (!visibilityPaused && rafId == null) rafId = requestAnimationFrame(drawLoop);
+                if (!visibilityPaused && rafId == null && frameCallbackId == null) scheduleFrame();
               })
               .catch(error => {
                 if (visibilityPaused || document.visibilityState === 'hidden') return;
@@ -1815,6 +1835,10 @@ const FrameEngine = (() => {
             if (rafId != null) {
               cancelAnimationFrame(rafId);
               rafId = null;
+            }
+            if (frameCallbackId != null) {
+              runBestEffortCleanup(() => video.cancelVideoFrameCallback?.(frameCallbackId));
+              frameCallbackId = null;
             }
             if (progressTimer != null) {
               clearTimeout(progressTimer);

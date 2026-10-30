@@ -2574,6 +2574,23 @@ test('supported video export selection survives a page reload', async ({ page })
   await expect(page.locator('input[name="exportVideoFormat"]:checked')).toHaveValue(savedChoice);
 });
 
+test('video frame-rate selection defaults to 60 and survives reload', async ({ page }) => {
+  await expect(page.locator('input[name="exportVideoFps"]:checked')).toHaveValue('60');
+  await page.locator('label[for="vfps-30"]').click();
+  await page.reload();
+  await expect(page.locator('input[name="exportVideoFps"]:checked')).toHaveValue('30');
+  await page.locator('#fileInput').setInputFiles({ name: 'fps.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async (_file, _exif, _settings, options) => {
+      window.__selectedVideoFps = options.frameRate;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__selectedVideoFps)).toBe(30);
+});
+
 test('invalid persisted enum values cannot break application startup', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -6214,6 +6231,82 @@ test('video recording avoids redrawing between 30 fps output frames', async ({ p
   expect(result.captureFps).toBe(30);
   expect(result.callbacks).toBe(10);
   expect(result.drawnTimes).toEqual([0.01, 0.04, 0.07, 0.1]);
+});
+
+test('60 fps recording follows decoded video frame callbacks', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreate = document.createElement.bind(document);
+    const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    const nativeRaf = window.requestAnimationFrame;
+    const nativeCancel = window.cancelAnimationFrame;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeEncoder = window.VideoEncoder;
+    let video;
+    const drawnTimes = [];
+    const stats = { callbacks: 0, captureFps: 0 };
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
+      video = {
+        requestVideoFrameCallback(callback) { return setTimeout(() => {
+          stats.callbacks += 1; this.currentTime = stats.callbacks / 100;
+          if (stats.callbacks === 10) this.ended = true;
+          callback(0, { mediaTime: this.currentTime });
+        }, 0); },
+        cancelVideoFrameCallback(id) { clearTimeout(id); },
+        videoWidth: 96, videoHeight: 64, duration: 0.1, currentTime: 0,
+        paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        pause() { this.paused = true; },
+        removeAttribute() { this.src = ''; },
+      };
+      return video;
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      if (source === video) { drawnTimes.push(video.currentTime); return; }
+      return nativeDraw.call(this, source, ...args);
+    };
+    HTMLCanvasElement.prototype.captureStream = fps => {
+      stats.captureFps = fps;
+      return { addTrack() {}, getTracks() { return []; } };
+    };
+    window.requestAnimationFrame = callback => setTimeout(() => {
+      stats.callbacks += 1;
+      video.currentTime = stats.callbacks / 100;
+      if (stats.callbacks === 10) video.ended = true;
+      callback();
+    }, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.VideoEncoder = undefined;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable({ data: new Blob(['video']) });
+        this.onstop();
+      }
+    };
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(new File(['video'], 'clip.webm'), {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm', frameRate: 60,
+      });
+      return { ...stats, drawnTimes };
+    } finally {
+      document.createElement = nativeCreate;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDraw;
+      HTMLCanvasElement.prototype.captureStream = nativeCapture;
+      window.requestAnimationFrame = nativeRaf;
+      window.cancelAnimationFrame = nativeCancel;
+      window.MediaRecorder = NativeRecorder;
+      window.VideoEncoder = NativeEncoder;
+    }
+  });
+  expect(result.captureFps).toBe(60);
+  expect(result.callbacks).toBe(10);
+  expect(result.drawnTimes).toEqual([0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]);
 });
 
 test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
