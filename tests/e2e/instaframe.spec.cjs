@@ -3470,6 +3470,30 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
 });
 
+test('live video preview waits until the selected thumbnail decoder is released', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__releaseThumbnail = null;
+    window.FrameEngine.captureVideoFrame = () => new Promise(resolve => {
+      window.__releaseThumbnail = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 96;
+        canvas.height = 64;
+        resolve(canvas);
+      };
+    });
+    window.FrameEngine.renderFrameWhenReady = async source => source;
+  });
+  await page.locator('#fileInput').setInputFiles({
+    name: 'serialized-preview.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseThumbnail)).toBe('function');
+  await page.waitForTimeout(250);
+  await expect(page.locator('#livePreviewVideo')).not.toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => window.__releaseThumbnail());
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+});
+
 test('video export releases and restores the live preview decoder', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'preview-decoder.webm', mimeType: 'video/webm', buffer: createWebm(),
