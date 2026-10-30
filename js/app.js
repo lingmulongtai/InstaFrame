@@ -101,6 +101,8 @@ const PHOTO_THUMBNAIL_GUARD_MS = 15_000;
 const PHOTO_THUMBNAIL_RETRY_LIMIT = 1;
 const VIDEO_THUMBNAIL_GUARD_MS = 15_000;
 const LIVE_VIDEO_PREVIEW_GUARD_MS = 15_000;
+const VIDEO_READ_COPY_CHUNK_BYTES = 4 * 1024 * 1024;
+const VIDEO_READ_COPY_GUARD_MS = 90_000;
 const METADATA_READ_GUARD_MS = 15_000;
 const VENDOR_SCRIPT_GUARD_MS = 12_000;
 const LOCATION_FETCH_GUARD_MS = 10_000;
@@ -2245,7 +2247,7 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
     let thumbnailCanvas = null;
     let thumbnailCommitted = false;
     try {
-      img = await FrameEngine.captureVideoFrame(item.file, 0, { signal: thumbnailSignal });
+      img = await FrameEngine.captureVideoFrame(item.videoReadSource || item.file, 0, { signal: thumbnailSignal });
       if (Number.isFinite(img.sourceDuration) && img.sourceDuration > 0) item.sourceDuration = img.sourceDuration;
       _recordSourceSize(item, img.sourceWidth, img.sourceHeight);
       let thumbnailSource = img;
@@ -2506,6 +2508,10 @@ async function _addFiles(accepted, reservation) {
       thumbnailController: null,
       thumbnailPromise: null,
       thumbnailNeedsRestart: false,
+      videoReadController: null,
+      videoReadPromise: null,
+      videoReadSource: null,
+      videoReadAttempted: false,
       exportController: null,
       exportRunToken: null,
       progress:  0,
@@ -2571,6 +2577,7 @@ async function removeItem(id, options = {}) {
   if (!skipConfirm && !await requestDestructiveConfirmation({ filename: item.file?.name })) return false;
   _activeExportController?.abort();
   _cancelLocationOperations(id);
+  _releaseVideoReadRecovery(item);
   _invalidateItemCache(id);
   const idx = state.items.findIndex(i => i.id === id);
   if (idx !== -1) {
@@ -2618,6 +2625,7 @@ async function clearAllItems(skipConfirm = false) {
   ids.forEach(id => _invalidateItemCache(id));
   state.items.forEach(item => {
     _cancelPhotoThumbnail(item);
+    _releaseVideoReadRecovery(item);
     _releaseItemOutput(item);
     _releaseHeifResources(item);
   });
@@ -2779,6 +2787,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
       _disposeLiveVideoSource();
+      if (item.videoReadPromise) await _waitForPreviewResource(item.videoReadPromise, signal);
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) {
         const error = new Error(t('msgVideoExportUnavailable'));
@@ -2793,7 +2802,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       if (maxOutputBytes <= 0) throw _mediaResourceLimitError();
       let reportedVideoPercent = -1;
       const videoBlob = await FrameEngine.renderVideoFrameWhenReady(
-        item.file, item.exif, state.settings,
+        item.videoReadSource || item.file, item.exif, state.settings,
         {
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
@@ -4982,6 +4991,9 @@ function resetPreviewView() {
 function selectItem(id, { switchMobileTab = true } = {}) {
   _flushLiveExifEdit();
   state.selectedItemId = id;
+  for (const item of state.items) {
+    if (item.id !== id) item.videoReadController?.abort();
+  }
   for (const [itemId, entry] of _imgLoadEntries) {
     if (itemId === id) continue;
     entry.controller.abort();
@@ -5448,8 +5460,63 @@ function _disposeLiveVideoSource() {
 
 function _videoPreviewFailureMessage(item) {
   const failure = item.previewFailure;
-  const message = tf(failure.timedOut ? 'msgVideoPreviewTimeout' : 'msgVideoPreviewFailed', { name: item.file.name });
+  const message = failure.readFailed ? t('msgVideoReadRetryFailed')
+    : tf(failure.timedOut ? 'msgVideoPreviewTimeout' : 'msgVideoPreviewFailed', { name: item.file.name });
   return failure.details ? `${message}\n${tf('msgVideoPreviewDetails', { details: failure.details })}` : message;
+}
+
+function _releaseVideoReadRecovery(item) {
+  item.videoReadController?.abort();
+  item.videoReadSource = null;
+  item.videoReadAttempted = false;
+}
+
+// Some file-picker-backed sources can fail when the media element reads them.
+// On that specific failure, make one bounded, byte-backed copy and reuse it
+// for preview and export. Reading can still fail if the original is unavailable.
+function _startVideoReadRecovery(item) {
+  if (item.videoReadPromise || item.videoReadAttempted) return;
+  item.videoReadAttempted = true;
+  for (const other of state.items) {
+    if (other !== item) _releaseVideoReadRecovery(other);
+  }
+  const controller = new AbortController();
+  item.videoReadController = controller;
+  let timedOut = false;
+  let recovered = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, VIDEO_READ_COPY_GUARD_MS);
+  const task = (async () => {
+    const parts = [];
+    for (let offset = 0; offset < item.file.size; offset += VIDEO_READ_COPY_CHUNK_BYTES) {
+      const end = Math.min(item.file.size, offset + VIDEO_READ_COPY_CHUNK_BYTES);
+      const bytes = await _waitForPreviewResource(item.file.slice(offset, end).arrayBuffer(), controller.signal);
+      if (bytes.byteLength !== end - offset) throw new Error('Incomplete video file read');
+      parts.push(new Blob([bytes]));
+    }
+    if (controller.signal.aborted || !state.items.includes(item) || _pageResourcesReleased) {
+      throw new DOMException('Video read cancelled', 'AbortError');
+    }
+    item.videoReadSource = new File(parts, item.file.name, { type: item.file.type, lastModified: item.file.lastModified });
+    recovered = true;
+  })().catch(error => {
+    if (error?.name === 'AbortError' && !timedOut) {
+      item.videoReadAttempted = false;
+      return;
+    }
+    if (item.previewFailure) {
+      const diagnostic = timedOut ? 'Video file read timed out' : `${error?.name || 'Error'}: ${error?.message || 'Video file read failed'}`;
+      item.previewFailure.details = [item.previewFailure.details, diagnostic].filter(Boolean).join(' · ');
+      item.previewFailure.readFailed = true;
+    }
+  }).finally(() => {
+    clearTimeout(timer);
+    if (item.videoReadController === controller) item.videoReadController = null;
+    if (item.videoReadPromise === task) item.videoReadPromise = null;
+    if (_pageResourcesReleased || !state.items.includes(item) || state.selectedItemId !== item.id || item.exportController) return;
+    if (recovered) scheduleLivePreview();
+    else if (item.previewFailure) _setLivePreviewError(_videoPreviewFailureMessage(item));
+  });
+  item.videoReadPromise = task;
 }
 
 function _failLiveVideoPreview(itemId, generation, { timedOut = false, error = null } = {}) {
@@ -5484,6 +5551,11 @@ function _failLiveVideoPreview(itemId, generation, { timedOut = false, error = n
   // A separate thumbnail or export may have decoded successfully. Do not
   // classify an isolated preview failure as a damaged input or failed export.
   item.previewFailure = { timedOut, details: [details, readiness].filter(Boolean).join(' · ') };
+  if (mediaError?.code === 2 && !item.videoReadAttempted) {
+    _setLivePreviewError(t('msgVideoReadRetry'));
+    _startVideoReadRecovery(item);
+    return;
+  }
   _setLivePreviewError(_videoPreviewFailureMessage(item));
 }
 
@@ -5648,6 +5720,11 @@ async function renderLivePreview() {
       _disposeLiveVideoSource();
       return;
     }
+    if (item.videoReadPromise) {
+      _disposeLiveVideoSource();
+      _setLivePreviewError(t('msgVideoReadRetry'));
+      return;
+    }
     // A thumbnail opens its own video decoder. Wait for it to release the
     // source before opening the selected video's live preview decoder.
     if (item.thumbnailPromise) {
@@ -5664,7 +5741,7 @@ async function renderLivePreview() {
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
       item.previewFailure = null;
-      liveVideo._objUrl = URL.createObjectURL(item.file);
+      liveVideo._objUrl = URL.createObjectURL(item.videoReadSource || item.file);
       liveVideo._srcId  = item.id;
       const generation = _armLiveVideoSourceHandlers(liveVideo, item);
       try {
@@ -8145,6 +8222,7 @@ function _releasePageResources(event) {
     if (item.isVideo) item.thumbnailNeedsRestart = shouldRestoreThumbnail;
     else item.photoThumbnailNeedsRestart = shouldRestoreThumbnail;
     _cancelPhotoThumbnail(item);
+    _releaseVideoReadRecovery(item);
     _releaseItemOutput(item);
     if (outputWasActive) {
       item.status = 'pending';
