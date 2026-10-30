@@ -379,6 +379,51 @@ test('real-time recorder rejects a premature playback pause instead of saving it
   expect(result.message).toMatch(/paused before/);
 });
 
+test('real-time recorder accepts a long final frame when playback reaches the end', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 5, currentTime: 0, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        requestVideoFrameCallback(callback) {
+          setTimeout(() => { this.currentTime = 5; this.ended = true; callback(0, { mediaTime: 0.5 }); }, 0);
+          return 1;
+        },
+        cancelVideoFrameCallback() {}, pause() {}, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    window.VideoDecoder = undefined;
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['video']) }); this.onstop?.(); }
+    };
+    try {
+      return await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.webm'), {}, {}, {
+        frameRate: 60, preferredMime: 'video/webm', preserveAudio: false,
+      }).then(blob => ({ size: blob.size }), error => ({ code: error.code, message: error.message }));
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      CanvasRenderingContext2D.prototype.drawImage = drawImage;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+    }
+  });
+  expect(result).toEqual({ size: 5 });
+});
+
 test('frame-by-frame setup can time out and be cancelled while metadata is stalled', async ({ page }) => {
   await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({
     contentType: 'application/javascript',
