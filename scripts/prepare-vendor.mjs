@@ -11,6 +11,9 @@ const files = [
   ['node_modules/leaflet/dist/leaflet.js', 'leaflet/leaflet.js'],
   ['node_modules/leaflet/dist/leaflet.css', 'leaflet/leaflet.css'],
   ['node_modules/leaflet/LICENSE', 'leaflet/LICENSE.txt'],
+  // Mediabunny 1.64.0 (MPL-2.0); source: https://github.com/Vanilagy/mediabunny/tree/v1.64.0
+  ['node_modules/mediabunny/dist/bundles/mediabunny.min.mjs', 'mediabunny.min.js'],
+  ['node_modules/mediabunny/LICENSE', 'LICENSE-mediabunny.txt'],
   // HEIF/HEIC decoder (libheif + libde265, LGPL-3.0), loaded only for HEIC files.
   ['node_modules/libheif-js/libheif-wasm/libheif.js', 'libheif/libheif.js'],
   ['node_modules/libheif-js/libheif-wasm/libheif.wasm', 'libheif/libheif.wasm'],
@@ -45,6 +48,13 @@ await mkdir(path.join(output, 'fonts'), { recursive: true });
 for (const [source, target] of files) {
   await cp(path.join(root, source), path.join(output, target));
 }
+
+await writeFile(path.join(output, 'SOURCE-mediabunny.txt'), [
+  'Mediabunny 1.64.0 is distributed under the Mozilla Public License 2.0.',
+  'The corresponding unmodified source is included in the published npm package:',
+  'https://registry.npmjs.org/mediabunny/-/mediabunny-1.64.0.tgz',
+  '',
+].join('\n'));
 
 await cp(path.join(root, 'node_modules/leaflet/dist/images'), path.join(output, 'leaflet/images'), { recursive: true });
 

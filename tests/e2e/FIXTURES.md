@@ -1,5 +1,16 @@
 # Browser media fixtures
 
+`offline-60fps.mp4` is a one-second 320×180 H.264/AAC synthetic video at 60 fps. Four coloured quadrants identify orientation; a white flash and a 1 kHz tone both start at 0.5 seconds. `offline-60fps-rotated.mp4` contains the same streams with a 90-degree display matrix. FFmpeg 8.0.1 was used:
+
+```text
+ffmpeg -f lavfi -i "color=c=blue:s=320x180:r=60:d=1" -f lavfi -i "aevalsrc=if(between(t\,0.5\,0.55)\,0.8*sin(2*PI*1000*t)\,0):s=48000:d=1" -vf "drawbox=x=0:y=0:w=iw/2:h=ih/2:color=red:t=fill,drawbox=x=iw/2:y=0:w=iw/2:h=ih/2:color=lime:t=fill,drawbox=x=0:y=ih/2:w=iw/2:h=ih/2:color=yellow:t=fill,drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='between(t,0.5,0.55)'" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart offline-60fps.mp4
+ffmpeg -display_rotation 90 -i offline-60fps.mp4 -map 0 -c copy offline-60fps-rotated.mp4
+```
+
+SHA-256: `07fd34240385aed0f58bc79198e07980c89ae15c81dc175d555254aa35e33e68`
+
+SHA-256: `e7490a18f3c7b745140687e332fe66e57697ab58007e80e83bc746f8261a5a71`
+
 `codec-fixture.mp4` is a 0.6-second synthetic 96×64 test pattern with mono audio. It contains H.264 Baseline video and AAC-LC audio in an MP4 container, so it does not contain third-party media.
 
 The cross-browser contract proves that Chromium, Firefox, and Microsoft Edge decode a video frame from this fixture; WebKit may instead report an explicit codec error. It does not assert that the input AAC track was decoded or preserved. Audio-track preservation is covered separately by the Linux Chromium WebM export test.

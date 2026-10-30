@@ -5574,7 +5574,7 @@ test('MediaRecorder finalizes when playback ends without another animation frame
 
     const controller = new AbortController();
     const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
-      preserveAudio: true,
+      preserveAudio: false,
       signal: controller.signal,
     });
     try {
@@ -5681,7 +5681,7 @@ test('MediaRecorder pauses source and recording while the page is hidden', async
     window.cancelAnimationFrame = () => { rafCancels += 1; };
 
     try {
-      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+      const pending = window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
       while (!recorder || stats.videoPlays === 0) await new Promise(resolve => setTimeout(resolve, 0));
       hidden = true;
       document.dispatchEvent(new Event('visibilitychange'));
@@ -5814,6 +5814,10 @@ test('video progress and finalization watchdogs release stalled exports', async 
         load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
         requestVideoFrameCallback(callback) { this.pendingFrameCallback = callback; return 1; },
         cancelVideoFrameCallback() { this.pendingFrameCallback = null; },
+        captureStream() {
+          const track = { stop() {} };
+          return { getAudioTracks: () => [track], getTracks: () => [track] };
+        },
         removeAttribute(name) {
           attributes.delete(name);
           if (name === 'src') this.src = '';
@@ -6342,6 +6346,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const mimes = [];
     const captureFps = [];
     let retries = 0;
+    window.VideoDecoder = undefined;
     const nativeCapture = HTMLCanvasElement.prototype.captureStream;
     HTMLCanvasElement.prototype.captureStream = function (...args) {
       sizes.push([this.width, this.height]);
@@ -6371,7 +6376,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     const blob = await window.FrameEngine.renderVideoFrameWhenReady(
       new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
-      { preferredMime: 'video/webm', frameRate: 60, onRetry: () => { retries += 1; } }
+      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false, onRetry: () => { retries += 1; } }
     );
     return { sizes, mimes, captureFps, retries, type: blob.type, size: blob.size };
   }, { base64: createWebm().toString('base64') });
@@ -9348,7 +9353,9 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
     mimeType: download.suggestedFilename().endsWith('.mp4') ? 'video/mp4' : 'video/webm',
   });
   expect(mediaInfo.duration).toBeGreaterThan(0);
-  expect({ width: mediaInfo.width, height: mediaInfo.height }).toEqual(expectedLayout);
+  // Some video encoders require even dimensions; framing may be rounded down by one pixel.
+  expect([expectedLayout.width, expectedLayout.width - 1]).toContain(mediaInfo.width);
+  expect([expectedLayout.height, expectedLayout.height - 1]).toContain(mediaInfo.height);
 });
 
 test('video export preserves an input audio track', async ({ page }) => {
