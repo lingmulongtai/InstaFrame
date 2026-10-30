@@ -1553,11 +1553,134 @@ const FrameEngine = (() => {
     };
   }
 
+  // MediaRecorder may emit fragmented MP4 with incomplete duration headers or
+  // Opus audio. Repackage the video packets and convert audio to AAC so common
+  // phone galleries can read the full duration and play the audio.
+  async function normalizeRecordedMp4(blob, { expectedDuration, expectAudio, sourceFile, maxBytes, signal, timeoutMs } = {}) {
+    let input = null;
+    let sourceInput = null;
+    let verifiedInput = null;
+    let converted = null;
+    let timer = null;
+    const target = createBoundedVideoTarget(maxBytes);
+    let interruptionError = null;
+    let rejectInterruption;
+    const interruption = new Promise((_, reject) => { rejectInterruption = reject; });
+    const interrupt = error => {
+      if (interruptionError) return;
+      interruptionError = error;
+      if (converted) void converted.cancel().catch(() => {});
+      rejectInterruption(error);
+    };
+    const abort = () => interrupt(new DOMException('Export cancelled', 'AbortError'));
+    const armGuard = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => interrupt(mediaTimeoutError('MP4 finalization')),
+        resolveGuardTimeout(timeoutMs, VIDEO_PROGRESS_GUARD_MS));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    armGuard();
+    try {
+      return await Promise.race([(async () => {
+        const libraryUrl = new URL('vendor/mediabunny.min.js', document.baseURI);
+        libraryUrl.search = new URL(engineScriptUrl).search;
+        const media = await import(libraryUrl.href);
+        if (interruptionError) throw interruptionError;
+        input = new media.Input({ source: new media.BlobSource(blob, { maxCacheSize: 4 * 1024 * 1024 }), formats: media.ALL_FORMATS });
+        const video = await input.getPrimaryVideoTrack();
+        const audio = await input.getPrimaryAudioTrack();
+        if (interruptionError) throw interruptionError;
+        if (!video || (expectAudio && !audio)) throw new Error('Recorded MP4 is missing a required track');
+        const [first, end, stats] = await Promise.all([video.getFirstTimestamp(), video.computeDuration(), video.computePacketStats()]);
+        const tolerance = Math.max(0.5, (expectedDuration || 0) * 0.03);
+        if (!stats.packetCount || !(end > first) || (expectedDuration > 0 && end - first < expectedDuration - tolerance)) {
+          throw new Error('Recorded video ended before the source video finished');
+        }
+        if (interruptionError) throw interruptionError;
+        const writable = new WritableStream({ write: chunk => { if (interruptionError) throw interruptionError; target.write(chunk); } });
+        const output = new media.Output({ format: new media.Mp4OutputFormat({ fastStart: false }), target: new media.StreamTarget(writable) });
+        converted = await media.Conversion.init({
+          input, output, tracks: 'primary', copy: { shiftTolerance: 0 },
+          video: { codec: 'avc' }, audio: { codec: 'aac' }, showWarnings: false,
+        });
+        if (interruptionError) {
+          await converted.cancel().catch(() => {});
+          throw interruptionError;
+        }
+        const outputVideo = output.tracks.find(track => track.type === 'video');
+        if (!converted.isValid || !converted.utilizedTracks.includes(video) ||
+            (audio && !converted.utilizedTracks.includes(audio)) ||
+            !(outputVideo?.source instanceof media.EncodedVideoPacketSource)) {
+          throw new Error('This browser cannot create a compatible MP4 with its audio');
+        }
+        if (interruptionError) throw interruptionError;
+        converted.onProgress = armGuard;
+        await converted.execute();
+        if (interruptionError) throw interruptionError;
+        const result = target.finish('video/mp4');
+        verifiedInput = new media.Input({ source: new media.BlobSource(result, { maxCacheSize: 4 * 1024 * 1024 }), formats: media.ALL_FORMATS });
+        const verifiedVideo = await verifiedInput.getPrimaryVideoTrack();
+        const verifiedAudio = await verifiedInput.getPrimaryAudioTrack();
+        if (interruptionError) throw interruptionError;
+        if (!verifiedVideo || (audio && (!verifiedAudio || await verifiedAudio.getCodec() !== 'aac'))) {
+          throw new Error('Compatible MP4 is missing a required track');
+        }
+        const [verifiedFirst, verifiedEnd] = await Promise.all([verifiedVideo.getFirstTimestamp(), verifiedVideo.computeDuration()]);
+        if (Math.abs((verifiedEnd - verifiedFirst) - (end - first)) > tolerance) {
+          throw new Error('Compatible MP4 video duration does not match the recording');
+        }
+        if (audio) {
+          const [audioFirst, audioEnd, verifiedAudioFirst, verifiedAudioEnd] = await Promise.all([
+            audio.getFirstTimestamp(), audio.computeDuration(), verifiedAudio.getFirstTimestamp(), verifiedAudio.computeDuration(),
+          ]);
+          if (Math.abs((verifiedAudioFirst - verifiedFirst) - (audioFirst - first)) > 0.25 ||
+              Math.abs((verifiedAudioEnd - verifiedEnd) - (audioEnd - end)) > 0.25) {
+            throw new Error('Compatible MP4 audio timing does not match the recording');
+          }
+          if (sourceFile && expectAudio) {
+            sourceInput = new media.Input({ source: new media.BlobSource(sourceFile, { maxCacheSize: 4 * 1024 * 1024 }), formats: media.ALL_FORMATS });
+            const sourceVideo = await sourceInput.getPrimaryVideoTrack();
+            const sourceAudio = await sourceInput.getPrimaryAudioTrack();
+            if (!sourceVideo || !sourceAudio) throw new Error('Source audio could not be verified');
+            const [sourceVideoFirst, sourceAudioFirst, sourceAudioEnd] = await Promise.all([
+              sourceVideo.getFirstTimestamp(), sourceAudio.getFirstTimestamp(), sourceAudio.computeDuration(),
+            ]);
+            const audioTolerance = Math.max(0.35, (expectedDuration || 0) * 0.03);
+            if (Math.abs((verifiedAudioFirst - verifiedFirst) - (sourceAudioFirst - sourceVideoFirst)) > audioTolerance ||
+                (verifiedAudioEnd - verifiedFirst) < (sourceAudioEnd - sourceVideoFirst) - audioTolerance) {
+              throw new Error('Recorded audio does not cover the source audio');
+            }
+          }
+        }
+        if (interruptionError) throw interruptionError;
+        return result;
+      })(), interruption]);
+    } catch (error) {
+      if (interruptionError?.name === 'AbortError' || signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+      if (error?.code === 'MEDIA_RESOURCE_LIMIT') throw error;
+      const failure = new Error(error?.message || 'Could not finalize the MP4');
+      failure.code = 'VIDEO_MP4_FINALIZATION_FAILED';
+      throw failure;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      if (converted && converted.state !== 'done') {
+        if (interruptionError) void converted.cancel().catch(() => {});
+        else await converted.cancel().catch(() => {});
+      }
+      input?.dispose();
+      sourceInput?.dispose();
+      verifiedInput?.dispose();
+      target.clear();
+    }
+  }
+
   /** Decode and encode each input frame without depending on playback speed. */
   async function renderVideoFramesOffline(file, exif, settings, options) {
     const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
       outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio,
-      onOutputSize, hardwareAcceleration = 'no-preference' } = options;
+      onOutputSize, frameRate, hardwareAcceleration = 'no-preference' } = options;
     if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
         typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
     const isMp4 = String(preferredMime || '').startsWith('video/mp4');
@@ -1653,9 +1776,10 @@ const FrameEngine = (() => {
         conversion = await media.Conversion.init({
           input, output, tracks: 'primary', showWarnings: false,
           copy: { shiftTolerance: 0.1 },
-          audio: { discard: !preserveAudio },
+          audio: { discard: !preserveAudio, ...(isMp4 ? { codec: 'aac' } : {}) },
           video: {
             codec, bitrate, hardwareAcceleration, processedWidth: outWidth, processedHeight: outHeight,
+            ...(frameRate === 30 ? { frameRate: 30 } : {}),
             allowTransformationMetadata: false,
             process(sample) {
               assertActive();
@@ -1725,10 +1849,10 @@ const FrameEngine = (() => {
     const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
     const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
     let offlineSourceHasAudio = null;
-    if (outputFrameRate === 60) {
+    {
       const offlineOptions = {
         onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize,
+        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize, frameRate: outputFrameRate,
         onSourceAudio: hasAudio => { offlineSourceHasAudio = hasAudio; },
       };
       let offline = null;
@@ -1747,7 +1871,7 @@ const FrameEngine = (() => {
       }
       if (!offline) offline = await renderVideoFramesOffline(file, exif, settings, offlineOptions);
       if (offline) return offline;
-      onRealtimeFallback?.();
+      if (outputFrameRate === 60) onRealtimeFallback?.();
     }
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
@@ -1784,7 +1908,8 @@ const FrameEngine = (() => {
       ? (offlineSourceHasAudio ?? await _fileHasAudioTrackHint(file, signal))
       : false;
 
-    return new Promise((resolve, reject) => {
+    let recordedDuration = 0;
+    const recorded = await new Promise((resolve, reject) => {
       const video = document.createElement('video');
       const url   = URL.createObjectURL(file);
       video.muted   = true;   // must be muted for autoplay; source audio is captured separately
@@ -1804,6 +1929,7 @@ const FrameEngine = (() => {
       let visibilityPaused = false;
       let settled = false;
       let cleaned = false;
+      let playbackFinished = false;
 
       const cleanup = () => {
         if (cleaned) return;
@@ -1911,6 +2037,7 @@ const FrameEngine = (() => {
         const layout = computeFrameLayout(W, H, settings, exif);
         const { canvasW, canvasH } = layout;
         const duration = video.duration || 0;
+        recordedDuration = duration;
         const effectiveBitrate = sourceBitrate
           ? (InstaFrameCore.estimateVideoBitrateFromFile(file.size, duration) || videoBitsPerSecond)
           : videoBitsPerSecond;
@@ -1994,6 +2121,12 @@ const FrameEngine = (() => {
         };
         recorder.onstop = () => {
           if (settled) { cleanup(); return; }
+          if (!playbackFinished) {
+            const error = new Error('Video playback stopped before the source ended');
+            error.code = 'VIDEO_RECORDING_INCOMPLETE';
+            fail(error);
+            return;
+          }
           const blob = new Blob(chunks, { type: mimeType });
           if (blob.size > outputByteLimit) {
             fail(resourceLimitError());
@@ -2013,6 +2146,13 @@ const FrameEngine = (() => {
             fail(new Error('Video export was interrupted while the page was hidden'));
             return;
           }
+          if (duration > 0 && video.currentTime < duration - Math.max(0.25, duration * 0.01)) {
+            const error = new Error('Video playback ended before the source ended');
+            error.code = 'VIDEO_RECORDING_INCOMPLETE';
+            fail(error);
+            return;
+          }
+          playbackFinished = true;
           stopRecorderAfterFlush();
         };
 
@@ -2047,12 +2187,23 @@ const FrameEngine = (() => {
               armProgressWatchdog();
             }
 
-            if (onProgress && duration > 0) onProgress(Math.min(mediaTime / duration, 1));
+            if (onProgress && duration > 0) onProgress(Math.min(mediaTime / duration, 0.98));
 
             if (!video.ended && !video.paused) {
               scheduleFrame();
-            } else {
+            } else if (video.ended) {
+              if (duration > 0 && video.currentTime < duration - Math.max(0.25, duration * 0.01)) {
+                const error = new Error('Video playback ended before the source ended');
+                error.code = 'VIDEO_RECORDING_INCOMPLETE';
+                fail(error);
+                return;
+              }
+              playbackFinished = true;
               stopRecorderAfterFlush();
+            } else {
+              const error = new Error('Video playback paused before the source ended');
+              error.code = 'VIDEO_RECORDING_INCOMPLETE';
+              fail(error);
             }
           } catch (error) {
             fail(error);
@@ -2135,6 +2286,14 @@ const FrameEngine = (() => {
         fail(error);
       }
     });
+    const result = recorded.type.startsWith('video/mp4')
+      ? await normalizeRecordedMp4(recorded, {
+        expectedDuration: recordedDuration, expectAudio: sourceHasAudio !== false, sourceFile: file,
+        maxBytes: outputByteLimit, signal, timeoutMs: progressTimeoutMs,
+      })
+      : recorded;
+    onProgress?.(1);
+    return result;
   }
 
   /**
@@ -2256,6 +2415,7 @@ const FrameEngine = (() => {
     loadImage,
     captureVideoFrame,
     renderVideoFrameWhenReady,
+    normalizeRecordedMp4,
     isColorDark,
     computeFrameLayout,
     computeVideoFrameLayout,
