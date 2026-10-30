@@ -1878,10 +1878,10 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   const customizeAxe = await new AxeBuilder({ page }).include('#customizePanel').analyze();
   const seriousCustomizeViolations = customizeAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact));
   expect(seriousCustomizeViolations.map(violation => violation.id), JSON.stringify(seriousCustomizeViolations, null, 2)).toEqual([]);
-  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('.accent-blue').click();
   await expect(page.locator('.accent-blue')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'false');
   await page.locator('#accentColorPicker').evaluate(element => {
     element.value = '#123456';
     element.dispatchEvent(new Event('input', { bubbles: true }));
