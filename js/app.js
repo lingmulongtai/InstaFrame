@@ -1649,6 +1649,7 @@ function _setVideoFailureError(item, { timedOut = false } = {}) {
 }
 
 function _setLocalizedItemError(item, key, values = {}) {
+  item.errorDiagnostic = '';
   item.errorKey = key;
   item.errorValues = { ...values };
   item.errorMsg = tf(key, values);
@@ -1656,6 +1657,7 @@ function _setLocalizedItemError(item, key, values = {}) {
 }
 
 function _setRawItemError(item, message) {
+  item.errorDiagnostic = '';
   item.errorKey = null;
   item.errorValues = null;
   item.errorMsg = message || '';
@@ -1666,6 +1668,7 @@ function _clearItemError(item) {
   item.errorKey = null;
   item.errorValues = null;
   item.errorMsg = null;
+  item.errorDiagnostic = '';
 }
 
 function _getItemErrorMessage(item) {
@@ -2763,12 +2766,14 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
   let decodedPhoto = null;
   item.status   = 'processing';
   item.progress = 0;
+  item.videoReduced = false;
   updateItemStatus(item);
 
   try {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
     await _releaseItemThumbnailBeforeExport(item, signal);
     if (item.isVideo) {
+      _disposeLiveVideoSource();
       const mime    = resolveVideoMime(state.settings.exportVideoFormat);
       if (!mime) {
         const error = new Error(t('msgVideoExportUnavailable'));
@@ -2786,6 +2791,12 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
           preferredMime:     mime,
           videoBitsPerSecond: bitrate,
           maxOutputBytes,
+          onRetry: () => {
+            item.videoReduced = true;
+            item.progress = 0;
+            updateItemStatus(item);
+            showToast(t('msgVideoRetryReduced'), 'warn');
+          },
           onProgress: p => {
             item.progress = p;
             updateItemStatus(item);
@@ -2865,7 +2876,13 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
       else if (item.heif && e?.code === 'IMAGE_DECODE_FAILED') {
         _setLocalizedItemError(item, 'msgHeifDecodeFailed', { name: item.file.name });
       }
-      else _setRawItemError(item, e.message);
+      else _setRawItemError(item, e?.message || t('msgExportFailed'));
+      if (!cancelled) {
+        item.errorDiagnostic = [e?.name, e?.code, e?.message]
+          .filter(value => typeof value === 'string' && value.trim())
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .join(' · ');
+      }
       if (!cancelled && e?.code === 'MEDIA_RESOURCE_LIMIT') showToast(item.errorMsg, 'error');
       if (onExternalProgress) onExternalProgress(1);
     }
@@ -2882,7 +2899,7 @@ async function generateItem(item, onExternalProgress = null, parentSignal = null
     updateItemStatus(item);
     updateItemPreview(item);
     updateUI();
-    if (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id) {
+    if (item.isVideo || (recoveredPreviewDecode && item.status === 'done' && state.selectedItemId === item.id)) {
       scheduleLivePreview();
     }
     if (item.isVideo && !_pageResourcesReleased) {
@@ -3187,8 +3204,8 @@ function _generateZipBlob(zip, signal, onUpdate) {
 
 // Batch export streams one item at a time: render, encode, add to the archive,
 // then release the full-size photo frame. Memory stays near a single photo no
-// matter how many are exported. If the archive would outgrow the safe memory
-// peak, the finished part is saved and a new numbered ZIP is started.
+// matter how many are exported. The batch is saved as one ZIP; if it exceeds
+// the browser memory budget, no partial archive is downloaded.
 const BATCH_ITEMS_PROGRESS = 0.9;
 
 async function downloadAll() {
@@ -3216,11 +3233,9 @@ async function downloadAll() {
   const isCurrent = () => !signal.aborted && _ownsGlobalExport(controller);
   let JSZipCtor = null;
   let zip = null;
-  let partNumber = 0;
   let partPhotoBytes = 0;
   let partArchiveBytes = 0;
   let partEntries = 0;
-  let savedParts = 0;
   let packedEntries = 0;
   let failedCount = 0;
   let itemsProgress = 0;
@@ -3229,24 +3244,18 @@ async function downloadAll() {
     _retainedOutputBytes(), photoBytes, archiveBytes, entries
   ) <= MAX_ZIP_PEAK_BYTES;
 
-  const savePart = async isFinal => {
+  const saveArchive = async () => {
     const zipBlob = await _generateZipBlob(zip, signal, meta => {
-      const progress = isFinal
-        ? BATCH_ITEMS_PROGRESS + (1 - BATCH_ITEMS_PROGRESS) * (meta.percent / 100)
-        : itemsProgress;
-      _showOwnedExportProgress(controller, t('progressZip'), progress);
+      _showOwnedExportProgress(controller, t('progressZip'),
+        BATCH_ITEMS_PROGRESS + (1 - BATCH_ITEMS_PROGRESS) * (meta.percent / 100));
     });
     const actualPeak = InstaFrameCore.estimateZipPeakBytes(
       _retainedOutputBytes(), partPhotoBytes, zipBlob.size, partEntries
     );
     if (actualPeak > MAX_ZIP_PEAK_BYTES) throw _mediaResourceLimitError();
     if (!isCurrent()) throw abortError();
-    const name = isFinal && savedParts === 0
-      ? 'instaframe_export.zip'
-      : `instaframe_export_${partNumber}.zip`;
-    if (isFinal) _showOwnedExportProgress(controller, t('progressZip'), 1);
-    triggerDownload(zipBlob, name);
-    savedParts += 1;
+    _showOwnedExportProgress(controller, t('progressZip'), 1);
+    triggerDownload(zipBlob, 'instaframe_export.zip');
     zip = null;
   };
 
@@ -3308,11 +3317,12 @@ async function downloadAll() {
       const entryBytes = blob.size || 0;
 
       if (zip && partEntries > 0 && !fitsPeak(partPhotoBytes + photoBytes, partArchiveBytes + entryBytes, partEntries + 1)) {
-        await savePart(false);
+        const error = new Error(t('msgZipSingleLimit'));
+        error.code = 'ZIP_SINGLE_LIMIT';
+        throw error;
       }
       if (!zip) {
         zip = new JSZipCtor();
-        partNumber += 1;
         partPhotoBytes = 0;
         partArchiveBytes = 0;
         partEntries = 0;
@@ -3339,7 +3349,7 @@ async function downloadAll() {
       showToast(failedCount ? tf('msgBatchFailed', { count: failedCount }) : t('msgNoImages'), failedCount ? 'error' : 'warn');
       return;
     }
-    await savePart(true);
+    await saveArchive();
   } catch (error) {
     if (!_ownsGlobalExport(controller)) return;
     const cancelled = signal.aborted || error?.name === 'AbortError';
@@ -3347,16 +3357,16 @@ async function downloadAll() {
     updateUI();
     const messageKey = cancelled
       ? 'msgExportCancelled'
-      : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit'
-        : error?.code === 'DEPENDENCY_LOAD_FAILED' ? 'msgDependencyLoadFailed' : 'msgExportFailed';
+      : error?.code === 'ZIP_SINGLE_LIMIT' ? 'msgZipSingleLimit'
+        : error?.code === 'MEDIA_RESOURCE_LIMIT' ? 'msgMediaResourceLimit'
+          : error?.code === 'DEPENDENCY_LOAD_FAILED' ? 'msgDependencyLoadFailed' : 'msgExportFailed';
     showToast(t(messageKey), cancelled ? 'warn' : 'error');
     return;
   }
 
   _finishOwnedGlobalExport(controller);
   updateUI();
-  if (failedCount) showToast(tf('msgBatchFailed', { count: failedCount }), 'error');
-  else if (savedParts > 1) showToast(tf('msgZipParts', { count: savedParts }), 'success');
+  if (failedCount) showToast(tf('msgBatchDownloadPartial', { count: failedCount }), 'error');
 }
 
 function triggerDownload(blob, filename) {
@@ -4926,7 +4936,7 @@ function resetPreviewView() {
 }
 
 // ─── Item Selection for Preview ───────────────────────────────────────────────
-function selectItem(id) {
+function selectItem(id, { switchMobileTab = true } = {}) {
   _flushLiveExifEdit();
   state.selectedItemId = id;
   for (const [itemId, entry] of _imgLoadEntries) {
@@ -4942,7 +4952,7 @@ function selectItem(id) {
     el.querySelector('.card-preview')?.setAttribute('aria-pressed', 'true');
   }
   // On mobile: auto-switch to preview tab so user can see the result
-  if (_usesMobileLayout()) {
+  if (switchMobileTab && _usesMobileLayout()) {
     document.body.setAttribute('data-mobile-tab', 'preview');
     _setMobileTabState(document.getElementById('mobileTabBar'), 'preview');
     // The Photos panel becomes inert immediately. Wait for the newly selected
@@ -5576,6 +5586,10 @@ async function renderLivePreview() {
   const liveVideo = document.getElementById('livePreviewVideo');
   if (item.isVideo && liveVideo) {
     _clearLivePreviewDetail();
+    if (state.items.some(candidate => candidate.isVideo && candidate.status === 'processing')) {
+      _disposeLiveVideoSource();
+      return;
+    }
     // Load video source if it changed (video element stays hidden — audio source only)
     if (!liveVideo._srcId || liveVideo._srcId !== item.id) {
       _disposeLiveVideoSource();
@@ -5936,6 +5950,7 @@ function renderItem(item) {
       <div class="card-text">
         <div class="card-filename">${escHtml(item.file.name)}</div>
         <div class="card-meta" id="card-meta-${item.id}"></div>
+        <div class="card-error-details" id="error-details-${item.id}" hidden></div>
       </div>
       <div class="card-actions">
         <button type="button" class="card-icon-btn" id="dl-btn-${item.id}" data-action="download" aria-label="${escHtml(tf('downloadSingleNamed', { name: item.file.name }))}" title="${escHtml(t('downloadSingle'))}">
@@ -5950,7 +5965,14 @@ function renderItem(item) {
 
   // Click preview image/video → select for live preview
   card.querySelector('.card-preview').addEventListener('click', () => {
-    selectItem(item.id);
+    if (item.status === 'error') {
+      selectItem(item.id, { switchMobileTab: false });
+      const details = card.querySelector('.card-error-details');
+      details.hidden = !details.hidden;
+      card.querySelector('.card-preview').setAttribute('aria-expanded', String(!details.hidden));
+    } else {
+      selectItem(item.id);
+    }
   });
   card.querySelector('[data-action="download"]')?.addEventListener('click', () => applyAndDownloadSingle(item.id));
   card.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeItem(item.id));
@@ -5971,6 +5993,8 @@ function updateItemStatus(item) {
 
   const dot  = badge.querySelector('.status-dot');
   const text = badge.querySelector('.status-text');
+  const preview = document.getElementById(`preview-${item.id}`);
+  const details = document.getElementById(`error-details-${item.id}`);
 
   dot.className = `status-dot ${item.status}`;
   badge.dataset.status = item.status;
@@ -5979,7 +6003,16 @@ function updateItemStatus(item) {
     item.errorMsg = errorMessage;
     badge.setAttribute('aria-label', errorMessage);
     badge.title = errorMessage;
+    preview?.setAttribute('aria-expanded', String(!details.hidden));
+    preview?.setAttribute('aria-controls', details.id);
+    preview?.setAttribute('aria-label', tf('showErrorDetailsNamed', { name: item.file.name }));
+    details.textContent = errorMessage;
+    if (item.errorDiagnostic && item.errorDiagnostic !== errorMessage) details.textContent += `\n${item.errorDiagnostic}`;
   } else {
+    if (details) { details.hidden = true; details.textContent = ''; }
+    preview?.removeAttribute('aria-expanded');
+    preview?.removeAttribute('aria-controls');
+    preview?.setAttribute('aria-label', tf('selectPreview', { name: item.file.name }));
     badge.removeAttribute('aria-label');
     badge.removeAttribute('title');
   }
@@ -5987,7 +6020,10 @@ function updateItemStatus(item) {
   if (item.status === 'processing' && item.isVideo && item.progress > 0) {
     text.textContent = `${Math.round(item.progress * 100)}%`;
   } else {
-    text.textContent = t(`status${capitalize(item.status)}`);
+    const statusKey = item.status === 'error' ? 'statusErrorDetails'
+      : item.status === 'done' && item.videoReduced ? 'statusDoneReduced'
+        : `status${capitalize(item.status)}`;
+    text.textContent = t(statusKey);
   }
 }
 

@@ -8,6 +8,7 @@ const FrameEngine = (() => {
   const MAX_CANVAS_PIXELS = 64_000_000;
   const MAX_ESTIMATED_VIDEO_BYTES = 512 * 1024 * 1024;
   const MAX_PENDING_VIDEO_ENCODES = 4;
+  const VIDEO_CAPTURE_FPS = 30;
   const FONT_LOAD_GUARD_MS = 5_000;
   const IMAGE_LOAD_GUARD_MS = 15_000;
   const IMAGE_ENCODE_GUARD_MS = 60_000;
@@ -1471,7 +1472,32 @@ const FrameEngine = (() => {
     }
   }
 
-  async function renderVideoFrameWhenReady(file, exif, settings, {
+  async function renderVideoFrameWhenReady(file, exif, settings, options = {}) {
+    try {
+      return await _renderVideoFrameWhenReady(file, exif, settings, options);
+    } catch (error) {
+      if (error?.code !== 'VIDEO_ENCODER_FAILED' || options.signal?.aborted) throw error;
+      options.onRetry?.();
+      assertNotAborted(options.signal);
+      try {
+        return await _renderVideoFrameWhenReady(file, exif, settings, { ...options, outputScale: 0.75 });
+      } catch (retryError) {
+        if (retryError?.name === 'AbortError') throw retryError;
+        const failure = new Error(`${retryError?.message || 'Video export failed'} (first attempt: ${error.message})`);
+        failure.name = retryError?.name || 'Error';
+        if (retryError?.code) failure.code = retryError.code;
+        throw failure;
+      }
+    }
+  }
+
+  function videoEncoderError(error) {
+    const failure = new Error(error?.message || 'Video recorder failed');
+    failure.code = 'VIDEO_ENCODER_FAILED';
+    return failure;
+  }
+
+  async function _renderVideoFrameWhenReady(file, exif, settings, {
     onProgress,
     preferredMime,
     videoBitsPerSecond = 10_000_000,
@@ -1479,6 +1505,7 @@ const FrameEngine = (() => {
     maxOutputBytes,
     metadataTimeoutMs,
     progressTimeoutMs,
+    outputScale = 1,
     signal,
   } = {}) {
     if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
@@ -1646,10 +1673,12 @@ const FrameEngine = (() => {
         }
 
         canvas = document.createElement('canvas');
-        canvas.width  = canvasW;
-        canvas.height = canvasH;
-        const ctx     = canvas.getContext('2d');
+        const scale = Math.max(0.1, Math.min(1, Number(outputScale) || 1));
+        canvas.width = scale === 1 ? canvasW : Math.max(2, Math.floor(canvasW * scale / 2) * 2);
+        canvas.height = scale === 1 ? canvasH : Math.max(2, Math.floor(canvasH * scale / 2) * 2);
+        const ctx = canvas.getContext('2d');
         if (!ctx) { fail(new Error('Canvas rendering is unavailable')); return; }
+        ctx.scale(canvas.width / canvasW, canvas.height / canvasH);
 
         // ── Preserve the source audio without playing it on the page ──
         try {
@@ -1674,7 +1703,7 @@ const FrameEngine = (() => {
         } catch (_) { /* no audio support or no audio track */ }
 
         // ── Build output stream: canvas video + original audio ──
-        outputStream = canvas.captureStream(30);
+        outputStream = canvas.captureStream(VIDEO_CAPTURE_FPS);
         if (audioTrack) outputStream.addTrack(audioTrack);
 
         const candidates = preferredMime
@@ -1683,13 +1712,16 @@ const FrameEngine = (() => {
         const mimeType = candidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
         if (!mimeType) { fail(new Error('Video export is not supported by this browser')); return; }
 
-        recorder = new MediaRecorder(outputStream, {
-          mimeType,
-          videoBitsPerSecond,
-        });
+        try {
+          recorder = new MediaRecorder(outputStream, { mimeType, videoBitsPerSecond });
+        } catch (error) {
+          fail(videoEncoderError(error));
+          return;
+        }
         const chunks = [];
         let recordedBytes = 0;
         let lastMediaTime = -1;
+        let lastDrawnFrame = -1;
         recorder.ondataavailable = event => {
           if (event.data.size <= 0 || settled) return;
           recordedBytes += event.data.size;
@@ -1714,7 +1746,7 @@ const FrameEngine = (() => {
           resolve(blob);
         };
         recorder.onerror = event => {
-          fail(event.error || new Error('Video recording failed'));
+          fail(videoEncoderError(event.error));
         };
         video.onended = () => {
           if (visibilityPaused || document.visibilityState === 'hidden') {
@@ -1728,9 +1760,12 @@ const FrameEngine = (() => {
           try {
             rafId = null;
             assertNotAborted(signal);
-            drawVideoFrameSync(ctx, video, exif, settings, layout);
-
             const mediaTime = Number(video.currentTime) || 0;
+            const frameIndex = Math.floor(mediaTime * VIDEO_CAPTURE_FPS);
+            if (frameIndex !== lastDrawnFrame) {
+              drawVideoFrameSync(ctx, video, exif, settings, layout);
+              lastDrawnFrame = frameIndex;
+            }
             if (mediaTime > lastMediaTime) {
               lastMediaTime = mediaTime;
               armProgressWatchdog();
@@ -1799,7 +1834,8 @@ const FrameEngine = (() => {
         };
         document.addEventListener('visibilitychange', visibilityHandler);
 
-          recorder.start(200);
+          try { recorder.start(200); }
+          catch (error) { fail(videoEncoderError(error)); return; }
           if (document.visibilityState === 'hidden') visibilityHandler();
           else startVisiblePlayback();
         } catch (error) {
