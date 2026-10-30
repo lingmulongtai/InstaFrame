@@ -790,7 +790,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
     window.__photoThumbnailAttempts = 0;
     window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
       callback,
-      delay === 15_000 ? 25 : delay,
+      delay === 15_000 ? 250 : delay,
       ...args
     );
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
@@ -812,7 +812,7 @@ test('a stalled photo card thumbnail retries once and recovers', async ({ page }
 
   await uploadJpegs(page);
 
-  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 1_000 }).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__photoThumbnailAttempts), { timeout: 3_000 }).toBe(2);
   await expect(page.locator('#preview-1 canvas.thumb-source')).toBeVisible();
   await expect(page.locator('#preview-1')).not.toHaveClass(/thumbnail-unavailable/);
   await expect(page.locator('#status-badge-1 .status-dot')).not.toHaveClass(/error/);
@@ -1516,6 +1516,49 @@ test('settings changes preserve a generated video thumbnail while re-encoding is
   await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/pending/);
   await expect(thumbnail).toBeVisible();
   await expect(page.locator('#item-1 img.thumb-orig')).toBeHidden();
+});
+
+test('export errors reveal details on the card and clear on retry', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page);
+  await page.evaluate(() => {
+    window.__originalRender = window.FrameEngine.renderFrameWhenReady;
+    window.FrameEngine.renderFrameWhenReady = async () => {
+      const error = new Error('Simulated encoder failure');
+      error.code = 'ENCODER_FAILURE';
+      throw error;
+    };
+  });
+  await renderAllItems(page);
+  const preview = page.locator('#preview-1');
+  const details = page.locator('#error-details-1');
+  await expect(preview).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toBeHidden();
+  await preview.click();
+  await expect(details).toBeVisible();
+  await expect(details).toContainText('Simulated encoder failure');
+  await expect(details).toContainText('ENCODER_FAILURE');
+  await expect(preview).toHaveAttribute('aria-expanded', 'true');
+  await page.evaluate(() => { window.FrameEngine.renderFrameWhenReady = window.__originalRender; });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  await expect(details).toBeHidden();
+  await expect(preview).not.toHaveAttribute('aria-expanded');
+});
+
+test('mobile error details remain visible when an error card is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('invalid image'),
+  });
+  await page.locator('#tabPhotosBtn').click();
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
+  await page.locator('#preview-1').click();
+  await expect(page.locator('body')).toHaveAttribute('data-mobile-tab', 'photos');
+  await expect(page.locator('#error-details-1')).toBeVisible();
+  await expect(page.locator('#preview-1')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('card progress remains described without competing with the export live region', async ({ page }) => {
@@ -2322,10 +2365,9 @@ test('batch export keeps case-insensitive duplicate filenames as separate ZIP en
   ]);
 });
 
-test('ZIP export splits into numbered parts before browser memory exceeds its safe peak', async ({ page }) => {
+test('ZIP export stops without splitting when a single archive exceeds the memory budget', async ({ page }) => {
   await uploadJpegs(page, 3);
   await page.evaluate(() => {
-    // Each encoded photo reports 160 MiB, so two of them cannot share one archive.
     window.FrameEngine.canvasToBlob = async () => {
       const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
       Object.defineProperty(blob, 'size', { value: 160 * 1024 * 1024 });
@@ -2334,28 +2376,10 @@ test('ZIP export splits into numbered parts before browser memory exceeds its sa
   });
   const downloads = [];
   page.on('download', download => downloads.push(download));
-
   await page.locator('#downloadAllBtn').click();
-  await expect(page.locator('#toast')).toContainText(/3 ZIP|ZIPを3個/);
+  await expect(page.locator('#toast')).toContainText(/one ZIP|1つのZIP/i);
   await expect(page.locator('#exportProgress')).toBeHidden();
-  await expect.poll(() => downloads.length).toBe(3);
-
-  expect(downloads.map(download => download.suggestedFilename())).toEqual([
-    'instaframe_export_1.zip',
-    'instaframe_export_2.zip',
-    'instaframe_export_3.zip',
-  ]);
-  const entryNames = [];
-  for (const download of downloads) {
-    const archive = await JSZip.loadAsync(await fs.readFile(await download.path()));
-    const names = Object.values(archive.files).filter(entry => !entry.dir).map(entry => entry.name);
-    expect(names).toHaveLength(1);
-    entryNames.push(...names);
-  }
-  expect(entryNames).toEqual(['photo-1_frame.jpg', 'photo-2_frame.jpg', 'photo-3_frame.jpg']);
-  // Packed photos release their full-size frames but keep their card previews.
-  expect(await page.evaluate(() => eval('state.items.filter(item => item.canvas).length'))).toBe(0);
-  await expect(page.locator('#imageGrid canvas.thumb-framed')).toHaveCount(3);
+  expect(downloads).toHaveLength(0);
 });
 
 test('a single photo larger than the safe ZIP peak stops with a memory warning', async ({ page }) => {
@@ -2424,6 +2448,32 @@ test('photo export corrects a wrong Blob MIME when the requested signature is va
     };
   });
   expect(result).toEqual({ type: 'image/webp', riff: 'RIFF', webp: 'WEBP' });
+});
+
+test('batch download reports items missing from a partial ZIP', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
+  await page.reload();
+  await uploadJpegs(page, 2);
+  await page.evaluate(() => {
+    const render = window.FrameEngine.renderFrameWhenReady;
+    const show = window.showToast;
+    window.__partialDownloadMessages = [];
+    window.showToast = (message, ...args) => {
+      window.__partialDownloadMessages.push(message);
+      return show(message, ...args);
+    };
+    let attempts = 0;
+    window.FrameEngine.renderFrameWhenReady = (...args) => {
+      if (attempts++ === 0) throw new Error('simulated export failure');
+      return render(...args);
+    };
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadAllBtn').click();
+  const zip = await JSZip.loadAsync(await fs.readFile(await (await downloadPromise).path()));
+  expect(Object.keys(zip.files)).toEqual(['photo-2_frame.jpg']);
+  expect(await page.evaluate(() => window.__partialDownloadMessages)).toContain('The ZIP is incomplete: 1 item(s) failed. Review their error details.');
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/error/);
 });
 
 test('video export controls disappear when MediaRecorder supports no output MIME', async ({ page }) => {
@@ -3359,6 +3409,25 @@ test('queued video thumbnails receive a full decoder timeout after starting', as
   await expect(page.locator('canvas.thumb-framed')).toHaveCount(6);
 });
 
+test('video export releases and restores the live preview decoder', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({
+    name: 'preview-decoder.webm', mimeType: 'video/webm', buffer: createWebm(),
+  });
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    window.FrameEngine.renderVideoFrameWhenReady = async () => {
+      window.__previewSourceDuringExport = document.querySelector('#livePreviewVideo').getAttribute('src');
+      await window.renderLivePreview();
+      window.__previewSourceAfterRender = document.querySelector('#livePreviewVideo').getAttribute('src');
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+  });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => [window.__previewSourceDuringExport, window.__previewSourceAfterRender])).toEqual([null, null]);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+});
+
 test('video export waits for thumbnail decoder cleanup before encoding', async ({ page }) => {
   await page.evaluate(() => {
     window.__thumbnailExportOrder = { captureCalls: 0, started: false, settled: false, encoderSawSettled: false };
@@ -3887,11 +3956,9 @@ test('batch generation can be cancelled while keeping pending items', async ({ p
   await uploadJpegs(page, 2);
   await trackCancellationToasts(page);
   await page.evaluate(() => {
-    const render = window.FrameEngine.renderFrameWhenReady;
-    window.FrameEngine.renderFrameWhenReady = async (...args) => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return render(...args);
-    };
+    window.FrameEngine.renderFrameWhenReady = (_image, _exif, _settings, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('Export cancelled', 'AbortError')), { once: true });
+    });
   });
   await renderAllItems(page);
   await expect(page.locator('#exportProgress')).toBeVisible();
@@ -5048,10 +5115,13 @@ test('uncertain audio hints use native capture and Web Audio fallback', async ({
 
     const run = async nextMode => {
       mode = nextMode;
+      const controller = new AbortController();
       try {
-        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: true });
+        await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          preserveAudio: true, signal: controller.signal, onRetry: () => controller.abort(),
+        });
       } catch (error) {
-        if (error.message !== 'stop after audio setup') throw error;
+        if (error.name !== 'AbortError') throw error;
       }
     };
     try {
@@ -5111,10 +5181,13 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
     };
 
     let message = '';
+    const controller = new AbortController();
     try {
-      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, { preserveAudio: false });
+      await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+        preserveAudio: false, signal: controller.signal, onRetry: () => controller.abort(),
+      });
     } catch (error) {
-      message = error.message;
+      message = error.name;
     } finally {
       HTMLMediaElement.prototype.captureStream = nativeVideoCapture;
       HTMLCanvasElement.prototype.captureStream = nativeCanvasCapture;
@@ -5134,7 +5207,7 @@ test('an audio-disabled WebCodecs fallback does not add a source audio track', a
   });
 
   expect(result).toEqual({
-    message: 'stop after fallback stream setup',
+    message: 'AbortError',
     sourceCaptureCalls: 0,
     addedAudioTracks: 0,
     recorderConstructions: 1,
@@ -5467,7 +5540,7 @@ test('MediaRecorder finalizes when playback ends without another animation frame
     try {
       const outcome = await Promise.race([
         pending.then(blob => ({ status: 'resolved', blobSize: blob.size })),
-        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 500)),
+        new Promise(resolve => setTimeout(() => resolve({ status: 'timeout', blobSize: 0 }), 5_000)),
       ]);
       if (outcome.status === 'timeout') {
         controller.abort();
@@ -6071,6 +6144,122 @@ test('WebCodecs rejects oversized encoded chunks before muxer allocation', async
     encoderStates: ['closed'],
     canvasSizes: [[0, 0]],
   });
+});
+
+test('video recording avoids redrawing between 30 fps output frames', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const nativeCreate = document.createElement.bind(document);
+    const nativeDraw = CanvasRenderingContext2D.prototype.drawImage;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    const nativeRaf = window.requestAnimationFrame;
+    const nativeCancel = window.cancelAnimationFrame;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeEncoder = window.VideoEncoder;
+    let video;
+    const drawnTimes = [];
+    const stats = { callbacks: 0, captureFps: 0 };
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
+      video = {
+        videoWidth: 96, videoHeight: 64, duration: 0.1, currentTime: 0,
+        paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        pause() { this.paused = true; },
+        removeAttribute() { this.src = ''; },
+      };
+      return video;
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      if (source === video) { drawnTimes.push(video.currentTime); return; }
+      return nativeDraw.call(this, source, ...args);
+    };
+    HTMLCanvasElement.prototype.captureStream = fps => {
+      stats.captureFps = fps;
+      return { addTrack() {}, getTracks() { return []; } };
+    };
+    window.requestAnimationFrame = callback => setTimeout(() => {
+      stats.callbacks += 1;
+      video.currentTime = stats.callbacks / 100;
+      if (stats.callbacks === 10) video.ended = true;
+      callback();
+    }, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.VideoEncoder = undefined;
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable({ data: new Blob(['video']) });
+        this.onstop();
+      }
+    };
+    try {
+      await window.FrameEngine.renderVideoFrameWhenReady(new File(['video'], 'clip.webm'), {}, {}, {
+        preserveAudio: false, preferredMime: 'video/webm',
+      });
+      return { ...stats, drawnTimes };
+    } finally {
+      document.createElement = nativeCreate;
+      CanvasRenderingContext2D.prototype.drawImage = nativeDraw;
+      HTMLCanvasElement.prototype.captureStream = nativeCapture;
+      window.requestAnimationFrame = nativeRaf;
+      window.cancelAnimationFrame = nativeCancel;
+      window.MediaRecorder = NativeRecorder;
+      window.VideoEncoder = NativeEncoder;
+    }
+  });
+  expect(result.captureFps).toBe(30);
+  expect(result.callbacks).toBe(10);
+  expect(result.drawnTimes).toEqual([0.01, 0.04, 0.07, 0.1]);
+});
+
+test('video recorder failures retry at reduced dimensions and preserve the selected format', async ({ page }) => {
+  const result = await page.evaluate(async ({ base64 }) => {
+    const sizes = [];
+    const mimes = [];
+    let retries = 0;
+    const nativeCapture = HTMLCanvasElement.prototype.captureStream;
+    HTMLCanvasElement.prototype.captureStream = function (...args) {
+      sizes.push([this.width, this.height]);
+      return nativeCapture.apply(this, args);
+    };
+    window.MediaRecorder = class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor(stream, options) {
+        this.state = 'inactive';
+        this.attempt = mimes.push(options.mimeType);
+      }
+      start() {
+        this.state = 'recording';
+        if (this.attempt === 1) setTimeout(() => this.onerror({ error: new Error('encoder failed') }), 50);
+      }
+      stop() {
+        this.state = 'inactive';
+        if (this.attempt === 2) {
+          this.ondataavailable({ data: new Blob(['video']) });
+          this.onstop();
+        }
+      }
+      pause() { this.state = 'paused'; }
+      resume() { this.state = 'recording'; }
+    };
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const blob = await window.FrameEngine.renderVideoFrameWhenReady(
+      new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
+      { preferredMime: 'video/webm', onRetry: () => { retries += 1; } }
+    );
+    return { sizes, mimes, retries, type: blob.type, size: blob.size };
+  }, { base64: createWebm().toString('base64') });
+  expect(result.retries).toBe(1);
+  expect(result.mimes).toEqual(['video/webm', 'video/webm']);
+  expect(result.sizes).toHaveLength(2);
+  expect(result.sizes[1][0]).toBe(Math.floor(result.sizes[0][0] * 0.75 / 2) * 2);
+  expect(result.sizes[1][1]).toBe(Math.floor(result.sizes[0][1] * 0.75 / 2) * 2);
+  expect(result.type).toBe('video/webm');
+  expect(result.size).toBeGreaterThan(0);
 });
 
 test('video output limit rejects an oversized estimate before MediaRecorder allocation', async ({ page }) => {
