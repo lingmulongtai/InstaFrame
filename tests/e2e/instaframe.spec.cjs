@@ -5814,6 +5814,10 @@ test('video progress and finalization watchdogs release stalled exports', async 
         load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
         requestVideoFrameCallback(callback) { this.pendingFrameCallback = callback; return 1; },
         cancelVideoFrameCallback() { this.pendingFrameCallback = null; },
+        captureStream() {
+          const track = { stop() {} };
+          return { getAudioTracks: () => [track], getTracks: () => [track] };
+        },
         removeAttribute(name) {
           attributes.delete(name);
           if (name === 'src') this.src = '';
@@ -6342,6 +6346,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const mimes = [];
     const captureFps = [];
     let retries = 0;
+    window.VideoDecoder = undefined;
     const nativeCapture = HTMLCanvasElement.prototype.captureStream;
     HTMLCanvasElement.prototype.captureStream = function (...args) {
       sizes.push([this.width, this.height]);
@@ -6371,7 +6376,7 @@ test('video recorder failures retry at reduced dimensions and preserve the selec
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     const blob = await window.FrameEngine.renderVideoFrameWhenReady(
       new File([bytes], 'retry.webm', { type: 'video/webm' }), {}, {},
-      { preferredMime: 'video/webm', frameRate: 60, onRetry: () => { retries += 1; } }
+      { preferredMime: 'video/webm', frameRate: 60, preserveAudio: false, onRetry: () => { retries += 1; } }
     );
     return { sizes, mimes, captureFps, retries, type: blob.type, size: blob.size };
   }, { base64: createWebm().toString('base64') });
