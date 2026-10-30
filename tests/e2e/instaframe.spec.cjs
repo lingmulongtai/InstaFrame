@@ -124,6 +124,27 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('new theme defaults preserve saved appearance preferences', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => localStorage.setItem('instaframe_prefs', JSON.stringify({ theme: 'soft-white', accentColor: '#08798f' })));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'soft-white');
+  await page.locator('#customizeBtn').click();
+  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('the sample print displays the supplied photograph and camera settings', async ({ page }) => {
+  const photo = page.locator('.sample-print-photo img');
+  await expect(photo).toBeVisible();
+  await expect.poll(() => photo.evaluate(img => img.complete && img.naturalWidth)).toBe(1440);
+  await expect(page.locator('.sample-print-camera')).toContainText('X100F');
+  await expect(page.locator('.sample-print-camera')).toContainText('FUJIFILM');
+  await expect(page.locator('.sample-print-exif')).toHaveText('23mmf/81/125sISO 1000');
+});
+
 test('initial page and privacy consent modal have no axe violations', async ({ page }) => {
   await expect(page.locator('.preview-empty-cta')).toBeVisible();
   await expect(page.locator('#samplePrint')).toBeVisible();
@@ -198,6 +219,7 @@ test('every accent choice keeps selected controls at WCAG contrast', async ({ pa
     { label: 'green', selector: '.accent-green' },
     { label: 'amber', selector: '.accent-amber' },
     { label: 'cyan', selector: '.accent-cyan' },
+    { label: 'ice blue', selector: '.accent-ice' },
   ];
 
   for (const { label, selector } of accents) {
@@ -226,7 +248,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
-  await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
+  await expect(page.locator('#dropZone')).toContainText('写真と動画に、余白を。');
   await expect(page.locator('.preview-empty-sub')).toHaveText('写真は端末内で処理され、アップロードされません。');
   await uploadJpegs(page);
   await expect(page.locator('#status-badge-1 .status-text')).toHaveText('準備完了');
@@ -242,7 +264,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('#dropZone')).toContainText('Drop photos here');
+  await expect(page.locator('#dropZone')).toContainText('Give your moments a frame.');
   await expect(page.locator('.preview-empty-sub')).toHaveText('Processed on this device. Nothing is uploaded.');
   await uploadJpegs(page);
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', 'Photo card size');
@@ -294,7 +316,7 @@ test('first paint stays hidden until translations and saved preferences are appl
   await expect(page.locator('html')).not.toHaveClass(/is-booting/);
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('body')).toHaveCSS('visibility', 'visible');
-  await expect(page.locator('.preview-empty-text')).toHaveText('ここに写真をドロップ');
+  await expect(page.locator('.preview-empty-text')).toHaveText('写真と動画に、余白を。');
   await expect(page.locator('#livePreviewCanvas')).toBeHidden();
 });
 
@@ -1856,10 +1878,10 @@ test('dynamic panels and selectors expose keyboard state without hidden focus ta
   const customizeAxe = await new AxeBuilder({ page }).include('#customizePanel').analyze();
   const seriousCustomizeViolations = customizeAxe.violations.filter(violation => ['critical', 'serious'].includes(violation.impact));
   expect(seriousCustomizeViolations.map(violation => violation.id), JSON.stringify(seriousCustomizeViolations, null, 2)).toEqual([]);
-  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('.accent-blue').click();
   await expect(page.locator('.accent-blue')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.accent-cyan')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('.accent-ice')).toHaveAttribute('aria-pressed', 'false');
   await page.locator('#accentColorPicker').evaluate(element => {
     element.value = '#123456';
     element.dispatchEvent(new Event('input', { bubbles: true }));

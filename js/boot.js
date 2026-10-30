@@ -22,7 +22,7 @@
   }
 
   root.classList.add('is-booting');
-  root.setAttribute('data-theme', THEMES.includes(prefs.theme) ? prefs.theme : 'soft-white');
+  root.setAttribute('data-theme', THEMES.includes(prefs.theme) ? prefs.theme : 'dark');
   root.setAttribute('data-layout', LAYOUTS.includes(prefs.layout) ? prefs.layout : 'left');
   root.setAttribute('data-editor-size', EDITOR_SIZES.includes(prefs.editorSize) ? prefs.editorSize : 'comfortable');
 
