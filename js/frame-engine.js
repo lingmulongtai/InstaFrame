@@ -1557,7 +1557,7 @@ const FrameEngine = (() => {
   async function renderVideoFramesOffline(file, exif, settings, options) {
     const { onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
       outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onSourceAudio,
-      onOutputSize, hardwareAcceleration = 'no-preference' } = options;
+      onOutputSize, frameRate, hardwareAcceleration = 'no-preference' } = options;
     if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' ||
         typeof VideoFrame === 'undefined' || typeof WritableStream === 'undefined') return null;
     const isMp4 = String(preferredMime || '').startsWith('video/mp4');
@@ -1656,6 +1656,7 @@ const FrameEngine = (() => {
           audio: { discard: !preserveAudio },
           video: {
             codec, bitrate, hardwareAcceleration, processedWidth: outWidth, processedHeight: outHeight,
+            ...(frameRate === 30 ? { frameRate: 30 } : {}),
             allowTransformationMetadata: false,
             process(sample) {
               assertActive();
@@ -1725,10 +1726,10 @@ const FrameEngine = (() => {
     const outputByteLimit = resolveVideoOutputLimit(maxOutputBytes);
     const outputFrameRate = Number(frameRate) === 60 ? 60 : 30;
     let offlineSourceHasAudio = null;
-    if (outputFrameRate === 60) {
+    {
       const offlineOptions = {
         onProgress, preferredMime, videoBitsPerSecond, sourceBitrate, preserveAudio,
-        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize,
+        outputByteLimit, outputScale, signal, metadataTimeoutMs, progressTimeoutMs, onAutoScale, onOutputSize, frameRate: outputFrameRate,
         onSourceAudio: hasAudio => { offlineSourceHasAudio = hasAudio; },
       };
       let offline = null;
@@ -1747,7 +1748,7 @@ const FrameEngine = (() => {
       }
       if (!offline) offline = await renderVideoFramesOffline(file, exif, settings, offlineOptions);
       if (offline) return offline;
-      onRealtimeFallback?.();
+      if (outputFrameRate === 60) onRealtimeFallback?.();
     }
     // The WebCodecs fast path currently muxes video only. Use it exclusively
     // when a caller explicitly opts out of preserving the source audio.
