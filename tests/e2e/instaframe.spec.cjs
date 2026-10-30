@@ -6266,7 +6266,7 @@ test('60 fps recording limits decoded callbacks to the target rate', async ({ pa
     const NativeEncoder = window.VideoEncoder;
     let video;
     const drawnTimes = [];
-    const stats = { callbacks: 0, captureFps: 0, bitrate: 0 };
+    const stats = { callbacks: 0, captureFps: 0, bitrate: 0, frameRequests: 0 };
     document.createElement = (tag, options) => {
       if (String(tag).toLowerCase() !== 'video') return nativeCreate(tag, options);
       video = {
@@ -6291,7 +6291,7 @@ test('60 fps recording limits decoded callbacks to the target rate', async ({ pa
     };
     HTMLCanvasElement.prototype.captureStream = fps => {
       stats.captureFps = fps;
-      return { addTrack() {}, getTracks() { return []; } };
+      return { addTrack() {}, getTracks() { return []; }, getVideoTracks() { return [{ requestFrame() { stats.frameRequests += 1; } }]; } };
     };
     window.requestAnimationFrame = callback => setTimeout(() => {
       stats.callbacks += 1;
@@ -6330,6 +6330,7 @@ test('60 fps recording limits decoded callbacks to the target rate', async ({ pa
   });
   expect(result.captureFps).toBe(60);
   expect(result.bitrate).toBe(50_000_000);
+  expect(result.frameRequests).toBe(5);
   expect(result.callbacks).toBe(10);
   expect(result.drawnTimes).toEqual([0.01, 0.03, 0.05, 0.07, 0.09]);
 });
