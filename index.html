@@ -719,17 +719,30 @@
           </div>
         </div>
 
+        <!-- Target video frame rate -->
+        <div class="setting-row">
+          <div class="setting-label" id="exportVideoFpsLabel" data-i18n="exportVideoFps">Frame rate</div>
+          <div class="setting-control">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoFpsLabel" aria-describedby="videoFpsHint">
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-60" value="60" checked><label for="vfps-60">60 fps</label></div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoFps" id="vfps-30" value="30"><label for="vfps-30">30 fps</label></div>
+            </div>
+            <div class="setting-hint" id="videoFpsHint" data-i18n="videoFpsHint">Actual frame rate depends on the device and browser.</div>
+          </div>
+        </div>
+
         <!-- Video bitrate -->
         <div class="setting-row">
           <div class="setting-label" id="exportVideoBitrateLabel" data-i18n="exportBitrateLabel">Bitrate</div>
           <div class="setting-control">
-            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoBitrateLabel">
+            <div class="ratio-pills" role="radiogroup" aria-labelledby="exportVideoBitrateLabel" aria-describedby="videoBitrateHint">
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-source" value="source" checked><label for="vbr-source" data-i18n="videoBitrateSource">Match source</label></div>
               <div class="ratio-pill">
                 <input type="radio" name="exportVideoBitrate" id="vbr-4" value="4">
                 <label for="vbr-4">4M</label>
               </div>
               <div class="ratio-pill">
-                <input type="radio" name="exportVideoBitrate" id="vbr-8" value="8" checked>
+                <input type="radio" name="exportVideoBitrate" id="vbr-8" value="8">
                 <label for="vbr-8">8M</label>
               </div>
               <div class="ratio-pill">
@@ -740,7 +753,10 @@
                 <input type="radio" name="exportVideoBitrate" id="vbr-24" value="24">
                 <label for="vbr-24">24M</label>
               </div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-50" value="50"><label for="vbr-50">50M</label></div>
+              <div class="ratio-pill"><input type="radio" name="exportVideoBitrate" id="vbr-80" value="80"><label for="vbr-80">80M</label></div>
             </div>
+            <div class="setting-hint" id="videoBitrateHint" data-i18n="videoBitrateHint">Source estimate includes audio and is capped at 80 Mbps; the encoder may vary.</div>
           </div>
         </div>
       </div>
