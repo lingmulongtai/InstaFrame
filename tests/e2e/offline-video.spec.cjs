@@ -2,15 +2,17 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-for (const [fixture, rotated, mime, codec] of [
-  ['offline-60fps.mp4', false, 'video/mp4', 'avc'],
-  ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc'],
-  ['offline-60fps.mp4', false, 'video/webm;codecs=vp8,opus', 'vp8'],
+for (const [fixture, rotated, mime, codec, preferHardware] of [
+  ['offline-60fps.mp4', false, 'video/mp4', 'avc', false],
+  ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc', false],
+  ['offline-60fps.mp4', false, 'video/webm;codecs=vp8,opus', 'vp8', false],
+  ['offline-60fps.mp4', false, 'video/mp4', 'avc', true],
+  ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc', true],
 ]) {
-  test(`frame-by-frame export keeps 60 fps, audio timing and orientation: ${fixture} ${mime}`, async ({ page }) => {
+  test(`frame-by-frame export keeps 60 fps, audio timing and orientation: ${fixture} ${mime} hardware=${preferHardware}`, async ({ page }) => {
     await page.goto('/');
     const base64 = (await fs.readFile(path.join(__dirname, fixture))).toString('base64');
-    const result = await page.evaluate(async ({ base64: content, rotated: isRotated, mime: outputMime, codec: outputCodec }) => {
+    const result = await page.evaluate(async ({ base64: content, rotated: isRotated, mime: outputMime, codec: outputCodec, preferHardware: hardware }) => {
       if (!window.VideoDecoder || !window.VideoEncoder || !window.VideoFrame) return { unsupported: true };
       const media = await import('./vendor/mediabunny.min.js');
       const bytes = Uint8Array.from(atob(content), character => character.charCodeAt(0));
@@ -34,7 +36,7 @@ for (const [fixture, rotated, mime, codec] of [
       let blob;
       try {
         blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
-          frameRate: 60, preferredMime: outputMime, videoBitsPerSecond: 4_000_000,
+          frameRate: 60, preferredMime: outputMime, videoBitsPerSecond: 4_000_000, preferHardware: hardware,
         });
         output = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
       } finally { window.MediaRecorder = NativeRecorder; }
@@ -110,7 +112,7 @@ for (const [fixture, rotated, mime, codec] of [
           inputPulse, outputPulse, inputFlash, outputFlash,
         };
       } finally { output.dispose(); original.dispose(); }
-    }, { base64, rotated, mime, codec });
+    }, { base64, rotated, mime, codec, preferHardware });
     test.skip(result.unsupported, 'The browser cannot decode and encode this H.264 fixture with WebCodecs');
     expect(result.recorderCalls).toBe(0);
     expect(result.inputFrames).toBe(60);

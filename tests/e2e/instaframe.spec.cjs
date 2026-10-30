@@ -446,13 +446,13 @@ test('radio choices expose their localized setting group names', async ({ page }
   }
   await expectGroups([
     'Background', 'Frame Color', 'Aspect Ratio', 'Orientation', 'Text Color',
-    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Bitrate',
+    'Position', 'Map Icon', 'Map Position', 'Photo', 'Video', 'Video processing', 'Bitrate',
   ]);
 
   await page.locator('#langToggleBtn').click();
   await expectGroups([
     '背景', 'フレームカラー', 'アスペクト比', '向き', '文字色',
-    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', 'ビットレート',
+    '表示位置', 'マップアイコン', 'マップ位置', '写真', '動画', '動画の処理', 'ビットレート',
   ]);
   await page.locator('#customizeBtn').click();
   await expectGroups(['テーマ', 'サイドバー', 'EXIF編集']);
