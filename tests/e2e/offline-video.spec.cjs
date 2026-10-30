@@ -2,17 +2,19 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-for (const [fixture, rotated, mime, codec, preferHardware] of [
+for (const [fixture, rotated, mime, codec, preferHardware, fps = 60] of [
   ['offline-60fps.mp4', false, 'video/mp4', 'avc', false],
   ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc', false],
   ['offline-60fps.mp4', false, 'video/webm;codecs=vp8,opus', 'vp8', false],
   ['offline-60fps.mp4', false, 'video/mp4', 'avc', true],
   ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc', true],
+  ['offline-60fps.mp4', false, 'video/mp4', 'avc', true, 30],
+  ['offline-60fps-rotated.mp4', true, 'video/mp4', 'avc', true, 30],
 ]) {
-  test(`frame-by-frame export keeps 60 fps, audio timing and orientation: ${fixture} ${mime} hardware=${preferHardware}`, async ({ page }) => {
+  test(`frame-by-frame export keeps ${fps} fps, audio timing and orientation: ${fixture} ${mime} hardware=${preferHardware}`, async ({ page }) => {
     await page.goto('/');
     const base64 = (await fs.readFile(path.join(__dirname, fixture))).toString('base64');
-    const result = await page.evaluate(async ({ base64: content, rotated: isRotated, mime: outputMime, codec: outputCodec, preferHardware: hardware }) => {
+    const result = await page.evaluate(async ({ base64: content, rotated: isRotated, mime: outputMime, codec: outputCodec, preferHardware: hardware, fps: outputFps }) => {
       if (!window.VideoDecoder || !window.VideoEncoder || !window.VideoFrame) return { unsupported: true };
       const media = await import('./vendor/mediabunny.min.js');
       const bytes = Uint8Array.from(atob(content), character => character.charCodeAt(0));
@@ -36,13 +38,28 @@ for (const [fixture, rotated, mime, codec, preferHardware] of [
       let blob;
       try {
         blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
-          frameRate: 60, preferredMime: outputMime, videoBitsPerSecond: 4_000_000, preferHardware: hardware,
+          frameRate: outputFps, preferredMime: outputMime, videoBitsPerSecond: 4_000_000, preferHardware: hardware,
         });
         output = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
       } finally { window.MediaRecorder = NativeRecorder; }
       try {
         const outVideo = await output.getPrimaryVideoTrack();
         const outAudio = await output.getPrimaryAudioTrack();
+        const audioCodec = await outAudio.getCodec();
+        const boxTypes = [];
+        if (outputMime === 'video/mp4') {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const view = new DataView(bytes.buffer);
+          for (let offset = 0; offset + 8 <= bytes.length;) {
+            let size = view.getUint32(offset);
+            const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+            if (size === 1) size = Number(view.getBigUint64(offset + 8));
+            if (!size) size = bytes.length - offset;
+            if (size < 8 || offset + size > bytes.length) throw new Error('Invalid MP4 box');
+            boxTypes.push(type);
+            offset += size;
+          }
+        }
         const packets = async track => {
           const items = [];
           for await (const packet of new media.EncodedPacketSink(track).packets()) {
@@ -100,7 +117,7 @@ for (const [fixture, rotated, mime, codec, preferHardware] of [
           Math.floor((layout.frameX + layout.sB + width / 2) * outputCanvas.width / layout.canvasW),
           Math.floor((layout.frameY + layout.imageTop + height / 2) * outputCanvas.height / layout.canvasH));
         return {
-          recorderCalls, width, height, isRotated, colors,
+          recorderCalls, width, height, isRotated, colors, audioCodec, boxTypes,
           outWidth: outputCanvas.width, outHeight: outputCanvas.height,
           inputFrames: inVideoPackets.length, outputFrames: outVideoPackets.length,
           inputOffset: inAudioPackets[0].timestamp - inVideoPackets[0].timestamp,
@@ -112,11 +129,16 @@ for (const [fixture, rotated, mime, codec, preferHardware] of [
           inputPulse, outputPulse, inputFlash, outputFlash,
         };
       } finally { output.dispose(); original.dispose(); }
-    }, { base64, rotated, mime, codec, preferHardware });
+    }, { base64, rotated, mime, codec, preferHardware, fps });
     test.skip(result.unsupported, 'The browser cannot decode and encode this H.264 fixture with WebCodecs');
     expect(result.recorderCalls).toBe(0);
     expect(result.inputFrames).toBe(60);
-    expect(result.outputFrames).toBe(60);
+    expect(result.outputFrames).toBe(fps);
+    if (mime === 'video/mp4') {
+      expect(result.audioCodec).toBe('aac');
+      expect(result.boxTypes).toContain('moov');
+      expect(result.boxTypes).not.toContain('moof');
+    }
     expect(result.width < result.height).toBe(rotated);
     expect(result.outWidth < result.outHeight).toBe(rotated);
     for (const difference of result.colors.flat()) expect(difference).toBeLessThan(45);
@@ -127,6 +149,301 @@ for (const [fixture, rotated, mime, codec, preferHardware] of [
     expect(Math.abs((result.outputPulse - result.outputFlash) - (result.inputPulse - result.inputFlash))).toBeLessThan(0.035);
   });
 }
+
+test('fragmented MP4 recording is finalized with AAC and unchanged video packets', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.VideoDecoder || !window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const file = new Blob([Uint8Array.from(atob(content), char => char.charCodeAt(0))], { type: 'video/mp4' });
+    const options = { sourceFile: file, expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024 };
+    const output = await window.FrameEngine.normalizeRecordedMp4(file, options);
+    const original = new media.Input({ source: new media.BlobSource(file), formats: media.ALL_FORMATS });
+    const finalized = new media.Input({ source: new media.BlobSource(output), formats: media.ALL_FORMATS });
+    try {
+      const inVideo = await original.getPrimaryVideoTrack();
+      const outVideo = await finalized.getPrimaryVideoTrack();
+      const outAudio = await finalized.getPrimaryAudioTrack();
+      const hashes = async track => {
+        const result = [];
+        for await (const packet of new media.EncodedPacketSink(track).packets()) {
+          const digest = await crypto.subtle.digest('SHA-256', packet.data);
+          result.push(Array.from(new Uint8Array(digest)).join(','));
+        }
+        return result;
+      };
+      const bytes = new Uint8Array(await output.arrayBuffer());
+      const view = new DataView(bytes.buffer);
+      const boxes = [];
+      for (let offset = 0; offset + 8 <= bytes.length;) {
+        let size = view.getUint32(offset);
+        if (size === 1) size = Number(view.getBigUint64(offset + 8));
+        if (!size) size = bytes.length - offset;
+        if (size < 8 || offset + size > bytes.length) throw new Error('Invalid MP4 box');
+        boxes.push(String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)));
+        offset += size;
+      }
+      const tooShort = await window.FrameEngine.normalizeRecordedMp4(file, { ...options, expectedDuration: 3 })
+        .then(() => null, error => ({ code: error.code, message: error.message }));
+      return {
+        inHashes: await hashes(inVideo), outHashes: await hashes(outVideo),
+        audioCodec: await outAudio.getCodec(), boxes, duration: await outVideo.computeDuration(), tooShort,
+      };
+    } finally { original.dispose(); finalized.dispose(); }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.inHashes.length).toBe(30);
+  expect(result.outHashes).toEqual(result.inHashes);
+  expect(result.audioCodec).toBe('aac');
+  expect(result.boxes).toContain('moov');
+  expect(result.boxes).not.toContain('moof');
+  expect(result.duration).toBeGreaterThan(0.9);
+  expect(result.tooShort.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.tooShort.message).toMatch(/ended before/);
+});
+
+test('frame-based MP4 export converts Opus input audio to AAC', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.VideoDecoder || !window.VideoEncoder || !window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const file = new File([Uint8Array.from(atob(content), char => char.charCodeAt(0))], 'opus.mp4', { type: 'video/mp4' });
+    const source = new media.Input({ source: new media.BlobSource(file), formats: media.ALL_FORMATS });
+    const nativeRecorder = window.MediaRecorder;
+    window.MediaRecorder = class { constructor() { throw new Error('Unexpected recorder fallback'); } };
+    try {
+      const sourceVideo = await source.getPrimaryVideoTrack();
+      const sourceAudio = await source.getPrimaryAudioTrack();
+      const result = [];
+      for (const frameRate of [30, 60]) {
+        const blob = await window.FrameEngine.renderVideoFrameWhenReady(file, {}, {}, {
+          frameRate, preferredMime: 'video/mp4', videoBitsPerSecond: 4_000_000,
+        });
+        const output = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
+        try {
+          const video = await output.getPrimaryVideoTrack();
+          const audio = await output.getPrimaryAudioTrack();
+          result.push({
+            codec: await audio.getCodec(),
+            videoDuration: await video.computeDuration(),
+            audioOffset: (await audio.getFirstTimestamp()) - (await video.getFirstTimestamp()),
+            sourceOffset: (await sourceAudio.getFirstTimestamp()) - (await sourceVideo.getFirstTimestamp()),
+            audioEnd: (await audio.computeDuration()) - (await video.computeDuration()),
+            sourceEnd: (await sourceAudio.computeDuration()) - (await sourceVideo.computeDuration()),
+          });
+        } finally { output.dispose(); }
+      }
+      return { result };
+    } finally { source.dispose(); window.MediaRecorder = nativeRecorder; }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  for (const track of result.result) {
+    expect(track.codec).toBe('aac');
+    expect(track.videoDuration).toBeGreaterThan(0.9);
+    expect(Math.abs(track.audioOffset - track.sourceOffset)).toBeLessThan(0.08);
+    expect(Math.abs(track.audioEnd - track.sourceEnd)).toBeLessThan(0.08);
+  }
+});
+
+test('30 fps MediaRecorder fallback finalizes its MP4 before reporting success', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const bytes = Uint8Array.from(atob(content), char => char.charCodeAt(0));
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    const raf = window.requestAnimationFrame;
+    const cancelRaf = window.cancelAnimationFrame;
+    const progress = [];
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 1, currentTime: 0, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; queueMicrotask(() => { this.currentTime = 1; this.ended = true; this.onended?.(); }); return Promise.resolve(); },
+        pause() { this.paused = true; }, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    window.VideoDecoder = undefined;
+    window.requestAnimationFrame = () => 123;
+    window.cancelAnimationFrame = () => {};
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([bytes], { type: 'video/mp4' }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    };
+    try {
+      const blob = await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.mp4'), {}, {}, {
+        frameRate: 30, preferredMime: 'video/mp4', preserveAudio: false, onProgress: value => progress.push(value),
+      });
+      const input = new media.Input({ source: new media.BlobSource(blob), formats: media.ALL_FORMATS });
+      try {
+        const video = await input.getPrimaryVideoTrack();
+        const audio = await input.getPrimaryAudioTrack();
+        return { audioCodec: await audio.getCodec(), duration: await video.computeDuration(), progress };
+      } finally { input.dispose(); }
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+      window.requestAnimationFrame = raf;
+      window.cancelAnimationFrame = cancelRaf;
+    }
+  }, base64);
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.audioCodec).toBe('aac');
+  expect(result.duration).toBeGreaterThan(0.9);
+  expect(result.progress.at(-1)).toBe(1);
+});
+
+test('MP4 finalization rejects audio that ends before the source audio', async ({ page }) => {
+  await page.goto('/');
+  const [source, shortAudio] = await Promise.all([
+    fs.readFile(path.join(__dirname, 'fragmented-opus.mp4')),
+    fs.readFile(path.join(__dirname, 'fragmented-short-audio.mp4')),
+  ]);
+  const result = await page.evaluate(async ({ source64, short64 }) => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const blob = value => new Blob([Uint8Array.from(atob(value), char => char.charCodeAt(0))], { type: 'video/mp4' });
+    return window.FrameEngine.normalizeRecordedMp4(blob(short64), {
+      sourceFile: blob(source64), expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024,
+    }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+  }, { source64: source.toString('base64'), short64: shortAudio.toString('base64') });
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.message).toMatch(/does not cover the source audio/);
+});
+
+test('MP4 finalization refuses to discard audio when AAC encoding is unavailable', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    if (!window.AudioEncoder || !window.AudioDecoder) return { unsupported: true };
+    const NativeEncoder = window.AudioEncoder;
+    window.AudioEncoder = class extends NativeEncoder {
+      static async isConfigSupported(config) { return { supported: false, config }; }
+    };
+    try {
+      const file = new Blob([Uint8Array.from(atob(content), char => char.charCodeAt(0))], { type: 'video/mp4' });
+      return await window.FrameEngine.normalizeRecordedMp4(file, {
+        expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024,
+      }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+    } finally { window.AudioEncoder = NativeEncoder; }
+  }, base64);
+  test.skip(result.unsupported, 'WebCodecs audio APIs are unavailable');
+  expect(result.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.message).toMatch(/compatible MP4/);
+});
+
+test('real-time recorder rejects a premature playback pause instead of saving it', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    const raf = window.requestAnimationFrame;
+    const cancelRaf = window.cancelAnimationFrame;
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 5, currentTime: 1, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { return Promise.resolve(); }, pause() {}, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    window.VideoDecoder = undefined;
+    window.requestAnimationFrame = callback => setTimeout(callback, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['partial']) }); this.onstop?.(); }
+    };
+    try {
+      return await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.webm'), {}, {}, {
+        frameRate: 30, preferredMime: 'video/webm', preserveAudio: false,
+      }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      CanvasRenderingContext2D.prototype.drawImage = drawImage;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+      window.requestAnimationFrame = raf;
+      window.cancelAnimationFrame = cancelRaf;
+    }
+  });
+  expect(result.code).toBe('VIDEO_RECORDING_INCOMPLETE');
+  expect(result.message).toMatch(/paused before/);
+});
+
+test('real-time recorder accepts a long final frame when playback reaches the end', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 5, currentTime: 0, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { this.paused = false; return Promise.resolve(); },
+        requestVideoFrameCallback(callback) {
+          setTimeout(() => { this.currentTime = 5; this.ended = true; callback(0, { mediaTime: 0.5 }); }, 0);
+          return 1;
+        },
+        cancelVideoFrameCallback() {}, pause() {}, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    window.VideoDecoder = undefined;
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['video']) }); this.onstop?.(); }
+    };
+    try {
+      return await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.webm'), {}, {}, {
+        frameRate: 60, preferredMime: 'video/webm', preserveAudio: false,
+      }).then(blob => ({ size: blob.size }), error => ({ code: error.code, message: error.message }));
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      CanvasRenderingContext2D.prototype.drawImage = drawImage;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+    }
+  });
+  expect(result).toEqual({ size: 5 });
+});
 
 test('frame-by-frame setup can time out and be cancelled while metadata is stalled', async ({ page }) => {
   await page.route('**/vendor/mediabunny.min.js*', route => route.fulfill({

@@ -1509,6 +1509,96 @@ test('video preview drawing failure shows its cause and preserves a completed ex
   await expect(page.locator('#dl-btn-1')).toBeEnabled();
 });
 
+test('a preview read error retries with a byte-backed copy and exports that copy', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'read-error.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2, message: 'simulated read failure' }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect.poll(() => page.evaluate(() => !!eval('state.items[0].videoReadSource'))).toBe(true);
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  const copied = await page.evaluate(async () => {
+    const item = eval('state.items[0]');
+    const original = new Uint8Array(await item.file.arrayBuffer());
+    const copy = new Uint8Array(await item.videoReadSource.arrayBuffer());
+    window.FrameEngine.renderVideoFrameWhenReady = async source => {
+      window.__usedVideoReadCopy = source === item.videoReadSource;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+    return { distinct: item.file !== item.videoReadSource, equal: original.length === copy.length && original.every((v, i) => v === copy[i]) };
+  });
+  expect(copied).toEqual({ distinct: true, equal: true });
+  await renderAllItems(page);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__usedVideoReadCopy)).toBe(true);
+});
+
+test('a failed video reread reports the read failure and stops retrying', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'unreadable.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const item = eval('state.items[0]');
+    item.file.slice = () => ({ arrayBuffer: () => Promise.reject(new DOMException('simulated unreadable source', 'NotReadableError')) });
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2, message: 'simulated media read error' }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect(page.locator('#livePreviewError')).toContainText('simulated unreadable source');
+  expect(await page.evaluate(() => [eval('state.items[0].videoReadAttempted'), eval('state.items[0].videoReadSource')])).toEqual([true, null]);
+});
+
+test('removing a video cancels a stalled reread and cannot retain its copy', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles({ name: 'stalled-read.webm', mimeType: 'video/webm', buffer: createWebm() });
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(() => {
+    const item = eval('state.items[0]');
+    window.__removedVideoItem = item;
+    item.file.slice = () => ({ arrayBuffer: () => new Promise(() => {}) });
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2 }) });
+    video.dispatchEvent(new Event('error'));
+  });
+  await expect.poll(() => page.evaluate(() => !!window.__removedVideoItem.videoReadPromise)).toBe(true);
+  await page.evaluate(() => window.clearAllItems(true));
+  await expect.poll(() => page.evaluate(() => window.__removedVideoItem.videoReadPromise)).toBeNull();
+  expect(await page.evaluate(() => window.__removedVideoItem.videoReadSource)).toBeNull();
+  await expect(page.locator('#imageGrid .image-card')).toHaveCount(0);
+});
+
+test('selecting another item does not cancel a reread needed by an active export', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    { name: 'recovering.webm', mimeType: 'video/webm', buffer: createWebm() },
+    { name: 'other.jpg', mimeType: 'image/jpeg', buffer: createJpeg() },
+  ]);
+  await expect(page.locator('#preview-1 canvas.thumb-framed')).toBeVisible();
+  await expect(page.locator('#livePreviewVideo')).toHaveAttribute('src', /^blob:/);
+  await page.evaluate(async () => {
+    const item = eval('state.items[0]');
+    const bytes = await item.file.arrayBuffer();
+    item.file.slice = () => ({ arrayBuffer: () => new Promise(resolve => { window.__finishRead = () => resolve(bytes); }) });
+    window.FrameEngine.renderVideoFrameWhenReady = async source => {
+      window.__exportUsedCopy = source === item.videoReadSource;
+      return new Blob(['video'], { type: 'video/webm' });
+    };
+    const video = document.getElementById('livePreviewVideo');
+    Object.defineProperty(video, 'error', { configurable: true, get: () => ({ code: 2 }) });
+    video.dispatchEvent(new Event('error'));
+    window.__exportDuringRead = window.generateItem(item);
+  });
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/processing/);
+  await page.locator('#preview-2').click();
+  expect(await page.evaluate(() => eval('state.items[0].videoReadController.signal.aborted'))).toBe(false);
+  await page.evaluate(() => window.__finishRead());
+  await page.evaluate(() => window.__exportDuringRead);
+  await expect(page.locator('#status-badge-1 .status-dot')).toHaveClass(/done/);
+  expect(await page.evaluate(() => window.__exportUsedCopy)).toBe(true);
+});
+
 test('settings changes preserve a generated video thumbnail while re-encoding is pending', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles({
     name: 'settings-video.webm',
@@ -9429,9 +9519,10 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
   expect([expectedLayout.height, expectedLayout.height - 1]).toContain(mediaInfo.height);
 });
 
-test('video export preserves an input audio track', async ({ page }) => {
+test('WebM video export preserves an input audio track', async ({ page }) => {
   test.skip(process.platform === 'win32', 'Headless Chromium on Windows crashes while recording a canvas stream with audio');
   const fixture = await loadAudioVideoFixture();
+  await page.locator('label[for="vfmt-vp8"]').click();
   await page.locator('#fileInput').setInputFiles({
     name: 'clip-with-audio.webm',
     mimeType: fixture.mimeType,
@@ -9442,7 +9533,7 @@ test('video export preserves an input audio track', async ({ page }) => {
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#dl-btn-1').click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/clip-with-audio_frame\.(webm|mp4)$/i);
+  expect(download.suggestedFilename()).toMatch(/clip-with-audio_frame\.webm$/i);
   const filePath = await download.path();
   const bytes = await fs.readFile(filePath);
   expect(bytes.length).toBeGreaterThan(100);
