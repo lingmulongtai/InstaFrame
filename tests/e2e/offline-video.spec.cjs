@@ -158,7 +158,7 @@ test('fragmented MP4 recording is finalized with AAC and unchanged video packets
     if (!window.VideoDecoder || !window.AudioDecoder || !window.AudioEncoder ||
         !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
     const file = new Blob([Uint8Array.from(atob(content), char => char.charCodeAt(0))], { type: 'video/mp4' });
-    const options = { expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024 };
+    const options = { sourceFile: file, expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024 };
     const output = await window.FrameEngine.normalizeRecordedMp4(file, options);
     const original = new media.Input({ source: new media.BlobSource(file), formats: media.ALL_FORMATS });
     const finalized = new media.Input({ source: new media.BlobSource(output), formats: media.ALL_FORMATS });
@@ -265,6 +265,73 @@ test('30 fps MediaRecorder fallback finalizes its MP4 before reporting success',
   expect(result.audioCodec).toBe('aac');
   expect(result.duration).toBeGreaterThan(0.9);
   expect(result.progress.at(-1)).toBe(1);
+});
+
+test('MP4 finalization rejects audio that ends before the source audio', async ({ page }) => {
+  await page.goto('/');
+  const [source, shortAudio] = await Promise.all([
+    fs.readFile(path.join(__dirname, 'fragmented-opus.mp4')),
+    fs.readFile(path.join(__dirname, 'fragmented-short-audio.mp4')),
+  ]);
+  const result = await page.evaluate(async ({ source64, short64 }) => {
+    const media = await import('./vendor/mediabunny.min.js');
+    if (!window.AudioDecoder || !window.AudioEncoder ||
+        !await media.canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48000 })) return { unsupported: true };
+    const blob = value => new Blob([Uint8Array.from(atob(value), char => char.charCodeAt(0))], { type: 'video/mp4' });
+    return window.FrameEngine.normalizeRecordedMp4(blob(short64), {
+      sourceFile: blob(source64), expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024,
+    }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+  }, { source64: source.toString('base64'), short64: shortAudio.toString('base64') });
+  test.skip(result.unsupported, 'Opus decoding or AAC encoding is unavailable');
+  expect(result.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.message).toMatch(/does not cover the source audio/);
+});
+
+test('real-time recorder rejects a premature playback pause instead of saving it', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const createElement = document.createElement.bind(document);
+    const captureStream = HTMLCanvasElement.prototype.captureStream;
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    const NativeRecorder = window.MediaRecorder;
+    const NativeDecoder = window.VideoDecoder;
+    const raf = window.requestAnimationFrame;
+    const cancelRaf = window.cancelAnimationFrame;
+    document.createElement = (tag, options) => {
+      if (String(tag).toLowerCase() !== 'video') return createElement(tag, options);
+      return {
+        videoWidth: 96, videoHeight: 64, duration: 5, currentTime: 1, paused: true, ended: false, src: '',
+        load() { if (this.src) queueMicrotask(() => this.onloadedmetadata?.()); },
+        play() { return Promise.resolve(); }, pause() {}, removeAttribute() { this.src = ''; },
+      };
+    };
+    HTMLCanvasElement.prototype.captureStream = () => ({ addTrack() {}, getTracks() { return []; } });
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    window.VideoDecoder = undefined;
+    window.requestAnimationFrame = callback => setTimeout(callback, 0);
+    window.cancelAnimationFrame = clearTimeout;
+    window.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = 'inactive'; }
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['partial']) }); this.onstop?.(); }
+    };
+    try {
+      return await window.FrameEngine.renderVideoFrameWhenReady(new File(['input'], 'input.webm'), {}, {}, {
+        frameRate: 30, preferredMime: 'video/webm', preserveAudio: false,
+      }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+    } finally {
+      document.createElement = createElement;
+      HTMLCanvasElement.prototype.captureStream = captureStream;
+      CanvasRenderingContext2D.prototype.drawImage = drawImage;
+      window.VideoDecoder = NativeDecoder;
+      window.MediaRecorder = NativeRecorder;
+      window.requestAnimationFrame = raf;
+      window.cancelAnimationFrame = cancelRaf;
+    }
+  });
+  expect(result.code).toBe('VIDEO_RECORDING_INCOMPLETE');
+  expect(result.message).toMatch(/paused before/);
 });
 
 test('frame-by-frame setup can time out and be cancelled while metadata is stalled', async ({ page }) => {
