@@ -483,6 +483,7 @@ html.is-booting::after {
 .accent-green { background: #059669; }
 .accent-amber { background: #d97706; }
 .accent-cyan { background: #08798f; }
+.accent-ice { background: #bdd7e3; }
 .accent-swatch:hover { transform: scale(1.1); }
 .accent-swatch.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
@@ -1415,7 +1416,7 @@ body[data-workspace="empty"] .photos-panel { display: none; }
   overflow: hidden;
   background: #2b2440;
 }
-.sample-print-photo svg { display: block; width: 100%; height: 100%; }
+.sample-print-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .sample-print-photo::after {
   content: '';
   position: absolute;

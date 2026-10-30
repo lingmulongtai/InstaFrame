@@ -5,6 +5,8 @@
 [![Live Demo](https://img.shields.io/badge/Live-Demo-0891b2?style=for-the-badge)](https://lingmulongtai.github.io/InstaFrame/)
 [![Web quality checks](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml/badge.svg)](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml)
 
+Sample photograph: [Jo Sorgenfri on Unsplash](https://unsplash.com/photos/4OmQ8pDJ5W0). The caption uses the camera settings supplied with the photograph.
+
 ## プライバシー
 
 写真・動画のデコード、EXIF読み取り、フレーム描画、エンコード、ZIP生成はブラウザ内で行われます。メディアファイルそのものをInstaFrameのサーバーへアップロードする処理はありません。

@@ -5,7 +5,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta name="description" content="InstaFrame — Batch EXIF photo frame generator. Add beautiful frames with camera metadata to your photos.">
-  <meta name="theme-color" content="#e8e5df">
+  <meta name="theme-color" content="#090b0c">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://api.mapbox.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self' https://nominatim.openstreetmap.org https://ipapi.co https://api.mapbox.com;">
   <title>InstaFrame by lingmulongtai</title>
   <link rel="icon" type="image/svg+xml" href="photo-camera-svgrepo-com.svg">
@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="vendor/fonts/fonts.css">
 
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/workspace.css">
 
 </head>
 <body data-mobile-tab="preview" data-workspace="empty">
@@ -65,7 +66,7 @@
               <span data-i18n="themeLight">Light</span>
             </label>
             <label class="pill-option">
-              <input type="radio" name="themeChoice" value="soft-white" checked>
+              <input type="radio" name="themeChoice" value="soft-white">
               <span data-i18n="themeSoftWhite">Soft</span>
             </label>
             <label class="pill-option">
@@ -73,7 +74,7 @@
               <span data-i18n="themeBlueGrey">Blue</span>
             </label>
             <label class="pill-option">
-              <input type="radio" name="themeChoice" value="dark">
+              <input type="radio" name="themeChoice" value="dark" checked>
               <span data-i18n="themeDark">Dark</span>
             </label>
             <label class="pill-option">
@@ -90,11 +91,12 @@
               <button class="accent-swatch accent-pink" data-color="#db2777" data-i18n="accentPink" data-i18n-attr="title,aria-label" title="Pink accent" aria-label="Pink accent" aria-pressed="false"></button>
               <button class="accent-swatch accent-green" data-color="#059669" data-i18n="accentGreen" data-i18n-attr="title,aria-label" title="Green accent" aria-label="Green accent" aria-pressed="false"></button>
               <button class="accent-swatch accent-amber" data-color="#d97706" data-i18n="accentAmber" data-i18n-attr="title,aria-label" title="Amber accent" aria-label="Amber accent" aria-pressed="false"></button>
-              <button class="accent-swatch accent-cyan active" data-color="#08798f" data-i18n="accentCyan" data-i18n-attr="title,aria-label" title="Cyan accent" aria-label="Cyan accent" aria-pressed="true"></button>
+              <button class="accent-swatch accent-cyan" data-color="#08798f" data-i18n="accentCyan" data-i18n-attr="title,aria-label" title="Cyan accent" aria-label="Cyan accent" aria-pressed="false"></button>
+              <button class="accent-swatch accent-ice active" data-color="#bdd7e3" data-i18n="accentIce" data-i18n-attr="title,aria-label" title="Ice blue accent" aria-label="Ice blue accent" aria-pressed="true"></button>
               <button type="button" id="accentCustomBtn" class="color-option-custom" data-i18n="accentCustom" data-i18n-attr="title,aria-label" title="Custom accent" aria-label="Custom accent" aria-pressed="false">
                 <span class="rainbow-icon"></span>
               </button>
-              <input type="color" id="accentColorPicker" class="accent-color-picker-proxy" value="#08798f" tabindex="-1" aria-hidden="true">
+              <input type="color" id="accentColorPicker" class="accent-color-picker-proxy" value="#bdd7e3" tabindex="-1" aria-hidden="true">
             </div>
           </div>
         </div>
@@ -801,6 +803,15 @@
   <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
   <main class="main">
     <h1 class="sr-only" data-i18n="appTitleMain">InstaFrame</h1>
+    <header class="workspace-header" aria-hidden="true">
+      <div class="workspace-heading">
+        <div class="workspace-heading-mark"><span></span></div>
+        <div>
+          <div class="workspace-heading-kicker" data-i18n="appTitleBy">by lingmulongtai</div>
+          <div class="workspace-title">InstaFrame</div>
+        </div>
+      </div>
+    </header>
 
     <!-- Live Preview + Drop Zone -->
     <div class="preview-area mobile-tab-panel" id="dropZone">
@@ -820,69 +831,11 @@
         <!-- Decorative sample print: shows what an export looks like before any media is added. -->
         <figure class="sample-print" id="samplePrint" aria-hidden="true">
           <div class="sample-print-photo">
-            <svg viewBox="0 0 600 400" preserveAspectRatio="xMidYMid slice" focusable="false">
-              <defs>
-                <linearGradient id="sampleSky" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#1c2550"/>
-                  <stop offset="0.38" stop-color="#5b4a86"/>
-                  <stop offset="0.62" stop-color="#c9728a"/>
-                  <stop offset="0.8" stop-color="#f29a6b"/>
-                  <stop offset="1" stop-color="#ffd29a"/>
-                </linearGradient>
-                <radialGradient id="sampleSun" cx="0.5" cy="0.5" r="0.5">
-                  <stop offset="0" stop-color="#fffaf0"/>
-                  <stop offset="0.55" stop-color="#ffe1a8"/>
-                  <stop offset="1" stop-color="#ffbe7a"/>
-                </radialGradient>
-                <radialGradient id="sampleGlow" cx="0.5" cy="0.5" r="0.5">
-                  <stop offset="0" stop-color="#ffd9a0" stop-opacity="0.75"/>
-                  <stop offset="1" stop-color="#ffb27a" stop-opacity="0"/>
-                </radialGradient>
-                <linearGradient id="sampleLake" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#f3a77a"/>
-                  <stop offset="0.35" stop-color="#9a5d78"/>
-                  <stop offset="1" stop-color="#1d1a35"/>
-                </linearGradient>
-                <linearGradient id="sampleFar" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#b9708a"/>
-                  <stop offset="1" stop-color="#c98a8c"/>
-                </linearGradient>
-                <linearGradient id="sampleMid" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#6d4a78"/>
-                  <stop offset="1" stop-color="#8a5a7c"/>
-                </linearGradient>
-                <linearGradient id="sampleNear" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#2e2347"/>
-                  <stop offset="1" stop-color="#3d2c52"/>
-                </linearGradient>
-              </defs>
-              <rect width="600" height="400" fill="url(#sampleSky)"/>
-              <circle cx="392" cy="186" r="128" fill="url(#sampleGlow)"/>
-              <circle cx="392" cy="182" r="28" fill="url(#sampleSun)"/>
-              <path d="M0 236 L58 204 L104 222 L168 178 L226 214 L282 190 L330 220 L400 196 L452 214 L520 182 L600 214 L600 268 L0 268Z" fill="url(#sampleFar)" opacity="0.85"/>
-              <path d="M0 252 L46 230 L92 246 L150 206 L196 238 L250 222 L300 248 L362 226 L426 252 L488 218 L548 244 L600 232 L600 274 L0 274Z" fill="url(#sampleMid)"/>
-              <path d="M0 270 L70 244 L118 262 L176 236 L238 268 L600 268 L600 280 L0 280Z" fill="url(#sampleNear)"/>
-              <path d="M600 262 L548 240 L498 260 L460 250 L420 270 L600 272Z" fill="url(#sampleNear)"/>
-              <rect y="270" width="600" height="130" fill="url(#sampleLake)"/>
-              <g fill="#ffe7bf" opacity="0.55">
-                <rect x="360" y="282" width="64" height="2.4" rx="1.2"/>
-                <rect x="372" y="292" width="40" height="2" rx="1"/>
-                <rect x="352" y="303" width="80" height="1.6" rx="0.8" opacity="0.7"/>
-                <rect x="380" y="315" width="26" height="1.6" rx="0.8" opacity="0.6"/>
-                <rect x="366" y="328" width="52" height="1.2" rx="0.6" opacity="0.45"/>
-              </g>
-              <path d="M0 400 L0 330 Q60 316 120 334 T240 350 Q300 360 330 400Z" fill="#14111f"/>
-              <g fill="#14111f">
-                <path d="M34 336 L46 288 L58 336Z"/>
-                <path d="M52 340 L68 270 L84 340Z"/>
-                <path d="M80 344 L92 300 L104 344Z"/>
-                <path d="M548 400 L600 352 L600 400Z"/>
-              </g>
-            </svg>
+            <img src="assets/sample-photo.jpg" alt="" width="1440" height="960">
           </div>
           <figcaption class="sample-print-caption">
-            <span class="sample-print-camera"><span class="sample-print-label">Shot on</span> <span class="sample-print-model">X-T5</span> <span class="sample-print-make">FUJIFILM</span></span>
-            <span class="sample-print-exif"><span>XF35mmF1.4 R</span><span>35mm</span><span>f/1.4</span><span>1/250s</span><span>ISO 400</span></span>
+            <span class="sample-print-camera"><span class="sample-print-label">Shot on</span> <span class="sample-print-model">X100F</span> <span class="sample-print-make">FUJIFILM</span></span>
+            <span class="sample-print-exif"><span>23mm</span><span>f/8</span><span>1/125s</span><span>ISO 1000</span></span>
           </figcaption>
         </figure>
         <div class="preview-empty-copy">
@@ -1101,6 +1054,7 @@
 <script src="js/i18n.js"></script>
 <script src="js/frame-engine.js"></script>
 <script src="js/app.js"></script>
+<script src="js/workspace-scroll.js"></script>
 
 <!-- ─── Map Location Picker Modal ───────────────────────────────────────────── -->
 <div class="map-modal" id="mapPickerModal" role="dialog" aria-modal="true" aria-labelledby="mapPickerModalTitle" aria-describedby="mapPickerHelp">
