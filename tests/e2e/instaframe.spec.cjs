@@ -248,7 +248,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'ja'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
-  await expect(page.locator('#dropZone')).toContainText('ここに写真をドロップ');
+  await expect(page.locator('#dropZone')).toContainText('写真と動画に、余白を。');
   await expect(page.locator('.preview-empty-sub')).toHaveText('写真は端末内で処理され、アップロードされません。');
   await uploadJpegs(page);
   await expect(page.locator('#status-badge-1 .status-text')).toHaveText('準備完了');
@@ -264,7 +264,7 @@ test('initial translated UI exposes the matching document language', async ({ pa
   await page.evaluate(() => localStorage.setItem('instaframe_lang', 'en'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('#dropZone')).toContainText('Drop photos here');
+  await expect(page.locator('#dropZone')).toContainText('Give your moments a frame.');
   await expect(page.locator('.preview-empty-sub')).toHaveText('Processed on this device. Nothing is uploaded.');
   await uploadJpegs(page);
   await expect(page.locator('#cardSizeBar')).toHaveAttribute('title', 'Photo card size');
@@ -316,7 +316,7 @@ test('first paint stays hidden until translations and saved preferences are appl
   await expect(page.locator('html')).not.toHaveClass(/is-booting/);
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
   await expect(page.locator('body')).toHaveCSS('visibility', 'visible');
-  await expect(page.locator('.preview-empty-text')).toHaveText('ここに写真をドロップ');
+  await expect(page.locator('.preview-empty-text')).toHaveText('写真と動画に、余白を。');
   await expect(page.locator('#livePreviewCanvas')).toBeHidden();
 });
 
