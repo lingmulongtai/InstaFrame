@@ -332,6 +332,27 @@ test('MP4 finalization rejects audio that ends before the source audio', async (
   expect(result.message).toMatch(/does not cover the source audio/);
 });
 
+test('MP4 finalization refuses to discard audio when AAC encoding is unavailable', async ({ page }) => {
+  await page.goto('/');
+  const base64 = (await fs.readFile(path.join(__dirname, 'fragmented-opus.mp4'))).toString('base64');
+  const result = await page.evaluate(async content => {
+    if (!window.AudioEncoder || !window.AudioDecoder) return { unsupported: true };
+    const NativeEncoder = window.AudioEncoder;
+    window.AudioEncoder = class extends NativeEncoder {
+      static async isConfigSupported(config) { return { supported: false, config }; }
+    };
+    try {
+      const file = new Blob([Uint8Array.from(atob(content), char => char.charCodeAt(0))], { type: 'video/mp4' });
+      return await window.FrameEngine.normalizeRecordedMp4(file, {
+        expectedDuration: 1, expectAudio: true, maxBytes: 2 * 1024 * 1024,
+      }).then(() => ({ resolved: true }), error => ({ code: error.code, message: error.message }));
+    } finally { window.AudioEncoder = NativeEncoder; }
+  }, base64);
+  test.skip(result.unsupported, 'WebCodecs audio APIs are unavailable');
+  expect(result.code).toBe('VIDEO_MP4_FINALIZATION_FAILED');
+  expect(result.message).toMatch(/compatible MP4/);
+});
+
 test('real-time recorder rejects a premature playback pause instead of saving it', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {

@@ -9519,9 +9519,10 @@ test('WebM input exports a decodable framed video', async ({ page }) => {
   expect([expectedLayout.height, expectedLayout.height - 1]).toContain(mediaInfo.height);
 });
 
-test('video export preserves an input audio track', async ({ page }) => {
+test('WebM video export preserves an input audio track', async ({ page }) => {
   test.skip(process.platform === 'win32', 'Headless Chromium on Windows crashes while recording a canvas stream with audio');
   const fixture = await loadAudioVideoFixture();
+  await page.locator('label[for="vfmt-vp8"]').click();
   await page.locator('#fileInput').setInputFiles({
     name: 'clip-with-audio.webm',
     mimeType: fixture.mimeType,
@@ -9532,7 +9533,7 @@ test('video export preserves an input audio track', async ({ page }) => {
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#dl-btn-1').click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/clip-with-audio_frame\.(webm|mp4)$/i);
+  expect(download.suggestedFilename()).toMatch(/clip-with-audio_frame\.webm$/i);
   const filePath = await download.path();
   const bytes = await fs.readFile(filePath);
   expect(bytes.length).toBeGreaterThan(100);
