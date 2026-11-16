@@ -1,6 +1,6 @@
 # ✨ InstaFrame
 
-写真・動画へEXIF情報付きのフレームを合成する、Web専用のブラウザアプリです。
+写真・動画にEXIF情報付きのフレームやウォーターマークを合成するブラウザアプリです。
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-0891b2?style=for-the-badge)](https://lingmulongtai.github.io/InstaFrame/)
 [![Web quality checks](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml/badge.svg)](https://github.com/lingmulongtai/InstaFrame/actions/workflows/ci.yml)
@@ -28,6 +28,8 @@
 ## 主な機能
 
 - 写真・動画のライブプレビューと一括処理
+- **ウォーターマーク**では、PNGなどの画像やSVGを写真・動画に重ねられます。絵柄の中の9か所から位置を選び、サイズと不透明度を調整できます。SVGは透過を保ったまま指定した単色に変更できます。素材ファイルはページを再読み込みしたら選び直します。
+- **フレーム → 背景 → フレームなし**を選ぶと、枠・EXIFキャプション・追加の余白を省き、元の比率でウォーターマークを合成できます。
 - 「適用」操作は不要。ダウンロード時に現在の設定でフレームを描画し、1件はそのままファイル、複数件はZIPで保存
 - 大量の一括ダウンロード：1枚ずつ「描画 → エンコード → ZIPへ格納 → 原寸Canvasを解放」と流すため、枚数が増えてもメモリはほぼ1枚分。ZIPが安全上限を超える場合は分割せず、保存を中止して案内
 - ダウンロード前の出力サイズ表示：選択中の写真の出力ピクセル数と推定ファイルサイズ（形式・画質・比率に連動）、カードごとの寸法、複数枚の合計目安
@@ -238,6 +240,6 @@ InstaFrame/
 
 ## English summary
 
-InstaFrame is a browser-only EXIF frame generator for photos and videos. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom. When the full preview reaches its 12/24-megapixel mobile/desktop limit, only the visible source crop receives an additional memory-bounded detail pass.
+InstaFrame adds EXIF frames and watermarks to photos and videos in the browser. Watermarks support raster images and recolorable SVGs, with nine positions and adjustable size and opacity. Choose **No frame** to retain the source aspect ratio and omit the EXIF caption. Media processing stays on the device. Location services are opt-in and clearly disclose coordinate transfers to Nominatim, OpenStreetMap/ipapi, and Mapbox. No unrestricted Mapbox token is shipped; users may store their own public token locally. Frame fonts and browser libraries are self-hosted. Preview quality changes raster density without recalculating the 6144px logical layout, so typography and composition remain stable through 1200% zoom. When the full preview reaches its 12/24-megapixel mobile/desktop limit, only the visible source crop receives an additional memory-bounded detail pass.
 
 Run `npm ci`, `npx playwright install chromium`, and `npm test` for syntax, lint, unit, privacy, mobile, export, and photo/video browser tests. Browser tests build and serve the same allowlisted `dist/` boundary used by Pages, without exposing repository internals. CI also runs Firefox, WebKit, and the installed Microsoft Edge channel against the portable photo/UI/accessibility contract.
