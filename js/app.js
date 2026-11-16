@@ -9,7 +9,7 @@ const state = {
   settings: {
     // ── Frame rendering ──────────────────────────────────────────
     frameColor:          '#F0F0F0',
-    frameBackground:     'color',   // 'color' | 'blur'
+    frameBackground:     'color',   // 'color' | 'blur' | 'none'
     blurRadius:          20,
     blurStyle:           'normal',  // 'normal' | 'grayscale' | 'sepia' | 'saturate'
     blurBrightness:      80,
@@ -1185,6 +1185,7 @@ function _isSpatialItem(item) {
 }
 
 function _spatialEyeShift(item) {
+  if (state.settings.frameBackground === 'none') return 0;
   const near = Math.max(-0.05, Math.min(0.1, Number(item?.stereoDisparity?.near) || 0));
   const depth = Math.max(0, Math.min(5, Number(state.settings.spatialDepth) || 0)) / 100;
   return Math.max(0, Math.min(SPATIAL_MAX_EYE_SHIFT, (near + depth) / 2));
@@ -1235,7 +1236,7 @@ async function _loadStereoSources(item, signal) {
     throw failed.reason;
   }
   const [left, right] = results.map(result => result.value);
-  if (!item.stereoDisparity) {
+  if (!item.stereoDisparity && state.settings.frameBackground !== 'none') {
     item.stereoDisparity = FrameEngine.estimateStereoDisparity(left, right) || { near: 0, far: 0, samples: 0 };
   }
   return { left, right };
@@ -3638,11 +3639,6 @@ function restoreSettings() {
     const r = _findRadioByValue('frameBackground', saved.frameBackground);
     if (r) r.checked = true;
   }
-  const isBlurBg = saved.frameBackground === 'blur';
-  const frameColorRow = document.getElementById('frameColorRow');
-  const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
-  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -3751,6 +3747,15 @@ function markDoneItemsPending() {
   markItemsPending();
 }
 
+function _syncFrameBackgroundControls(mode) {
+  const isFrameless = mode === 'none';
+  document.getElementById('sidebarScroll').classList.toggle('frame-disabled', isFrameless);
+  document.getElementById('frameColorRow').classList.toggle('is-hidden', mode !== 'color');
+  document.getElementById('blurOptionsRow').classList.toggle('is-hidden', mode !== 'blur');
+  const isDark = mode === 'color' && FrameEngine.isColorDark(state.settings.frameColor);
+  document.getElementById('livePreviewCanvas').classList.toggle('frame-dark', isDark);
+}
+
 function applySettings(options = {}) {
   const recordHistory = options?.recordHistory !== false;
   const before = _createSettingsSnapshot();
@@ -3765,23 +3770,12 @@ function applySettings(options = {}) {
   // Frame background mode
   const bgRadio = document.querySelector('input[name="frameBackground"]:checked');
   state.settings.frameBackground = bgRadio ? bgRadio.value : 'color';
-  const isBlurBg = state.settings.frameBackground === 'blur';
-  const frameColorRow = document.getElementById('frameColorRow');
-  const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
-  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
+  _syncFrameBackgroundControls(state.settings.frameBackground);
 
-  if (isBlurBg) {
+  if (state.settings.frameBackground === 'blur') {
     state.settings.blurRadius     = parseInt(document.getElementById('blurRadiusRange')?.value || '20', 10);
     state.settings.blurStyle      = document.getElementById('blurStyleSelect')?.value || 'normal';
     state.settings.blurBrightness = parseInt(document.getElementById('blurBrightnessRange')?.value || '80', 10);
-  }
-
-  // Update dark-frame outline on preview canvas
-  const previewCanvas = document.getElementById('livePreviewCanvas');
-  if (previewCanvas) {
-    const isDark = FrameEngine.isColorDark(state.settings.frameColor);
-    previewCanvas.classList.toggle('frame-dark', isDark && !isBlurBg);
   }
 
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
@@ -3938,13 +3932,9 @@ function _syncDomWithStateSettings() {
   setText('spatialDepthRangeVal', Number(s.spatialDepth ?? 1).toFixed(1) + '%');
 
   // Frame background mode
-  const bgR = document.querySelector(`input[name="frameBackground"][value="${s.frameBackground || 'color'}"]`);
+  const bgR = _findRadioByValue('frameBackground', s.frameBackground || 'color');
   if (bgR) bgR.checked = true;
-  const isBlur = s.frameBackground === 'blur';
-  const fcRow = document.getElementById('frameColorRow');
-  const boRow = document.getElementById('blurOptionsRow');
-  if (fcRow) fcRow.classList.toggle('is-hidden', isBlur);
-  if (boRow) boRow.classList.toggle('is-hidden', !isBlur);
+  _syncFrameBackgroundControls(s.frameBackground);
   setVal('blurRadiusRange', s.blurRadius ?? 20);
   setText('blurRadiusVal', (s.blurRadius ?? 20) + 'px');
   setVal('blurBrightnessRange', s.blurBrightness ?? 80);
@@ -4894,11 +4884,9 @@ function setupVideoPreviewBar() {
 function applyPreviewTransform() {
   _clearLivePreviewDetail();
   const transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
-  const isDark = FrameEngine.isColorDark(state.settings.frameColor);
   const canvas = document.getElementById('livePreviewCanvas');
   if (canvas) {
     canvas.style.transform = transform;
-    canvas.classList.toggle('frame-dark', isDark);
   }
 }
 
@@ -6278,8 +6266,8 @@ function _syncSamplePrint() {
   print.style.setProperty('--sample-frame', frameColor);
   print.style.setProperty('--sample-thickness', String(Number(s.thicknessScale) || 1));
   print.style.setProperty('--sample-text-custom', InstaFrameCore.normalizeHexColor(s.textColor, '#FFFFFF'));
-  print.dataset.background = blur ? 'blur' : 'color';
-  print.dataset.frame = !blur && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
+  print.dataset.background = s.frameBackground;
+  print.dataset.frame = s.frameBackground === 'color' && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
   print.dataset.tone = tone;
   print.classList.toggle('hide-shot-on', s.showShotOn === false);
   print.classList.toggle('hide-exif', s.showExifInfo === false);
