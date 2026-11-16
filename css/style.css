@@ -1149,7 +1149,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
 .text-color-controls { display: flex; align-items: center; gap: 8px; }
 .text-color-controls .ratio-pills { flex: 1; min-width: 0; }
-#textColorPicker {
+:is(#textColorPicker, #watermarkColor) {
   flex: none;
   width: 32px;
   height: 32px;
@@ -1159,10 +1159,29 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   background: var(--surface-2);
   cursor: pointer;
 }
-#textColorPicker::-webkit-color-swatch-wrapper { padding: 0; }
-#textColorPicker::-webkit-color-swatch { border: 0; border-radius: 5px; }
-#textColorPicker:disabled { opacity: 0.38; cursor: not-allowed; }
-.is-hidden { display: none !important; }
+:is(#textColorPicker, #watermarkColor)::-webkit-color-swatch-wrapper { padding: 0; }
+:is(#textColorPicker, #watermarkColor)::-webkit-color-swatch { border: 0; border-radius: 5px; }
+:is(#textColorPicker, #watermarkColor):disabled { opacity: 0.38; cursor: not-allowed; }
+.is-hidden,
+.sidebar-scroll.frame-disabled [data-frame-only] { display: none !important; }
+
+.watermark-file-row { justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+#watermarkFileName {
+  flex-basis: 100%;
+  color: var(--text-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#watermarkFileName:empty { display: none; }
+.watermark-positions.ratio-pills {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 150px;
+}
+.watermark-positions .ratio-pill label { padding-inline: 2px; }
+.watermark-color-row { justify-content: space-between; }
 .blur-style-select { flex: 1; }
 .location-pos-row .ratio-pill label { font-size: 11px; }
 .setting-row:has(input[name="mapOverlayPos"]) .ratio-pills {
@@ -1423,6 +1442,9 @@ body[data-workspace="empty"] .photos-panel { display: none; }
   inset: 0;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
 }
+.sample-print[data-background="none"] .sample-print-photo { margin: 0; }
+.sample-print[data-background="none"] .sample-print-photo::after,
+.sample-print[data-background="none"] .sample-print-caption { display: none; }
 .sample-print-caption {
   display: flex;
   flex-direction: column;

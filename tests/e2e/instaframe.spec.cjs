@@ -2168,6 +2168,201 @@ test('JPEG, PNG, and WebP exports have the requested file signatures', async ({ 
   }
 });
 
+test('no frame preserves photo dimensions and pixels and restores frame controls on undo', async ({ page }) => {
+  const buffer = await createBrowserRaster(page, 'image/png');
+  await page.locator('#fileInput').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer });
+  await page.locator('label[for="ratio-1-1"]').click();
+  await page.locator('#outerPaddingRange').fill('12');
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('label[for="bg-none"]').click();
+
+  const preview = page.locator('#livePreviewCanvas');
+  await expect(preview).toHaveAttribute('data-composition-width', '96');
+  await expect(preview).toHaveAttribute('data-composition-height', '64');
+  await expect(page.locator('#outerPaddingRange')).toBeHidden();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const output = await fs.readFile(await download.path());
+  const samePixels = await page.evaluate(async ([input, saved]) => {
+    async function pixels(base64) {
+      const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+      const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      image.close();
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    }
+    const [original, exported] = await Promise.all([pixels(input), pixels(saved)]);
+    return original.length === exported.length && original.every((value, index) => value === exported[index]);
+  }, [buffer.toString('base64'), output.toString('base64')]);
+  expect(samePixels).toBe(true);
+
+  await page.locator('#undoEditBtn').click();
+  await expect(page.locator('#outerPaddingRange')).toHaveValue('12');
+  await expect(page.locator('#outerPaddingRange')).toBeVisible();
+  await expect(preview).not.toHaveAttribute('data-composition-width', '96');
+  await page.locator('#redoEditBtn').click();
+  await page.reload();
+  await expect(page.locator('#bg-none')).toBeChecked();
+  await expect(page.locator('#samplePrint')).toHaveAttribute('data-background', 'none');
+});
+
+test('an image watermark can move to all nine anchors and is included in PNG exports', async ({ page }) => {
+  const photo = await createBrowserRaster(page, 'image/png');
+  const logo = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 20;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(0, 0, 20, 20);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('#fileInput').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: photo });
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.png', mimeType: 'image/png', buffer: Buffer.from(logo, 'base64'),
+  });
+  await expect(page.locator('#watermarkFileName')).toHaveText('logo.png');
+
+  const preview = page.locator('#livePreviewCanvas');
+  const readAnchors = () => preview.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return [0.13, 0.5, 0.87].flatMap(y => [0.087, 0.5, 0.913].map(x => {
+      const [r, g, b] = ctx.getImageData(Math.floor(x * canvas.width), Math.floor(y * canvas.height), 1, 1).data;
+      return g > 250 && r < 5 && b < 5;
+    }));
+  });
+  const positions = ['top', 'middle', 'bottom'].flatMap(row => ['left', 'center', 'right'].map(column => row + '-' + column));
+  for (const [anchor, position] of positions.entries()) {
+    await page.locator(`label[for="watermark-${position}"]`).click();
+    await expect.poll(readAnchors).toEqual(positions.map((_, index) => index === anchor));
+  }
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const output = await fs.readFile(await download.path());
+  const pixel = await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    image.close();
+    return Array.from(ctx.getImageData(88, 56, 1, 1).data);
+  }, output.toString('base64'));
+  const [red, green, blue, alpha] = pixel;
+  expect(red).toBeLessThan(5);
+  expect(green).toBeGreaterThan(250);
+  expect(blue).toBeLessThan(5);
+  expect(alpha).toBe(255);
+
+  await page.locator('#watermarkOpacity').fill('0');
+  await expect.poll(readAnchors).toEqual(positions.map(() => false));
+  await page.locator('#undoEditBtn').click();
+  await expect.poll(readAnchors).toEqual(positions.map((_, index) => index === 8));
+  await page.locator('#removeWatermark').click();
+  await expect(page.locator('#watermarkOptions')).toBeHidden();
+  await expect.poll(readAnchors).toEqual(positions.map(() => false));
+});
+
+test('SVG watermark recoloring preserves transparent and semitransparent areas in preview and export', async ({ page }) => {
+  const blankPng = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 384;
+    canvas.height = 256;
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'blank.png', mimeType: 'image/png', buffer: Buffer.from(blankPng, 'base64'),
+  });
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><path fill="red" d="M0 0h16v20H0z"/><path fill="blue" fill-opacity="0.5" d="M24 0h16v20H24z"/></svg>'),
+  });
+  await expect(page.locator('#watermarkColorRow')).toBeVisible();
+  await page.locator('label[for="watermark-middle-center"]').click();
+
+  const preview = page.locator('#livePreviewCanvas');
+  const readColors = () => preview.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return [0.455, 0.5, 0.545].map(x =>
+      Array.from(ctx.getImageData(Math.floor(x * canvas.width), Math.floor(canvas.height / 2), 1, 1).data)
+    );
+  });
+  const original = [[255, 0, 0, 255], [0, 0, 0, 0], [0, 0, 255, 128]];
+  const tinted = [[0, 255, 0, 255], [0, 0, 0, 0], [0, 255, 0, 128]];
+  await expect.poll(readColors).toEqual(original);
+  await page.locator('label:has(#watermarkTint)').click();
+  await page.locator('#watermarkColor').fill('#00ff00');
+  await expect.poll(readColors).toEqual(tinted);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const output = await fs.readFile(await (await downloadPromise).path());
+  const exported = await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    image.close();
+    return [175, 192, 209].map(x => Array.from(ctx.getImageData(x, 128, 1, 1).data));
+  }, output.toString('base64'));
+  exported.forEach(([red, green, blue, alpha], index) => {
+    const colorError = [red, green, blue].map((value, channel) => Math.abs(value - tinted[index][channel]));
+    expect(Math.max(...colorError)).toBeLessThan(3);
+    expect(alpha).toBe(tinted[index][3]);
+  });
+
+  await page.locator('label:has(#watermarkTint)').click();
+  await expect.poll(readColors).toEqual(original);
+});
+
+test('video card thumbnails reflect watermark changes without opening another decoder', async ({ page }) => {
+  const video = { name: 'clip.webm', mimeType: 'video/webm', buffer: createWebm() };
+  await page.locator('#fileInput').setInputFiles(video);
+  const thumbnail = page.locator('#preview-1 canvas.thumb-framed');
+  await expect(thumbnail).toBeVisible();
+  await page.evaluate(() => {
+    window.FrameEngine.captureVideoFrame = () => {
+      throw new Error('Changing watermark settings must not decode the video again');
+    };
+  });
+
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="20" height="20" fill="#00ff00"/></svg>'),
+  });
+  await expect(page.locator('#watermarkOptions')).toBeVisible();
+  await page.locator('label[for="watermark-middle-center"]').click();
+
+  const readThumbnail = () => thumbnail.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return {
+      height: canvas.height,
+      center: Array.from(ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data),
+    };
+  });
+  await expect.poll(readThumbnail).toEqual({ height: 113, center: [0, 255, 0, 255] });
+  await page.locator('#removeWatermark').click();
+  await expect.poll(async () => (await readThumbnail()).center).not.toEqual([0, 255, 0, 255]);
+});
+
 test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
