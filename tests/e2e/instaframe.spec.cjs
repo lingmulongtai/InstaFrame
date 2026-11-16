@@ -2146,6 +2146,49 @@ test('JPEG, PNG, and WebP exports have the requested file signatures', async ({ 
   }
 });
 
+test('no frame preserves photo dimensions and pixels and restores frame controls on undo', async ({ page }) => {
+  const buffer = await createBrowserRaster(page, 'image/png');
+  await page.locator('#fileInput').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer });
+  await page.locator('label[for="ratio-1-1"]').click();
+  await page.locator('#outerPaddingRange').fill('12');
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('label[for="bg-none"]').click();
+
+  const preview = page.locator('#livePreviewCanvas');
+  await expect(preview).toHaveAttribute('data-composition-width', '96');
+  await expect(preview).toHaveAttribute('data-composition-height', '64');
+  await expect(page.locator('#outerPaddingRange')).toBeHidden();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const output = await fs.readFile(await download.path());
+  const samePixels = await page.evaluate(async ([input, saved]) => {
+    async function pixels(base64) {
+      const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+      const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      image.close();
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    }
+    const [original, exported] = await Promise.all([pixels(input), pixels(saved)]);
+    return original.length === exported.length && original.every((value, index) => value === exported[index]);
+  }, [buffer.toString('base64'), output.toString('base64')]);
+  expect(samePixels).toBe(true);
+
+  await page.locator('#undoEditBtn').click();
+  await expect(page.locator('#outerPaddingRange')).toHaveValue('12');
+  await expect(page.locator('#outerPaddingRange')).toBeVisible();
+  await expect(preview).not.toHaveAttribute('data-composition-width', '96');
+  await page.locator('#redoEditBtn').click();
+  await page.reload();
+  await expect(page.locator('#bg-none')).toBeChecked();
+  await expect(page.locator('#samplePrint')).toHaveAttribute('data-background', 'none');
+});
+
 test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');

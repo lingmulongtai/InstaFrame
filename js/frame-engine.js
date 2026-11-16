@@ -128,7 +128,7 @@ const FrameEngine = (() => {
 
   async function loadFrameFonts(settings, signal = null) {
     assertNotAborted(signal);
-    if (!document.fonts) return;
+    if (settings.frameBackground === 'none' || !document.fonts) return;
     const family = settings.fontFamily || 'Inter';
     const fam = `'${family}'`;
     const fonts = captionFonts(settings, 16, 16, fam);
@@ -176,6 +176,7 @@ const FrameEngine = (() => {
     const W = sourceWidth || img.naturalWidth || img.videoWidth || img.width;
     const H = sourceHeight || img.naturalHeight || img.videoHeight || img.height;
     const layout = computeFrameLayout(W, H, settings, exif);
+    const photoEyeShift = layout.hasFrame ? eyeShift : 0;
 
     const canvas = document.createElement('canvas');
     canvas.width  = layout.canvasW;
@@ -184,8 +185,8 @@ const FrameEngine = (() => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas rendering is unavailable');
       drawFrameBackground(ctx, img, settings, layout);
-      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, eyeShift);
-      canvas.photoPlacement = photoPlacement(layout, eyeShift);
+      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, photoEyeShift);
+      canvas.photoPlacement = photoPlacement(layout, photoEyeShift);
       return canvas;
     } catch (error) {
       canvas.width = 0;
@@ -196,7 +197,9 @@ const FrameEngine = (() => {
 
   /** Fill the whole output surface, including ratio and padding space. */
   function drawFrameBackground(ctx, src, settings, layout) {
-    if (settings.frameBackground === 'blur') {
+    if (!layout.hasFrame) {
+      ctx.clearRect(0, 0, layout.canvasW, layout.canvasH);
+    } else if (settings.frameBackground === 'blur') {
       drawBlurBackground(ctx, src, layout.canvasW, layout.canvasH, settings);
     } else {
       ctx.fillStyle = layout.frameColor;
@@ -220,19 +223,21 @@ const FrameEngine = (() => {
       ctx.clip();
       if (eyeShift) drawWindowedPhoto(ctx, src, sB, imageTop, W, H, eyeShift * W);
       else drawImageAtY(ctx, src, sB, imageTop, W, H);
-      drawInnerShadow(ctx, sB, imageTop, W, H);
+      if (layout.hasFrame) drawInnerShadow(ctx, sB, imageTop, W, H);
       if (mapOverlayImg && settings.showMapOverlay) {
         drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageTop, W, H });
       }
-      drawExifText(ctx, exif || {}, settings, {
-        canvasW: layout.baseCanvasW,
-        canvasH: layout.baseCanvasH,
-        imageBottom,
-        bottomAreaHeight: bB,
-        isPortrait,
-        frameColor,
-        issues,
-      });
+      if (layout.hasFrame) {
+        drawExifText(ctx, exif || {}, settings, {
+          canvasW: layout.baseCanvasW,
+          canvasH: layout.baseCanvasH,
+          imageBottom,
+          bottomAreaHeight: bB,
+          isPortrait,
+          frameColor,
+          issues,
+        });
+      }
     } finally {
       ctx.restore();
     }
@@ -2303,8 +2308,9 @@ const FrameEngine = (() => {
    */
   function computeUnboundedFrameLayout(sourceW, sourceH, settings, exif = {}) {
     const W = sourceW, H = sourceH;
+    const hasFrame      = settings.frameBackground !== 'none';
     const isPortrait    = H > W;
-    const ts            = settings.thicknessScale || 1;
+    const ts            = hasFrame ? settings.thicknessScale || 1 : 0;
     const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
     const sideBorder    = baseBorder * 0.5;
     const showLoc       = settings.showLocation && exif?.location && settings.locationPosition === 'below-exif';
@@ -2314,13 +2320,13 @@ const FrameEngine = (() => {
     const sB            = sideBorder   * pf;
     const tB            = sideBorder   * pf;
     const bB            = bottomBorder * pf;
-    const imageLayout   = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
+    const imageLayout   = computeImageVerticalLayout(H, tB, bB, hasFrame ? settings.imageOffsetY : 0);
     const baseCanvasW   = Math.round(W + sB * 2);
     const baseCanvasH   = imageLayout.canvasH;
     const frameColor    = settings.frameColor || '#F0F0F0';
-    const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, settings);
+    const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, hasFrame ? settings : {});
     return {
-      W, H, sB, tB, bB,
+      W, H, sB, tB, bB, hasFrame,
       baseCanvasW,
       baseCanvasH,
       canvasW: postProcess.canvasW,

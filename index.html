@@ -196,6 +196,10 @@
                 <input type="radio" name="frameBackground" id="bg-blur" value="blur">
                 <label for="bg-blur" data-i18n="bgBlur">Blur</label>
               </div>
+              <div class="ratio-pill">
+                <input type="radio" name="frameBackground" id="bg-none" value="none">
+                <label for="bg-none" data-i18n="bgNone">No frame</label>
+              </div>
             </div>
           </div>
         </div>
@@ -259,7 +263,7 @@
         </div>
 
         <!-- Thickness -->
-        <div class="setting-row">
+        <div class="setting-row" data-frame-only>
           <div class="setting-label" data-i18n="frameThickness">Thickness</div>
           <div class="setting-control">
             <div class="range-wrap">
@@ -270,7 +274,7 @@
         </div>
 
         <!-- Image Vertical Position -->
-        <div class="setting-row">
+        <div class="setting-row" data-frame-only>
           <div class="setting-label" data-i18n="imageOffsetY">Image Y</div>
           <div class="setting-control">
             <div class="range-wrap">
@@ -281,7 +285,7 @@
         </div>
 
         <!-- Aspect Ratio -->
-        <div class="setting-row">
+        <div class="setting-row" data-frame-only>
           <div class="setting-label" id="aspectRatioLabel" data-i18n="aspectRatio">Ratio</div>
           <div class="setting-control">
             <div class="ratio-pills" role="radiogroup" aria-labelledby="aspectRatioLabel">
@@ -325,7 +329,7 @@
           </div>
         </div>
 
-        <div class="setting-row">
+        <div class="setting-row" data-frame-only>
           <div class="setting-label" id="aspectOrientationLabel" data-i18n="aspectOrientation">Orientation</div>
           <div class="setting-control">
             <div class="ratio-pills" role="radiogroup" aria-labelledby="aspectOrientationLabel">
@@ -346,7 +350,7 @@
         </div>
 
         <!-- Outer Padding -->
-        <div class="setting-row">
+        <div class="setting-row" data-frame-only>
           <div class="setting-label" data-i18n="outerPadding">Padding</div>
           <div class="setting-control">
             <div class="range-wrap">
@@ -357,10 +361,10 @@
         </div>
       </div>
 
-      <div class="sidebar-sep"></div>
+      <div class="sidebar-sep" data-frame-only></div>
 
       <!-- ── Typography ─────────────────────────────────────────────────────── -->
-      <div class="settings-section">
+      <div class="settings-section" data-frame-only>
         <div class="section-heading">
           <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4V2.5h12V4M8 2.5v11M5.5 13.5h5"/></svg>
           <span data-i18n="sectionTypography">Typography</span>
@@ -524,12 +528,12 @@
         <div class="setting-row">
           <div class="setting-control">
             <div class="vis-toggles">
-              <label class="ios-toggle">
+              <label class="ios-toggle" data-frame-only>
                 <input type="checkbox" id="showShotOn" checked>
                 <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
                 <span class="ios-toggle-label" data-i18n="showShotOn">Show "Shot on"</span>
               </label>
-              <label class="ios-toggle">
+              <label class="ios-toggle" data-frame-only>
                 <input type="checkbox" id="showExifInfo" checked>
                 <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
                 <span class="ios-toggle-label" data-i18n="showExifInfo">EXIF Info</span>
@@ -543,7 +547,7 @@
           </div>
         </div>
         <!-- Location position (shown when showLocation is on) -->
-        <div class="setting-row location-pos-row is-hidden" id="locationPositionRow">
+        <div class="setting-row location-pos-row is-hidden" id="locationPositionRow" data-frame-only>
           <div class="setting-label" id="locationPositionLabel" data-i18n="locationPosition">Position</div>
           <div class="setting-control">
             <div class="ratio-pills" role="radiogroup" aria-labelledby="locationPositionLabel">
@@ -563,7 +567,7 @@
           </div>
         </div>
         <!-- Location icon picker (shown when showLocation is on) -->
-        <div class="setting-row is-hidden" id="locationIconRow">
+        <div class="setting-row is-hidden" id="locationIconRow" data-frame-only>
           <div class="setting-label" id="locationIconLabel" data-i18n="mapIcon">Icon</div>
           <div class="setting-control">
             <div class="icon-picker" role="radiogroup" aria-labelledby="locationIconLabel">
@@ -701,7 +705,7 @@
             <p class="setting-note" id="spatialExportNote" data-i18n="exportSpatialHeicUnavailable" hidden>This browser cannot encode HEVC, so spatial photos are saved as 2D photos. Choose side by side to keep both eyes.</p>
           </div>
         </div>
-        <div class="setting-row is-hidden" id="spatialDepthRow">
+        <div class="setting-row is-hidden" id="spatialDepthRow" data-frame-only>
           <div class="setting-label" data-i18n="spatialDepth">Frame pop-out</div>
           <div class="setting-control">
             <div class="range-wrap">
