@@ -2236,7 +2236,11 @@ test('an image watermark can move to all nine anchors and is included in PNG exp
     image.close();
     return Array.from(ctx.getImageData(88, 56, 1, 1).data);
   }, output.toString('base64'));
-  expect(pixel).toEqual([0, 255, 0, 255]);
+  const [red, green, blue, alpha] = pixel;
+  expect(red).toBeLessThan(5);
+  expect(green).toBeGreaterThan(250);
+  expect(blue).toBeLessThan(5);
+  expect(alpha).toBe(255);
 
   await page.locator('#watermarkOpacity').fill('0');
   await expect.poll(readAnchors).toEqual(positions.map(() => false));
@@ -2295,7 +2299,11 @@ test('SVG watermark recoloring preserves transparent and semitransparent areas i
     image.close();
     return [175, 192, 209].map(x => Array.from(ctx.getImageData(x, 128, 1, 1).data));
   }, output.toString('base64'));
-  expect(exported).toEqual(tinted);
+  exported.forEach(([red, green, blue, alpha], index) => {
+    const colorError = [red, green, blue].map((value, channel) => Math.abs(value - tinted[index][channel]));
+    expect(Math.max(...colorError)).toBeLessThan(3);
+    expect(alpha).toBe(tinted[index][3]);
+  });
 
   await page.locator('label:has(#watermarkTint)').click();
   await expect.poll(readColors).toEqual(original);

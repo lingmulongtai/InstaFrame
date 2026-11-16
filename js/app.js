@@ -7440,7 +7440,7 @@ function setupSettingsListeners() {
     _setWatermarkAsset(null);
   });
   document.getElementById('watermarkTint').addEventListener('change', applySettings);
-  document.getElementById('watermarkColor').addEventListener('change', applySettings);
+  document.getElementById('watermarkColor').addEventListener('input', applySettings);
   document.querySelectorAll('input[name="watermarkPosition"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
   });
