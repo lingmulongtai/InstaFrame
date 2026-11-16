@@ -44,6 +44,11 @@ const state = {
     showMapOverlay:      false,
     mapOverlayOpacity:   0.7,
     mapOverlayPosition:  'bottom-right',
+    // ── Watermark ────────────────────────────────────────────────
+    watermarkImage:      null,     // decoded asset for this page session
+    watermarkPosition:   'bottom-right',
+    watermarkSize:       20,
+    watermarkOpacity:    100,
     // ── Export (applied at download time) ────────────────────────
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
@@ -237,8 +242,9 @@ function _waitForAbortablePromise(promise, signal, message = 'Operation cancelle
 }
 
 function _createSettingsSnapshot() {
+  const { watermarkImage, ...settings } = state.settings;
   return {
-    settings: { ...state.settings },
+    settings,
     isCustomColor: !!state.isCustomColor,
     customColorValue: state.customColorValue,
   };
@@ -3497,7 +3503,8 @@ const SETTINGS_KEY = 'instaframe_settings';
 
 function saveSettings() {
   try {
-    const toSave = Object.assign({}, state.settings, {
+    const { watermarkImage, ...settings } = state.settings;
+    const toSave = Object.assign(settings, {
       isCustomColor:    state.isCustomColor,
       customColorValue: state.customColorValue,
     });
@@ -3639,6 +3646,10 @@ function restoreSettings() {
     const r = _findRadioByValue('frameBackground', saved.frameBackground);
     if (r) r.checked = true;
   }
+  const watermarkPosition = _findRadioByValue('watermarkPosition', saved.watermarkPosition);
+  if (watermarkPosition) watermarkPosition.checked = true;
+  if (Number.isFinite(saved.watermarkSize)) document.getElementById('watermarkSize').value = saved.watermarkSize;
+  if (Number.isFinite(saved.watermarkOpacity)) document.getElementById('watermarkOpacity').value = saved.watermarkOpacity;
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -3756,6 +3767,48 @@ function _syncFrameBackgroundControls(mode) {
   document.getElementById('livePreviewCanvas').classList.toggle('frame-dark', isDark);
 }
 
+let _watermarkLoad = null;
+let _watermarkAssetRevision = 0;
+
+function _setWatermarkImage(image, filename = '') {
+  markDoneItemsPending();
+  state.settings.watermarkImage?.removeAttribute('src');
+  state.settings.watermarkImage = image;
+  _watermarkAssetRevision += 1;
+  document.getElementById('watermarkFileName').textContent = filename;
+  document.getElementById('watermarkOptions').classList.toggle('is-hidden', !image);
+  document.getElementById('removeWatermark').classList.toggle('is-hidden', !image);
+  scheduleLivePreview();
+}
+
+async function _loadWatermark(file) {
+  _watermarkLoad?.abort();
+  const controller = new AbortController();
+  _watermarkLoad = controller;
+  try {
+    if (file.size > 16_000_000) {
+      showToast(t('msgWatermarkTooLarge'), 'error');
+      return;
+    }
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
+    const source = isSvg && file.type !== 'image/svg+xml'
+      ? file.slice(0, file.size, 'image/svg+xml')
+      : file;
+    const image = await FrameEngine.loadImage(source, { signal: controller.signal });
+    if (controller.signal.aborted || !image.naturalWidth || !image.naturalHeight ||
+        Math.max(image.naturalWidth, image.naturalHeight) > 4096) {
+      image.removeAttribute('src');
+      if (!controller.signal.aborted) showToast(t('msgWatermarkTooLarge'), 'error');
+      return;
+    }
+    _setWatermarkImage(image, file.name);
+  } catch (error) {
+    if (!controller.signal.aborted) showToast(t('msgWatermarkInvalid'), 'error');
+  } finally {
+    if (_watermarkLoad === controller) _watermarkLoad = null;
+  }
+}
+
 function applySettings(options = {}) {
   const recordHistory = options?.recordHistory !== false;
   const before = _createSettingsSnapshot();
@@ -3822,6 +3875,13 @@ function applySettings(options = {}) {
   if (locIconRow) locIconRow.classList.toggle('is-hidden', !state.settings.showLocation);
   if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
   if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
+
+  state.settings.watermarkPosition = document.querySelector('input[name="watermarkPosition"]:checked').value;
+  for (const id of ['watermarkSize', 'watermarkOpacity']) {
+    const value = document.getElementById(id).value;
+    state.settings[id] = Number(value);
+    document.getElementById(id + 'Val').textContent = value + '%';
+  }
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -3897,6 +3957,12 @@ function _syncDomWithStateSettings() {
   if (locPos) locPos.checked = true;
   const mapOvPos = document.querySelector(`input[name="mapOverlayPos"][value="${s.mapOverlayPosition || 'bottom-right'}"]`);
   if (mapOvPos) mapOvPos.checked = true;
+  const watermarkPosition = _findRadioByValue('watermarkPosition', s.watermarkPosition);
+  if (watermarkPosition) watermarkPosition.checked = true;
+  for (const id of ['watermarkSize', 'watermarkOpacity']) {
+    setVal(id, s[id]);
+    document.getElementById(id + 'Val').textContent = s[id] + '%';
+  }
   const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
   if (ratio) ratio.checked = true;
   const orientation = document.querySelector(`input[name="aspectOrientation"][value="${s.aspectOrientation || 'auto'}"]`);
@@ -3960,7 +4026,7 @@ function _syncDomWithStateSettings() {
 function applySettingsSnapshot(snapshot) {
   if (!snapshot) return;
   _historyLocked = true;
-  const nextSettings = { ...snapshot.settings };
+  const nextSettings = { ...snapshot.settings, watermarkImage: state.settings.watermarkImage };
   if (nextSettings.showMapOverlay && !hasLocationNetworkConsent()) {
     nextSettings.showMapOverlay = false;
   }
@@ -5041,6 +5107,7 @@ function _previewSettingsHash() {
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
+    _watermarkAssetRevision, s.watermarkPosition, s.watermarkSize, s.watermarkOpacity,
   ].join('|');
 }
 
@@ -7162,6 +7229,8 @@ function setupSettingsListeners() {
     ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1),       ''],
     ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%',                         '%'],
     ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%',                         '%'],
+    ['watermarkSize',            'watermarkSizeVal',           v => v + '%',                         '%'],
+    ['watermarkOpacity',         'watermarkOpacityVal',        v => v + '%',                         '%'],
   ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, (_value, options) => applySettings(options), unit));
 
   // Frame color radios (standard swatches)
@@ -7285,6 +7354,23 @@ function setupSettingsListeners() {
   });
   document.querySelectorAll('input[name="mapOverlayPos"]').forEach(r => {
     r.addEventListener('change', applySettings);
+  });
+
+  const watermarkFile = document.getElementById('watermarkFile');
+  const chooseWatermark = document.getElementById('chooseWatermark');
+  chooseWatermark.addEventListener('click', () => watermarkFile.click());
+  watermarkFile.addEventListener('change', () => {
+    const file = watermarkFile.files[0];
+    watermarkFile.value = '';
+    if (file) void _loadWatermark(file);
+  });
+  document.getElementById('removeWatermark').addEventListener('click', () => {
+    _watermarkLoad?.abort();
+    chooseWatermark.focus();
+    _setWatermarkImage(null);
+  });
+  document.querySelectorAll('input[name="watermarkPosition"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
   });
 
   // Aspect ratio radios
@@ -8175,6 +8261,7 @@ function setupCardSize() {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 function _releasePageResources(event) {
   _pageResourcesReleased = true;
+  _watermarkLoad?.abort();
   _clearLoadedMediaFocusRequest();
   // Commit the user's last debounced EXIF keystroke before freezing the page.
   // applyLiveExifEdit schedules a preview render, which is cancelled below so

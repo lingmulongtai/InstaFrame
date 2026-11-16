@@ -1163,6 +1163,23 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 #textColorPicker:disabled { opacity: 0.38; cursor: not-allowed; }
 .is-hidden,
 .sidebar-scroll.frame-disabled [data-frame-only] { display: none !important; }
+
+.watermark-file-row { justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+#watermarkFileName {
+  flex-basis: 100%;
+  color: var(--text-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#watermarkFileName:empty { display: none; }
+.watermark-positions.ratio-pills {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 150px;
+}
+.watermark-positions .ratio-pill label { padding-inline: 2px; }
 .blur-style-select { flex: 1; }
 .location-pos-row .ratio-pill label { font-size: 11px; }
 .setting-row:has(input[name="mapOverlayPos"]) .ratio-pills {

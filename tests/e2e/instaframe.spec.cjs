@@ -2189,6 +2189,64 @@ test('no frame preserves photo dimensions and pixels and restores frame controls
   await expect(page.locator('#samplePrint')).toHaveAttribute('data-background', 'none');
 });
 
+test('an image watermark can move to all nine anchors and is included in PNG exports', async ({ page }) => {
+  const photo = await createBrowserRaster(page, 'image/png');
+  const logo = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 20;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(0, 0, 20, 20);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('#fileInput').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: photo });
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.png', mimeType: 'image/png', buffer: Buffer.from(logo, 'base64'),
+  });
+  await expect(page.locator('#watermarkFileName')).toHaveText('logo.png');
+
+  const preview = page.locator('#livePreviewCanvas');
+  const readAnchors = () => preview.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return [0.13, 0.5, 0.87].flatMap(y => [0.087, 0.5, 0.913].map(x => {
+      const [r, g, b] = ctx.getImageData(Math.floor(x * canvas.width), Math.floor(y * canvas.height), 1, 1).data;
+      return g > 250 && r < 5 && b < 5;
+    }));
+  });
+  const positions = ['top', 'middle', 'bottom'].flatMap(row => ['left', 'center', 'right'].map(column => row + '-' + column));
+  for (const [anchor, position] of positions.entries()) {
+    await page.locator(`label[for="watermark-${position}"]`).click();
+    await expect.poll(readAnchors).toEqual(positions.map((_, index) => index === anchor));
+  }
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const download = await downloadPromise;
+  const output = await fs.readFile(await download.path());
+  const pixel = await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    image.close();
+    return Array.from(ctx.getImageData(88, 56, 1, 1).data);
+  }, output.toString('base64'));
+  expect(pixel).toEqual([0, 255, 0, 255]);
+
+  await page.locator('#watermarkOpacity').fill('0');
+  await expect.poll(readAnchors).toEqual(positions.map(() => false));
+  await page.locator('#undoEditBtn').click();
+  await expect.poll(readAnchors).toEqual(positions.map((_, index) => index === 8));
+  await page.locator('#removeWatermark').click();
+  await expect(page.locator('#watermarkOptions')).toBeHidden();
+  await expect.poll(readAnchors).toEqual(positions.map(() => false));
+});
+
 test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');

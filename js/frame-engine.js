@@ -208,7 +208,7 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Draw the photo, its shadow, the map overlay and the caption at the frame's
+   * Draw the photo, its shadow, the overlays and the caption at the frame's
    * position inside the output. Returns the caption's layout issues.
    */
   function drawFrameContent(ctx, src, exif, settings, layout, mapOverlayImg = null, eyeShift = 0) {
@@ -238,6 +238,7 @@ const FrameEngine = (() => {
           issues,
         });
       }
+      drawWatermark(ctx, settings, sB, imageTop, W, H);
     } finally {
       ctx.restore();
     }
@@ -321,6 +322,28 @@ const FrameEngine = (() => {
   }
 
   // ─── Drawing helpers ──────────────────────────────────────────────────────
+
+  function drawWatermark(ctx, settings, x, y, width, height) {
+    const { watermarkImage: image, watermarkPosition = 'bottom-right', watermarkSize = 20, watermarkOpacity = 100 } = settings;
+    if (!image || !watermarkOpacity || !image.naturalWidth || !image.naturalHeight) return;
+
+    const shortSide = Math.min(width, height);
+    const inset = shortSide * 0.03;
+    const scale = (shortSide * watermarkSize / 100) / Math.max(image.naturalWidth, image.naturalHeight);
+    const logoWidth = image.naturalWidth * scale;
+    const logoHeight = image.naturalHeight * scale;
+    const [row, column] = watermarkPosition.split('-');
+    const offsetX = column === 'left' ? inset : column === 'right' ? width - logoWidth - inset : (width - logoWidth) / 2;
+    const offsetY = row === 'top' ? inset : row === 'bottom' ? height - logoHeight - inset : (height - logoHeight) / 2;
+
+    ctx.save();
+    try {
+      ctx.globalAlpha *= watermarkOpacity / 100;
+      ctx.drawImage(image, x + offsetX, y + offsetY, logoWidth, logoHeight);
+    } finally {
+      ctx.restore();
+    }
+  }
 
   function drawInnerShadow(ctx, x, y, w, h) {
     const grad = ctx.createLinearGradient(x, y + h - 6, x, y + h);
