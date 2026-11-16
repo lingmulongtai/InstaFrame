@@ -2224,6 +2224,40 @@ function _cancelQueuedVideoThumbnail(item) {
   }
 }
 
+function _videoThumbnailOverlayKey(settings = state.settings) {
+  const { frameBackground, watermarkAsset, watermarkPosition, watermarkSize, watermarkOpacity, watermarkTint, watermarkColor } = settings;
+  const frameless = frameBackground === 'none';
+  if (!watermarkAsset) return String(frameless);
+  return [frameless, _watermarkAssetRevision, watermarkPosition, watermarkSize, watermarkOpacity, watermarkTint, watermarkColor].join('|');
+}
+
+function _drawVideoThumbnail(canvas, source) {
+  const width = source.naturalWidth || source.width;
+  const height = source.naturalHeight || source.height;
+  const scale = 200 / Math.max(width, height);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+}
+
+function _refreshVideoThumbnail(item, overlayKey = _videoThumbnailOverlayKey()) {
+  if (item.thumbnailOverlayKey === overlayKey) return;
+  const preview = document.getElementById(`preview-${item.id}`);
+  const source = preview?.querySelector('canvas.thumb-source');
+  const thumbnail = preview?.querySelector('canvas.thumb-framed');
+  if (!source || !thumbnail) return;
+  let framed;
+  try {
+    framed = FrameEngine.renderFrame(source, item.exif, state.settings);
+    _drawVideoThumbnail(thumbnail, framed);
+    item.thumbnailOverlayKey = overlayKey;
+  } catch {
+    // The card is optional and must not change the video's export status.
+  } finally {
+    if (framed) { framed.width = 0; framed.height = 0; }
+  }
+}
+
 function _startVideoThumbnail(item, { reportFailure = true } = {}) {
   if (!item?.isVideo || !state.items.includes(item) || item.thumbnailPromise) return item?.thumbnailPromise || null;
   const previewDiv = document.getElementById(`preview-${item.id}`);
@@ -2254,16 +2288,19 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
     let img = null;
     let framed = null;
     let thumbnailCanvas = null;
+    let sourceCanvas = null;
     let thumbnailCommitted = false;
     try {
       img = await FrameEngine.captureVideoFrame(item.videoReadSource || item.file, 0, { signal: thumbnailSignal });
       if (Number.isFinite(img.sourceDuration) && img.sourceDuration > 0) item.sourceDuration = img.sourceDuration;
       _recordSourceSize(item, img.sourceWidth, img.sourceHeight);
       let thumbnailSource = img;
+      const settings = { ...state.settings };
+      const overlayKey = _videoThumbnailOverlayKey(settings);
       try {
         // Render a framed preview at thumbnail resolution
         framed = await FrameEngine.renderFrameWhenReady(
-          img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
+          img, item.exif, settings, { maxPreviewPx: 400, signal: thumbnailSignal });
         thumbnailSource = framed;
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
@@ -2275,26 +2312,38 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
       const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
       const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
       if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
-      const maxW = 200, maxH = 200;
-      const scale = Math.min(maxW / sourceW, maxH / sourceH);
       thumbnailCanvas = currentPreview.querySelector('canvas.thumb-framed');
       if (!thumbnailCanvas) {
         thumbnailCanvas = document.createElement('canvas');
         thumbnailCanvas.className = 'thumb-framed';
         currentPreview.insertBefore(thumbnailCanvas, currentPreview.firstChild);
       }
-      thumbnailCanvas.width = Math.round(sourceW * scale);
-      thumbnailCanvas.height = Math.round(sourceH * scale);
-      thumbnailCanvas.getContext('2d').drawImage(
-        thumbnailSource, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+      _drawVideoThumbnail(thumbnailCanvas, thumbnailSource);
       thumbnailCommitted = true;
       const origThumb = currentPreview.querySelector('img.thumb-orig');
       if (origThumb) origThumb.style.display = 'none';
+      // Keep a small unframed poster so editing the overlays never has to
+      // open another video decoder for this card.
+      sourceCanvas = document.createElement('canvas');
+      sourceCanvas.className = 'thumb-source';
+      sourceCanvas.style.display = 'none';
+      try {
+        _drawVideoThumbnail(sourceCanvas, img);
+        currentPreview.appendChild(sourceCanvas);
+      } catch {
+        // The framed thumbnail is already available if the optional copy fails.
+      }
+      item.thumbnailOverlayKey = overlayKey;
+      _refreshVideoThumbnail(item);
     } finally {
       if (!thumbnailCommitted && thumbnailCanvas) {
         thumbnailCanvas.width = 0;
         thumbnailCanvas.height = 0;
         thumbnailCanvas.remove();
+      }
+      if (sourceCanvas && !sourceCanvas.isConnected) {
+        sourceCanvas.width = 0;
+        sourceCanvas.height = 0;
       }
       if (framed) { framed.width = 0; framed.height = 0; }
       img?.removeAttribute('src');
@@ -4783,6 +4832,8 @@ function scheduleLivePreview() {
   // HTML preview updates are near-instant; canvas still needs debounce
   _livePreviewTimer = setTimeout(() => {
     _livePreviewTimer = null;
+    const overlayKey = _videoThumbnailOverlayKey();
+    state.items.filter(item => item.isVideo).forEach(item => _refreshVideoThumbnail(item, overlayKey));
     const task = renderLivePreview();
     _activeLivePreviewPromise = task;
     task
