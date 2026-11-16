@@ -346,6 +346,7 @@ let   _activePhotoDecodes = 0;
 const _photoDecodeQueue = [];
 let   _activeVideoThumbnails = 0;
 const _videoThumbnailQueue = [];
+const _videoThumbnailSources = new WeakMap();
 let   _exportProgressPreviousFocus = null;
 let   _lastProgressAnnouncement = -1;
 
@@ -2243,9 +2244,9 @@ function _drawVideoThumbnail(canvas, source) {
 function _refreshVideoThumbnail(item, overlayKey = _videoThumbnailOverlayKey()) {
   if (item.thumbnailOverlayKey === overlayKey) return;
   const preview = document.getElementById(`preview-${item.id}`);
-  const source = preview?.querySelector('canvas.thumb-source');
   const thumbnail = preview?.querySelector('canvas.thumb-framed');
-  if (!source || !thumbnail) return;
+  const source = _videoThumbnailSources.get(thumbnail);
+  if (!source) return;
   let framed;
   try {
     framed = FrameEngine.renderFrame(source, item.exif, state.settings);
@@ -2325,11 +2326,9 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
       // Keep a small unframed poster so editing the overlays never has to
       // open another video decoder for this card.
       sourceCanvas = document.createElement('canvas');
-      sourceCanvas.className = 'thumb-source';
-      sourceCanvas.style.display = 'none';
       try {
         _drawVideoThumbnail(sourceCanvas, img);
-        currentPreview.appendChild(sourceCanvas);
+        _videoThumbnailSources.set(thumbnailCanvas, sourceCanvas);
       } catch {
         // The framed thumbnail is already available if the optional copy fails.
       }
@@ -2341,7 +2340,7 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
         thumbnailCanvas.height = 0;
         thumbnailCanvas.remove();
       }
-      if (sourceCanvas && !sourceCanvas.isConnected) {
+      if (sourceCanvas && _videoThumbnailSources.get(thumbnailCanvas) !== sourceCanvas) {
         sourceCanvas.width = 0;
         sourceCanvas.height = 0;
       }
@@ -6018,6 +6017,12 @@ function _releaseCardThumbnailUrl(card) {
 function _releaseCardPreviewResources(card) {
   _releaseCardThumbnailUrl(card);
   card?.querySelectorAll?.('canvas.thumb-source, canvas.thumb-framed').forEach(canvas => {
+    const videoSource = _videoThumbnailSources.get(canvas);
+    if (videoSource) {
+      videoSource.width = 0;
+      videoSource.height = 0;
+      _videoThumbnailSources.delete(canvas);
+    }
     canvas.width = 0;
     canvas.height = 0;
     canvas.remove();
