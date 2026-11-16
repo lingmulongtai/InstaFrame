@@ -640,7 +640,7 @@
       <div class="settings-section">
         <div class="section-heading">
           <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><rect x="8" y="8" width="6.5" height="6.5" rx="1"/></svg>
-          <span data-i18n="sectionWatermark">Watermark</span>
+          <span id="watermarkSectionLabel" data-i18n="sectionWatermark">Watermark</span>
         </div>
         <div class="setting-row watermark-file-row">
           <input type="file" id="watermarkFile" accept="image/*,.svg" hidden>
@@ -693,22 +693,30 @@
             </div>
           </div>
           <div class="setting-row">
-            <label class="setting-label" for="watermarkSize" data-i18n="watermarkSize">Size</label>
+            <label class="setting-label" for="watermarkSize" id="watermarkSizeLabel" data-i18n="watermarkSize">Size</label>
             <div class="setting-control">
               <div class="range-wrap">
-                <input type="range" id="watermarkSize" min="5" max="60" value="20">
+                <input type="range" id="watermarkSize" min="5" max="60" value="20" aria-labelledby="watermarkSectionLabel watermarkSizeLabel">
                 <span class="range-val" id="watermarkSizeVal">20%</span>
               </div>
             </div>
           </div>
           <div class="setting-row">
-            <label class="setting-label" for="watermarkOpacity" data-i18n="watermarkOpacity">Opacity</label>
+            <label class="setting-label" for="watermarkOpacity" id="watermarkOpacityLabel" data-i18n="watermarkOpacity">Opacity</label>
             <div class="setting-control">
               <div class="range-wrap">
-                <input type="range" id="watermarkOpacity" min="0" max="100" value="100">
+                <input type="range" id="watermarkOpacity" min="0" max="100" value="100" aria-labelledby="watermarkSectionLabel watermarkOpacityLabel">
                 <span class="range-val" id="watermarkOpacityVal">100%</span>
               </div>
             </div>
+          </div>
+          <div class="setting-row watermark-color-row is-hidden" id="watermarkColorRow">
+            <label class="ios-toggle">
+              <input type="checkbox" id="watermarkTint">
+              <span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>
+              <span class="ios-toggle-label" data-i18n="watermarkTint">Recolor SVG</span>
+            </label>
+            <input type="color" id="watermarkColor" value="#ffffff" disabled aria-label="Watermark color" data-i18n="watermarkColor" data-i18n-attr="aria-label">
           </div>
         </div>
       </div>

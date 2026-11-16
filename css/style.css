@@ -1148,7 +1148,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
 
 .text-color-controls { display: flex; align-items: center; gap: 8px; }
 .text-color-controls .ratio-pills { flex: 1; min-width: 0; }
-#textColorPicker {
+:is(#textColorPicker, #watermarkColor) {
   flex: none;
   width: 32px;
   height: 32px;
@@ -1158,9 +1158,9 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   background: var(--surface-2);
   cursor: pointer;
 }
-#textColorPicker::-webkit-color-swatch-wrapper { padding: 0; }
-#textColorPicker::-webkit-color-swatch { border: 0; border-radius: 5px; }
-#textColorPicker:disabled { opacity: 0.38; cursor: not-allowed; }
+:is(#textColorPicker, #watermarkColor)::-webkit-color-swatch-wrapper { padding: 0; }
+:is(#textColorPicker, #watermarkColor)::-webkit-color-swatch { border: 0; border-radius: 5px; }
+:is(#textColorPicker, #watermarkColor):disabled { opacity: 0.38; cursor: not-allowed; }
 .is-hidden,
 .sidebar-scroll.frame-disabled [data-frame-only] { display: none !important; }
 
@@ -1180,6 +1180,7 @@ select.font-select option { font-size: 12px; font-weight: 400; color: var(--text
   max-width: 150px;
 }
 .watermark-positions .ratio-pill label { padding-inline: 2px; }
+.watermark-color-row { justify-content: space-between; }
 .blur-style-select { flex: 1; }
 .location-pos-row .ratio-pill label { font-size: 11px; }
 .setting-row:has(input[name="mapOverlayPos"]) .ratio-pills {

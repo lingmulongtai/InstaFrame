@@ -2247,6 +2247,60 @@ test('an image watermark can move to all nine anchors and is included in PNG exp
   await expect.poll(readAnchors).toEqual(positions.map(() => false));
 });
 
+test('SVG watermark recoloring preserves transparent and semitransparent areas in preview and export', async ({ page }) => {
+  const blankPng = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 384;
+    canvas.height = 256;
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('label[for="fmt-png"]').click();
+  await page.locator('#fileInput').setInputFiles({
+    name: 'blank.png', mimeType: 'image/png', buffer: Buffer.from(blankPng, 'base64'),
+  });
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><path fill="red" d="M0 0h16v20H0z"/><path fill="blue" fill-opacity="0.5" d="M24 0h16v20H24z"/></svg>'),
+  });
+  await expect(page.locator('#watermarkColorRow')).toBeVisible();
+  await page.locator('label[for="watermark-middle-center"]').click();
+
+  const preview = page.locator('#livePreviewCanvas');
+  const readColors = () => preview.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return [0.455, 0.5, 0.545].map(x =>
+      Array.from(ctx.getImageData(Math.floor(x * canvas.width), Math.floor(canvas.height / 2), 1, 1).data)
+    );
+  });
+  const original = [[255, 0, 0, 255], [0, 0, 0, 0], [0, 0, 255, 128]];
+  const tinted = [[0, 255, 0, 255], [0, 0, 0, 0], [0, 255, 0, 128]];
+  await expect.poll(readColors).toEqual(original);
+  await page.locator('label:has(#watermarkTint)').click();
+  await page.locator('#watermarkColor').fill('#00ff00');
+  await expect.poll(readColors).toEqual(tinted);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#dl-btn-1').click();
+  const output = await fs.readFile(await (await downloadPromise).path());
+  const exported = await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    image.close();
+    return [175, 192, 209].map(x => Array.from(ctx.getImageData(x, 128, 1, 1).data));
+  }, output.toString('base64'));
+  expect(exported).toEqual(tinted);
+
+  await page.locator('label:has(#watermarkTint)').click();
+  await expect.poll(readColors).toEqual(original);
+});
+
 test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');

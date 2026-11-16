@@ -45,10 +45,12 @@ const state = {
     mapOverlayOpacity:   0.7,
     mapOverlayPosition:  'bottom-right',
     // ── Watermark ────────────────────────────────────────────────
-    watermarkImage:      null,     // decoded asset for this page session
+    watermarkAsset:      null,     // decoded asset for this page session
     watermarkPosition:   'bottom-right',
     watermarkSize:       20,
     watermarkOpacity:    100,
+    watermarkTint:       false,
+    watermarkColor:      '#ffffff',
     // ── Export (applied at download time) ────────────────────────
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
@@ -242,7 +244,7 @@ function _waitForAbortablePromise(promise, signal, message = 'Operation cancelle
 }
 
 function _createSettingsSnapshot() {
-  const { watermarkImage, ...settings } = state.settings;
+  const { watermarkAsset, ...settings } = state.settings;
   return {
     settings,
     isCustomColor: !!state.isCustomColor,
@@ -3503,7 +3505,7 @@ const SETTINGS_KEY = 'instaframe_settings';
 
 function saveSettings() {
   try {
-    const { watermarkImage, ...settings } = state.settings;
+    const { watermarkAsset, ...settings } = state.settings;
     const toSave = Object.assign(settings, {
       isCustomColor:    state.isCustomColor,
       customColorValue: state.customColorValue,
@@ -3650,6 +3652,8 @@ function restoreSettings() {
   if (watermarkPosition) watermarkPosition.checked = true;
   if (Number.isFinite(saved.watermarkSize)) document.getElementById('watermarkSize').value = saved.watermarkSize;
   if (Number.isFinite(saved.watermarkOpacity)) document.getElementById('watermarkOpacity').value = saved.watermarkOpacity;
+  document.getElementById('watermarkTint').checked = saved.watermarkTint === true;
+  document.getElementById('watermarkColor').value = InstaFrameCore.normalizeHexColor(saved.watermarkColor, '#ffffff');
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -3770,14 +3774,21 @@ function _syncFrameBackgroundControls(mode) {
 let _watermarkLoad = null;
 let _watermarkAssetRevision = 0;
 
-function _setWatermarkImage(image, filename = '') {
+function _syncWatermarkColorControls() {
+  const { watermarkAsset, watermarkTint } = state.settings;
+  document.getElementById('watermarkColorRow').classList.toggle('is-hidden', !watermarkAsset?.isSvg);
+  document.getElementById('watermarkColor').disabled = !watermarkTint;
+}
+
+function _setWatermarkAsset(asset) {
   markDoneItemsPending();
-  state.settings.watermarkImage?.removeAttribute('src');
-  state.settings.watermarkImage = image;
+  state.settings.watermarkAsset?.image.removeAttribute('src');
+  state.settings.watermarkAsset = asset;
   _watermarkAssetRevision += 1;
-  document.getElementById('watermarkFileName').textContent = filename;
-  document.getElementById('watermarkOptions').classList.toggle('is-hidden', !image);
-  document.getElementById('removeWatermark').classList.toggle('is-hidden', !image);
+  document.getElementById('watermarkFileName').textContent = asset?.filename || '';
+  document.getElementById('watermarkOptions').classList.toggle('is-hidden', !asset);
+  document.getElementById('removeWatermark').classList.toggle('is-hidden', !asset);
+  _syncWatermarkColorControls();
   scheduleLivePreview();
 }
 
@@ -3801,7 +3812,7 @@ async function _loadWatermark(file) {
       if (!controller.signal.aborted) showToast(t('msgWatermarkTooLarge'), 'error');
       return;
     }
-    _setWatermarkImage(image, file.name);
+    _setWatermarkAsset({ image, isSvg, filename: file.name });
   } catch (error) {
     if (!controller.signal.aborted) showToast(t('msgWatermarkInvalid'), 'error');
   } finally {
@@ -3882,6 +3893,9 @@ function applySettings(options = {}) {
     state.settings[id] = Number(value);
     document.getElementById(id + 'Val').textContent = value + '%';
   }
+  state.settings.watermarkTint = document.getElementById('watermarkTint').checked;
+  state.settings.watermarkColor = document.getElementById('watermarkColor').value;
+  _syncWatermarkColorControls();
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -3963,6 +3977,9 @@ function _syncDomWithStateSettings() {
     setVal(id, s[id]);
     document.getElementById(id + 'Val').textContent = s[id] + '%';
   }
+  setChecked('watermarkTint', s.watermarkTint);
+  setVal('watermarkColor', s.watermarkColor);
+  _syncWatermarkColorControls();
   const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
   if (ratio) ratio.checked = true;
   const orientation = document.querySelector(`input[name="aspectOrientation"][value="${s.aspectOrientation || 'auto'}"]`);
@@ -4026,7 +4043,7 @@ function _syncDomWithStateSettings() {
 function applySettingsSnapshot(snapshot) {
   if (!snapshot) return;
   _historyLocked = true;
-  const nextSettings = { ...snapshot.settings, watermarkImage: state.settings.watermarkImage };
+  const nextSettings = { ...snapshot.settings, watermarkAsset: state.settings.watermarkAsset };
   if (nextSettings.showMapOverlay && !hasLocationNetworkConsent()) {
     nextSettings.showMapOverlay = false;
   }
@@ -5107,7 +5124,7 @@ function _previewSettingsHash() {
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
-    _watermarkAssetRevision, s.watermarkPosition, s.watermarkSize, s.watermarkOpacity,
+    _watermarkAssetRevision, s.watermarkPosition, s.watermarkSize, s.watermarkOpacity, s.watermarkTint, s.watermarkColor,
   ].join('|');
 }
 
@@ -5294,6 +5311,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
     if (!ctx) throw new Error('Canvas rendering is unavailable');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
   } catch (cause) {
     _resizeCanvasBackingStore(canvas, 0, 0);
@@ -6275,6 +6293,7 @@ function updateItemPreview(item) {
         );
         const context = existing.getContext('2d');
         if (!context) throw new Error('Canvas rendering is unavailable');
+        context.clearRect(0, 0, existing.width, existing.height);
         context.drawImage(item.canvas, 0, 0, existing.width, existing.height);
         framedPreviewReady = true;
       } catch (_) {
@@ -7367,8 +7386,10 @@ function setupSettingsListeners() {
   document.getElementById('removeWatermark').addEventListener('click', () => {
     _watermarkLoad?.abort();
     chooseWatermark.focus();
-    _setWatermarkImage(null);
+    _setWatermarkAsset(null);
   });
+  document.getElementById('watermarkTint').addEventListener('change', applySettings);
+  document.getElementById('watermarkColor').addEventListener('change', applySettings);
   document.querySelectorAll('input[name="watermarkPosition"]').forEach(radio => {
     radio.addEventListener('change', applySettings);
   });

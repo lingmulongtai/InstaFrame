@@ -323,8 +323,38 @@ const FrameEngine = (() => {
 
   // ─── Drawing helpers ──────────────────────────────────────────────────────
 
+  const tintedWatermarks = new WeakMap();
+
+  // Draw SVGs as images and recolor their alpha mask on a reusable canvas.
+  // Size the mask for the current backing store so zoom and exports stay sharp.
+  function tintWatermark(ctx, image, color, width, height) {
+    const transform = ctx.getTransform();
+    const scaledWidth = width * Math.hypot(transform.a, transform.b);
+    const scaledHeight = height * Math.hypot(transform.c, transform.d);
+    const longestSide = Math.max(1, scaledWidth, scaledHeight);
+    const scale = Math.min(4096, Math.max(128, longestSide)) / longestSide;
+    const maskWidth = Math.max(1, Math.ceil(scaledWidth * scale));
+    const maskHeight = Math.max(1, Math.ceil(scaledHeight * scale));
+    const cached = tintedWatermarks.get(image);
+    if (cached?.color === color && cached.canvas.width === maskWidth && cached.canvas.height === maskHeight) {
+      return cached.canvas;
+    }
+    const canvas = cached?.canvas || document.createElement('canvas');
+    canvas.width = maskWidth;
+    canvas.height = maskHeight;
+    const mask = canvas.getContext('2d');
+    if (!mask) throw new Error('Canvas rendering is unavailable');
+    mask.drawImage(image, 0, 0, maskWidth, maskHeight);
+    mask.globalCompositeOperation = 'source-in';
+    mask.fillStyle = color;
+    mask.fillRect(0, 0, maskWidth, maskHeight);
+    tintedWatermarks.set(image, { color, canvas });
+    return canvas;
+  }
+
   function drawWatermark(ctx, settings, x, y, width, height) {
-    const { watermarkImage: image, watermarkPosition = 'bottom-right', watermarkSize = 20, watermarkOpacity = 100 } = settings;
+    const { watermarkAsset, watermarkPosition = 'bottom-right', watermarkSize = 20, watermarkOpacity = 100 } = settings;
+    const image = watermarkAsset?.image;
     if (!image || !watermarkOpacity || !image.naturalWidth || !image.naturalHeight) return;
 
     const shortSide = Math.min(width, height);
@@ -335,11 +365,14 @@ const FrameEngine = (() => {
     const [row, column] = watermarkPosition.split('-');
     const offsetX = column === 'left' ? inset : column === 'right' ? width - logoWidth - inset : (width - logoWidth) / 2;
     const offsetY = row === 'top' ? inset : row === 'bottom' ? height - logoHeight - inset : (height - logoHeight) / 2;
+    const logo = watermarkAsset.isSvg && settings.watermarkTint
+      ? tintWatermark(ctx, image, settings.watermarkColor, logoWidth, logoHeight)
+      : image;
 
     ctx.save();
     try {
       ctx.globalAlpha *= watermarkOpacity / 100;
-      ctx.drawImage(image, x + offsetX, y + offsetY, logoWidth, logoHeight);
+      ctx.drawImage(logo, x + offsetX, y + offsetY, logoWidth, logoHeight);
     } finally {
       ctx.restore();
     }
