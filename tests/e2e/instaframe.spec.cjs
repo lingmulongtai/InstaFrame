@@ -2301,6 +2301,38 @@ test('SVG watermark recoloring preserves transparent and semitransparent areas i
   await expect.poll(readColors).toEqual(original);
 });
 
+test('video card thumbnails reflect watermark changes without opening another decoder', async ({ page }) => {
+  const video = { name: 'clip.webm', mimeType: 'video/webm', buffer: createWebm() };
+  await page.locator('#fileInput').setInputFiles(video);
+  const thumbnail = page.locator('#preview-1 canvas.thumb-framed');
+  await expect(thumbnail).toBeVisible();
+  await page.evaluate(() => {
+    window.FrameEngine.captureVideoFrame = () => {
+      throw new Error('Changing watermark settings must not decode the video again');
+    };
+  });
+
+  await page.locator('label[for="bg-none"]').click();
+  await page.locator('#watermarkFile').setInputFiles({
+    name: 'logo.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="20" height="20" fill="#00ff00"/></svg>'),
+  });
+  await expect(page.locator('#watermarkOptions')).toBeVisible();
+  await page.locator('label[for="watermark-middle-center"]').click();
+
+  const readThumbnail = () => thumbnail.evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    return {
+      height: canvas.height,
+      center: Array.from(ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data),
+    };
+  });
+  await expect.poll(readThumbnail).toEqual({ height: 113, center: [0, 255, 0, 255] });
+  await page.locator('#removeWatermark').click();
+  await expect.poll(async () => (await readThumbnail()).center).not.toEqual([0, 255, 0, 255]);
+});
+
 test('cancelled photo encoding keeps retries serialized until the native callback settles', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
