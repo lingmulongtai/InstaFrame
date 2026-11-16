@@ -128,7 +128,7 @@ const FrameEngine = (() => {
 
   async function loadFrameFonts(settings, signal = null) {
     assertNotAborted(signal);
-    if (!document.fonts) return;
+    if (settings.frameBackground === 'none' || !document.fonts) return;
     const family = settings.fontFamily || 'Inter';
     const fam = `'${family}'`;
     const fonts = captionFonts(settings, 16, 16, fam);
@@ -176,6 +176,7 @@ const FrameEngine = (() => {
     const W = sourceWidth || img.naturalWidth || img.videoWidth || img.width;
     const H = sourceHeight || img.naturalHeight || img.videoHeight || img.height;
     const layout = computeFrameLayout(W, H, settings, exif);
+    const photoEyeShift = layout.hasFrame ? eyeShift : 0;
 
     const canvas = document.createElement('canvas');
     canvas.width  = layout.canvasW;
@@ -184,8 +185,8 @@ const FrameEngine = (() => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas rendering is unavailable');
       drawFrameBackground(ctx, img, settings, layout);
-      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, eyeShift);
-      canvas.photoPlacement = photoPlacement(layout, eyeShift);
+      canvas.layoutIssues = drawFrameContent(ctx, img, exif, settings, layout, mapOverlayImg, photoEyeShift);
+      canvas.photoPlacement = photoPlacement(layout, photoEyeShift);
       return canvas;
     } catch (error) {
       canvas.width = 0;
@@ -196,7 +197,9 @@ const FrameEngine = (() => {
 
   /** Fill the whole output surface, including ratio and padding space. */
   function drawFrameBackground(ctx, src, settings, layout) {
-    if (settings.frameBackground === 'blur') {
+    if (!layout.hasFrame) {
+      ctx.clearRect(0, 0, layout.canvasW, layout.canvasH);
+    } else if (settings.frameBackground === 'blur') {
       drawBlurBackground(ctx, src, layout.canvasW, layout.canvasH, settings);
     } else {
       ctx.fillStyle = layout.frameColor;
@@ -205,7 +208,7 @@ const FrameEngine = (() => {
   }
 
   /**
-   * Draw the photo, its shadow, the map overlay and the caption at the frame's
+   * Draw the photo, its shadow, the overlays and the caption at the frame's
    * position inside the output. Returns the caption's layout issues.
    */
   function drawFrameContent(ctx, src, exif, settings, layout, mapOverlayImg = null, eyeShift = 0) {
@@ -220,19 +223,22 @@ const FrameEngine = (() => {
       ctx.clip();
       if (eyeShift) drawWindowedPhoto(ctx, src, sB, imageTop, W, H, eyeShift * W);
       else drawImageAtY(ctx, src, sB, imageTop, W, H);
-      drawInnerShadow(ctx, sB, imageTop, W, H);
+      if (layout.hasFrame) drawInnerShadow(ctx, sB, imageTop, W, H);
       if (mapOverlayImg && settings.showMapOverlay) {
         drawMapOverlay(ctx, mapOverlayImg, settings, { sB, tB: imageTop, W, H });
       }
-      drawExifText(ctx, exif || {}, settings, {
-        canvasW: layout.baseCanvasW,
-        canvasH: layout.baseCanvasH,
-        imageBottom,
-        bottomAreaHeight: bB,
-        isPortrait,
-        frameColor,
-        issues,
-      });
+      if (layout.hasFrame) {
+        drawExifText(ctx, exif || {}, settings, {
+          canvasW: layout.baseCanvasW,
+          canvasH: layout.baseCanvasH,
+          imageBottom,
+          bottomAreaHeight: bB,
+          isPortrait,
+          frameColor,
+          issues,
+        });
+      }
+      drawWatermark(ctx, settings, sB, imageTop, W, H);
     } finally {
       ctx.restore();
     }
@@ -316,6 +322,61 @@ const FrameEngine = (() => {
   }
 
   // ─── Drawing helpers ──────────────────────────────────────────────────────
+
+  const tintedWatermarks = new WeakMap();
+
+  // Draw SVGs as images and recolor their alpha mask on a reusable canvas.
+  // Size the mask for the current backing store so zoom and exports stay sharp.
+  function tintWatermark(ctx, image, color, width, height) {
+    const transform = ctx.getTransform();
+    const scaledWidth = width * Math.hypot(transform.a, transform.b);
+    const scaledHeight = height * Math.hypot(transform.c, transform.d);
+    const longestSide = Math.max(1, scaledWidth, scaledHeight);
+    const scale = Math.min(4096, Math.max(128, longestSide)) / longestSide;
+    const maskWidth = Math.max(1, Math.ceil(scaledWidth * scale));
+    const maskHeight = Math.max(1, Math.ceil(scaledHeight * scale));
+    const cached = tintedWatermarks.get(image);
+    if (cached?.color === color && cached.canvas.width === maskWidth && cached.canvas.height === maskHeight) {
+      return cached.canvas;
+    }
+    const canvas = cached?.canvas || document.createElement('canvas');
+    canvas.width = maskWidth;
+    canvas.height = maskHeight;
+    const mask = canvas.getContext('2d');
+    if (!mask) throw new Error('Canvas rendering is unavailable');
+    mask.drawImage(image, 0, 0, maskWidth, maskHeight);
+    mask.globalCompositeOperation = 'source-in';
+    mask.fillStyle = color;
+    mask.fillRect(0, 0, maskWidth, maskHeight);
+    tintedWatermarks.set(image, { color, canvas });
+    return canvas;
+  }
+
+  function drawWatermark(ctx, settings, x, y, width, height) {
+    const { watermarkAsset, watermarkPosition = 'bottom-right', watermarkSize = 20, watermarkOpacity = 100 } = settings;
+    const image = watermarkAsset?.image;
+    if (!image || !watermarkOpacity || !image.naturalWidth || !image.naturalHeight) return;
+
+    const shortSide = Math.min(width, height);
+    const inset = shortSide * 0.03;
+    const scale = (shortSide * watermarkSize / 100) / Math.max(image.naturalWidth, image.naturalHeight);
+    const logoWidth = image.naturalWidth * scale;
+    const logoHeight = image.naturalHeight * scale;
+    const [row, column] = watermarkPosition.split('-');
+    const offsetX = column === 'left' ? inset : column === 'right' ? width - logoWidth - inset : (width - logoWidth) / 2;
+    const offsetY = row === 'top' ? inset : row === 'bottom' ? height - logoHeight - inset : (height - logoHeight) / 2;
+    const logo = watermarkAsset.isSvg && settings.watermarkTint
+      ? tintWatermark(ctx, image, settings.watermarkColor, logoWidth, logoHeight)
+      : image;
+
+    ctx.save();
+    try {
+      ctx.globalAlpha *= watermarkOpacity / 100;
+      ctx.drawImage(logo, x + offsetX, y + offsetY, logoWidth, logoHeight);
+    } finally {
+      ctx.restore();
+    }
+  }
 
   function drawInnerShadow(ctx, x, y, w, h) {
     const grad = ctx.createLinearGradient(x, y + h - 6, x, y + h);
@@ -2303,8 +2364,9 @@ const FrameEngine = (() => {
    */
   function computeUnboundedFrameLayout(sourceW, sourceH, settings, exif = {}) {
     const W = sourceW, H = sourceH;
+    const hasFrame      = settings.frameBackground !== 'none';
     const isPortrait    = H > W;
-    const ts            = settings.thicknessScale || 1;
+    const ts            = hasFrame ? settings.thicknessScale || 1 : 0;
     const baseBorder    = Math.min(W, H) * 0.05 * 1.2 * ts;
     const sideBorder    = baseBorder * 0.5;
     const showLoc       = settings.showLocation && exif?.location && settings.locationPosition === 'below-exif';
@@ -2314,13 +2376,13 @@ const FrameEngine = (() => {
     const sB            = sideBorder   * pf;
     const tB            = sideBorder   * pf;
     const bB            = bottomBorder * pf;
-    const imageLayout   = computeImageVerticalLayout(H, tB, bB, settings.imageOffsetY);
+    const imageLayout   = computeImageVerticalLayout(H, tB, bB, hasFrame ? settings.imageOffsetY : 0);
     const baseCanvasW   = Math.round(W + sB * 2);
     const baseCanvasH   = imageLayout.canvasH;
     const frameColor    = settings.frameColor || '#F0F0F0';
-    const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, settings);
+    const postProcess = computePostProcessLayout(baseCanvasW, baseCanvasH, hasFrame ? settings : {});
     return {
-      W, H, sB, tB, bB,
+      W, H, sB, tB, bB, hasFrame,
       baseCanvasW,
       baseCanvasH,
       canvasW: postProcess.canvasW,

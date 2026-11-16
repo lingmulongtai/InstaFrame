@@ -9,7 +9,7 @@ const state = {
   settings: {
     // ── Frame rendering ──────────────────────────────────────────
     frameColor:          '#F0F0F0',
-    frameBackground:     'color',   // 'color' | 'blur'
+    frameBackground:     'color',   // 'color' | 'blur' | 'none'
     blurRadius:          20,
     blurStyle:           'normal',  // 'normal' | 'grayscale' | 'sepia' | 'saturate'
     blurBrightness:      80,
@@ -44,6 +44,13 @@ const state = {
     showMapOverlay:      false,
     mapOverlayOpacity:   0.7,
     mapOverlayPosition:  'bottom-right',
+    // ── Watermark ────────────────────────────────────────────────
+    watermarkAsset:      null,     // decoded asset for this page session
+    watermarkPosition:   'bottom-right',
+    watermarkSize:       20,
+    watermarkOpacity:    100,
+    watermarkTint:       false,
+    watermarkColor:      '#ffffff',
     // ── Export (applied at download time) ────────────────────────
     exportPhotoFormat:   'jpeg',   // 'jpeg' | 'webp' | 'png'
     exportPhotoQuality:  92,       // 60–100 (ignored for PNG)
@@ -237,8 +244,9 @@ function _waitForAbortablePromise(promise, signal, message = 'Operation cancelle
 }
 
 function _createSettingsSnapshot() {
+  const { watermarkAsset, ...settings } = state.settings;
   return {
-    settings: { ...state.settings },
+    settings,
     isCustomColor: !!state.isCustomColor,
     customColorValue: state.customColorValue,
   };
@@ -338,6 +346,7 @@ let   _activePhotoDecodes = 0;
 const _photoDecodeQueue = [];
 let   _activeVideoThumbnails = 0;
 const _videoThumbnailQueue = [];
+const _videoThumbnailSources = new WeakMap();
 let   _exportProgressPreviousFocus = null;
 let   _lastProgressAnnouncement = -1;
 
@@ -1185,6 +1194,7 @@ function _isSpatialItem(item) {
 }
 
 function _spatialEyeShift(item) {
+  if (state.settings.frameBackground === 'none') return 0;
   const near = Math.max(-0.05, Math.min(0.1, Number(item?.stereoDisparity?.near) || 0));
   const depth = Math.max(0, Math.min(5, Number(state.settings.spatialDepth) || 0)) / 100;
   return Math.max(0, Math.min(SPATIAL_MAX_EYE_SHIFT, (near + depth) / 2));
@@ -1235,7 +1245,7 @@ async function _loadStereoSources(item, signal) {
     throw failed.reason;
   }
   const [left, right] = results.map(result => result.value);
-  if (!item.stereoDisparity) {
+  if (!item.stereoDisparity && state.settings.frameBackground !== 'none') {
     item.stereoDisparity = FrameEngine.estimateStereoDisparity(left, right) || { near: 0, far: 0, samples: 0 };
   }
   return { left, right };
@@ -2216,6 +2226,40 @@ function _cancelQueuedVideoThumbnail(item) {
   }
 }
 
+function _videoThumbnailOverlayKey(settings = state.settings) {
+  const { frameBackground, watermarkAsset, watermarkPosition, watermarkSize, watermarkOpacity, watermarkTint, watermarkColor } = settings;
+  const frameless = frameBackground === 'none';
+  if (!watermarkAsset) return String(frameless);
+  return [frameless, _watermarkAssetRevision, watermarkPosition, watermarkSize, watermarkOpacity, watermarkTint, watermarkColor].join('|');
+}
+
+function _drawVideoThumbnail(canvas, source) {
+  const width = source.naturalWidth || source.width;
+  const height = source.naturalHeight || source.height;
+  const scale = 200 / Math.max(width, height);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+}
+
+function _refreshVideoThumbnail(item, overlayKey = _videoThumbnailOverlayKey()) {
+  if (item.thumbnailOverlayKey === overlayKey) return;
+  const preview = document.getElementById(`preview-${item.id}`);
+  const thumbnail = preview?.querySelector('canvas.thumb-framed');
+  const source = _videoThumbnailSources.get(thumbnail);
+  if (!source) return;
+  let framed;
+  try {
+    framed = FrameEngine.renderFrame(source, item.exif, state.settings);
+    _drawVideoThumbnail(thumbnail, framed);
+    item.thumbnailOverlayKey = overlayKey;
+  } catch {
+    // The card is optional and must not change the video's export status.
+  } finally {
+    if (framed) { framed.width = 0; framed.height = 0; }
+  }
+}
+
 function _startVideoThumbnail(item, { reportFailure = true } = {}) {
   if (!item?.isVideo || !state.items.includes(item) || item.thumbnailPromise) return item?.thumbnailPromise || null;
   const previewDiv = document.getElementById(`preview-${item.id}`);
@@ -2246,16 +2290,19 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
     let img = null;
     let framed = null;
     let thumbnailCanvas = null;
+    let sourceCanvas = null;
     let thumbnailCommitted = false;
     try {
       img = await FrameEngine.captureVideoFrame(item.videoReadSource || item.file, 0, { signal: thumbnailSignal });
       if (Number.isFinite(img.sourceDuration) && img.sourceDuration > 0) item.sourceDuration = img.sourceDuration;
       _recordSourceSize(item, img.sourceWidth, img.sourceHeight);
       let thumbnailSource = img;
+      const settings = { ...state.settings };
+      const overlayKey = _videoThumbnailOverlayKey(settings);
       try {
         // Render a framed preview at thumbnail resolution
         framed = await FrameEngine.renderFrameWhenReady(
-          img, item.exif, state.settings, { maxPreviewPx: 400, signal: thumbnailSignal });
+          img, item.exif, settings, { maxPreviewPx: 400, signal: thumbnailSignal });
         thumbnailSource = framed;
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
@@ -2267,26 +2314,36 @@ function _startVideoThumbnail(item, { reportFailure = true } = {}) {
       const sourceW = thumbnailSource.naturalWidth || thumbnailSource.width;
       const sourceH = thumbnailSource.naturalHeight || thumbnailSource.height;
       if (!(sourceW > 0 && sourceH > 0)) throw new Error('Video thumbnail has no decoded dimensions');
-      const maxW = 200, maxH = 200;
-      const scale = Math.min(maxW / sourceW, maxH / sourceH);
       thumbnailCanvas = currentPreview.querySelector('canvas.thumb-framed');
       if (!thumbnailCanvas) {
         thumbnailCanvas = document.createElement('canvas');
         thumbnailCanvas.className = 'thumb-framed';
         currentPreview.insertBefore(thumbnailCanvas, currentPreview.firstChild);
       }
-      thumbnailCanvas.width = Math.round(sourceW * scale);
-      thumbnailCanvas.height = Math.round(sourceH * scale);
-      thumbnailCanvas.getContext('2d').drawImage(
-        thumbnailSource, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+      _drawVideoThumbnail(thumbnailCanvas, thumbnailSource);
       thumbnailCommitted = true;
       const origThumb = currentPreview.querySelector('img.thumb-orig');
       if (origThumb) origThumb.style.display = 'none';
+      // Keep a small unframed poster so editing the overlays never has to
+      // open another video decoder for this card.
+      sourceCanvas = document.createElement('canvas');
+      try {
+        _drawVideoThumbnail(sourceCanvas, img);
+        _videoThumbnailSources.set(thumbnailCanvas, sourceCanvas);
+      } catch {
+        // The framed thumbnail is already available if the optional copy fails.
+      }
+      item.thumbnailOverlayKey = overlayKey;
+      _refreshVideoThumbnail(item);
     } finally {
       if (!thumbnailCommitted && thumbnailCanvas) {
         thumbnailCanvas.width = 0;
         thumbnailCanvas.height = 0;
         thumbnailCanvas.remove();
+      }
+      if (sourceCanvas && _videoThumbnailSources.get(thumbnailCanvas) !== sourceCanvas) {
+        sourceCanvas.width = 0;
+        sourceCanvas.height = 0;
       }
       if (framed) { framed.width = 0; framed.height = 0; }
       img?.removeAttribute('src');
@@ -3497,7 +3554,8 @@ const SETTINGS_KEY = 'instaframe_settings';
 
 function saveSettings() {
   try {
-    const toSave = Object.assign({}, state.settings, {
+    const { watermarkAsset, ...settings } = state.settings;
+    const toSave = Object.assign(settings, {
       isCustomColor:    state.isCustomColor,
       customColorValue: state.customColorValue,
     });
@@ -3639,11 +3697,12 @@ function restoreSettings() {
     const r = _findRadioByValue('frameBackground', saved.frameBackground);
     if (r) r.checked = true;
   }
-  const isBlurBg = saved.frameBackground === 'blur';
-  const frameColorRow = document.getElementById('frameColorRow');
-  const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
-  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
+  const watermarkPosition = _findRadioByValue('watermarkPosition', saved.watermarkPosition);
+  if (watermarkPosition) watermarkPosition.checked = true;
+  if (Number.isFinite(saved.watermarkSize)) document.getElementById('watermarkSize').value = saved.watermarkSize;
+  if (Number.isFinite(saved.watermarkOpacity)) document.getElementById('watermarkOpacity').value = saved.watermarkOpacity;
+  document.getElementById('watermarkTint').checked = saved.watermarkTint === true;
+  document.getElementById('watermarkColor').value = InstaFrameCore.normalizeHexColor(saved.watermarkColor, '#ffffff');
   // Blur sliders
   if (saved.blurRadius != null) {
     const el = document.getElementById('blurRadiusRange');
@@ -3752,6 +3811,64 @@ function markDoneItemsPending() {
   markItemsPending();
 }
 
+function _syncFrameBackgroundControls(mode) {
+  const isFrameless = mode === 'none';
+  document.getElementById('sidebarScroll').classList.toggle('frame-disabled', isFrameless);
+  document.getElementById('frameColorRow').classList.toggle('is-hidden', mode !== 'color');
+  document.getElementById('blurOptionsRow').classList.toggle('is-hidden', mode !== 'blur');
+  const isDark = mode === 'color' && FrameEngine.isColorDark(state.settings.frameColor);
+  document.getElementById('livePreviewCanvas').classList.toggle('frame-dark', isDark);
+}
+
+let _watermarkLoad = null;
+let _watermarkAssetRevision = 0;
+
+function _syncWatermarkColorControls() {
+  const { watermarkAsset, watermarkTint } = state.settings;
+  document.getElementById('watermarkColorRow').classList.toggle('is-hidden', !watermarkAsset?.isSvg);
+  document.getElementById('watermarkColor').disabled = !watermarkTint;
+}
+
+function _setWatermarkAsset(asset) {
+  markDoneItemsPending();
+  state.settings.watermarkAsset?.image.removeAttribute('src');
+  state.settings.watermarkAsset = asset;
+  _watermarkAssetRevision += 1;
+  document.getElementById('watermarkFileName').textContent = asset?.filename || '';
+  document.getElementById('watermarkOptions').classList.toggle('is-hidden', !asset);
+  document.getElementById('removeWatermark').classList.toggle('is-hidden', !asset);
+  _syncWatermarkColorControls();
+  scheduleLivePreview();
+}
+
+async function _loadWatermark(file) {
+  _watermarkLoad?.abort();
+  const controller = new AbortController();
+  _watermarkLoad = controller;
+  try {
+    if (file.size > 16_000_000) {
+      showToast(t('msgWatermarkTooLarge'), 'error');
+      return;
+    }
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
+    const source = isSvg && file.type !== 'image/svg+xml'
+      ? file.slice(0, file.size, 'image/svg+xml')
+      : file;
+    const image = await FrameEngine.loadImage(source, { signal: controller.signal });
+    if (controller.signal.aborted || !image.naturalWidth || !image.naturalHeight ||
+        Math.max(image.naturalWidth, image.naturalHeight) > 4096) {
+      image.removeAttribute('src');
+      if (!controller.signal.aborted) showToast(t('msgWatermarkTooLarge'), 'error');
+      return;
+    }
+    _setWatermarkAsset({ image, isSvg, filename: file.name });
+  } catch (error) {
+    if (!controller.signal.aborted) showToast(t('msgWatermarkInvalid'), 'error');
+  } finally {
+    if (_watermarkLoad === controller) _watermarkLoad = null;
+  }
+}
+
 function applySettings(options = {}) {
   const recordHistory = options?.recordHistory !== false;
   const before = _createSettingsSnapshot();
@@ -3766,23 +3883,12 @@ function applySettings(options = {}) {
   // Frame background mode
   const bgRadio = document.querySelector('input[name="frameBackground"]:checked');
   state.settings.frameBackground = bgRadio ? bgRadio.value : 'color';
-  const isBlurBg = state.settings.frameBackground === 'blur';
-  const frameColorRow = document.getElementById('frameColorRow');
-  const blurOptionsRow = document.getElementById('blurOptionsRow');
-  if (frameColorRow) frameColorRow.classList.toggle('is-hidden', isBlurBg);
-  if (blurOptionsRow) blurOptionsRow.classList.toggle('is-hidden', !isBlurBg);
+  _syncFrameBackgroundControls(state.settings.frameBackground);
 
-  if (isBlurBg) {
+  if (state.settings.frameBackground === 'blur') {
     state.settings.blurRadius     = parseInt(document.getElementById('blurRadiusRange')?.value || '20', 10);
     state.settings.blurStyle      = document.getElementById('blurStyleSelect')?.value || 'normal';
     state.settings.blurBrightness = parseInt(document.getElementById('blurBrightnessRange')?.value || '80', 10);
-  }
-
-  // Update dark-frame outline on preview canvas
-  const previewCanvas = document.getElementById('livePreviewCanvas');
-  if (previewCanvas) {
-    const isDark = FrameEngine.isColorDark(state.settings.frameColor);
-    previewCanvas.classList.toggle('frame-dark', isDark && !isBlurBg);
   }
 
   state.settings.thicknessScale   = parseFloat(document.getElementById('thicknessRange').value);
@@ -3829,6 +3935,16 @@ function applySettings(options = {}) {
   if (locIconRow) locIconRow.classList.toggle('is-hidden', !state.settings.showLocation);
   if (mapOvOpRow) mapOvOpRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
   if (mapOvPosRow) mapOvPosRow.classList.toggle('is-hidden', !(state.settings.showLocation && state.settings.showMapOverlay));
+
+  state.settings.watermarkPosition = document.querySelector('input[name="watermarkPosition"]:checked').value;
+  for (const id of ['watermarkSize', 'watermarkOpacity']) {
+    const value = document.getElementById(id).value;
+    state.settings[id] = Number(value);
+    document.getElementById(id + 'Val').textContent = value + '%';
+  }
+  state.settings.watermarkTint = document.getElementById('watermarkTint').checked;
+  state.settings.watermarkColor = document.getElementById('watermarkColor').value;
+  _syncWatermarkColorControls();
 
   const ratioRadio = document.querySelector('input[name="aspectRatio"]:checked');
   state.settings.aspectRatio = ratioRadio ? ratioRadio.value : 'original';
@@ -3904,6 +4020,15 @@ function _syncDomWithStateSettings() {
   if (locPos) locPos.checked = true;
   const mapOvPos = document.querySelector(`input[name="mapOverlayPos"][value="${s.mapOverlayPosition || 'bottom-right'}"]`);
   if (mapOvPos) mapOvPos.checked = true;
+  const watermarkPosition = _findRadioByValue('watermarkPosition', s.watermarkPosition);
+  if (watermarkPosition) watermarkPosition.checked = true;
+  for (const id of ['watermarkSize', 'watermarkOpacity']) {
+    setVal(id, s[id]);
+    document.getElementById(id + 'Val').textContent = s[id] + '%';
+  }
+  setChecked('watermarkTint', s.watermarkTint);
+  setVal('watermarkColor', s.watermarkColor);
+  _syncWatermarkColorControls();
   const ratio = document.querySelector(`input[name="aspectRatio"][value="${s.aspectRatio}"]`);
   if (ratio) ratio.checked = true;
   const orientation = document.querySelector(`input[name="aspectOrientation"][value="${s.aspectOrientation || 'auto'}"]`);
@@ -3939,13 +4064,9 @@ function _syncDomWithStateSettings() {
   setText('spatialDepthRangeVal', Number(s.spatialDepth ?? 1).toFixed(1) + '%');
 
   // Frame background mode
-  const bgR = document.querySelector(`input[name="frameBackground"][value="${s.frameBackground || 'color'}"]`);
+  const bgR = _findRadioByValue('frameBackground', s.frameBackground || 'color');
   if (bgR) bgR.checked = true;
-  const isBlur = s.frameBackground === 'blur';
-  const fcRow = document.getElementById('frameColorRow');
-  const boRow = document.getElementById('blurOptionsRow');
-  if (fcRow) fcRow.classList.toggle('is-hidden', isBlur);
-  if (boRow) boRow.classList.toggle('is-hidden', !isBlur);
+  _syncFrameBackgroundControls(s.frameBackground);
   setVal('blurRadiusRange', s.blurRadius ?? 20);
   setText('blurRadiusVal', (s.blurRadius ?? 20) + 'px');
   setVal('blurBrightnessRange', s.blurBrightness ?? 80);
@@ -3971,7 +4092,7 @@ function _syncDomWithStateSettings() {
 function applySettingsSnapshot(snapshot) {
   if (!snapshot) return;
   _historyLocked = true;
-  const nextSettings = { ...snapshot.settings };
+  const nextSettings = { ...snapshot.settings, watermarkAsset: state.settings.watermarkAsset };
   if (nextSettings.showMapOverlay && !hasLocationNetworkConsent()) {
     nextSettings.showMapOverlay = false;
   }
@@ -4711,6 +4832,8 @@ function scheduleLivePreview() {
   // HTML preview updates are near-instant; canvas still needs debounce
   _livePreviewTimer = setTimeout(() => {
     _livePreviewTimer = null;
+    const overlayKey = _videoThumbnailOverlayKey();
+    state.items.filter(item => item.isVideo).forEach(item => _refreshVideoThumbnail(item, overlayKey));
     const task = renderLivePreview();
     _activeLivePreviewPromise = task;
     task
@@ -4895,11 +5018,9 @@ function setupVideoPreviewBar() {
 function applyPreviewTransform() {
   _clearLivePreviewDetail();
   const transform = `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`;
-  const isDark = FrameEngine.isColorDark(state.settings.frameColor);
   const canvas = document.getElementById('livePreviewCanvas');
   if (canvas) {
     canvas.style.transform = transform;
-    canvas.classList.toggle('frame-dark', isDark);
   }
 }
 
@@ -5054,6 +5175,7 @@ function _previewSettingsHash() {
     s.showShotOn, s.showExifInfo, s.cameraNameOnly,
     s.showLocation, s.locationPosition, s.locationIconStyle, s.outerPadding, s.aspectRatio, s.aspectOrientation,
     s.showMapOverlay, s.mapOverlayOpacity, s.mapOverlayPosition,
+    _watermarkAssetRevision, s.watermarkPosition, s.watermarkSize, s.watermarkOpacity, s.watermarkTint, s.watermarkColor,
   ].join('|');
 }
 
@@ -5240,6 +5362,7 @@ function _drawFrameToCanvas(canvas, pane, emptyEl, src) {
     if (!ctx) throw new Error('Canvas rendering is unavailable');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
   } catch (cause) {
     _resizeCanvasBackingStore(canvas, 0, 0);
@@ -5895,6 +6018,12 @@ function _releaseCardThumbnailUrl(card) {
 function _releaseCardPreviewResources(card) {
   _releaseCardThumbnailUrl(card);
   card?.querySelectorAll?.('canvas.thumb-source, canvas.thumb-framed').forEach(canvas => {
+    const videoSource = _videoThumbnailSources.get(canvas);
+    if (videoSource) {
+      videoSource.width = 0;
+      videoSource.height = 0;
+      _videoThumbnailSources.delete(canvas);
+    }
     canvas.width = 0;
     canvas.height = 0;
     canvas.remove();
@@ -6221,6 +6350,7 @@ function updateItemPreview(item) {
         );
         const context = existing.getContext('2d');
         if (!context) throw new Error('Canvas rendering is unavailable');
+        context.clearRect(0, 0, existing.width, existing.height);
         context.drawImage(item.canvas, 0, 0, existing.width, existing.height);
         framedPreviewReady = true;
       } catch (_) {
@@ -6279,8 +6409,8 @@ function _syncSamplePrint() {
   print.style.setProperty('--sample-frame', frameColor);
   print.style.setProperty('--sample-thickness', String(Number(s.thicknessScale) || 1));
   print.style.setProperty('--sample-text-custom', InstaFrameCore.normalizeHexColor(s.textColor, '#FFFFFF'));
-  print.dataset.background = blur ? 'blur' : 'color';
-  print.dataset.frame = !blur && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
+  print.dataset.background = s.frameBackground;
+  print.dataset.frame = s.frameBackground === 'color' && FrameEngine.isColorDark(frameColor) ? 'dark' : 'light';
   print.dataset.tone = tone;
   print.classList.toggle('hide-shot-on', s.showShotOn === false);
   print.classList.toggle('hide-exif', s.showExifInfo === false);
@@ -7175,6 +7305,8 @@ function setupSettingsListeners() {
     ['textOffsetRange',         'textOffsetRangeVal',         v => parseFloat(v).toFixed(1),       ''],
     ['outerPaddingRange',       'outerPaddingRangeVal',       v => v + '%',                         '%'],
     ['mapOverlayOpacityRange',  'mapOverlayOpacityVal',       v => v + '%',                         '%'],
+    ['watermarkSize',            'watermarkSizeVal',           v => v + '%',                         '%'],
+    ['watermarkOpacity',         'watermarkOpacityVal',        v => v + '%',                         '%'],
   ].forEach(([id, valId, fmt, unit]) => bindRangeControl(id, valId, fmt, (_value, options) => applySettings(options), unit));
 
   // Frame color radios (standard swatches)
@@ -7298,6 +7430,25 @@ function setupSettingsListeners() {
   });
   document.querySelectorAll('input[name="mapOverlayPos"]').forEach(r => {
     r.addEventListener('change', applySettings);
+  });
+
+  const watermarkFile = document.getElementById('watermarkFile');
+  const chooseWatermark = document.getElementById('chooseWatermark');
+  chooseWatermark.addEventListener('click', () => watermarkFile.click());
+  watermarkFile.addEventListener('change', () => {
+    const file = watermarkFile.files[0];
+    watermarkFile.value = '';
+    if (file) void _loadWatermark(file);
+  });
+  document.getElementById('removeWatermark').addEventListener('click', () => {
+    _watermarkLoad?.abort();
+    chooseWatermark.focus();
+    _setWatermarkAsset(null);
+  });
+  document.getElementById('watermarkTint').addEventListener('change', applySettings);
+  document.getElementById('watermarkColor').addEventListener('input', applySettings);
+  document.querySelectorAll('input[name="watermarkPosition"]').forEach(radio => {
+    radio.addEventListener('change', applySettings);
   });
 
   // Aspect ratio radios
@@ -8188,6 +8339,7 @@ function setupCardSize() {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 function _releasePageResources(event) {
   _pageResourcesReleased = true;
+  _watermarkLoad?.abort();
   _clearLoadedMediaFocusRequest();
   // Commit the user's last debounced EXIF keystroke before freezing the page.
   // applyLiveExifEdit schedules a preview render, which is cancelled below so
