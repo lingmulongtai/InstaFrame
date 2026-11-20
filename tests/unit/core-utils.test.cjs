@@ -185,3 +185,15 @@ test('exposure times parse camera fractions and format like camera labels', () =
   assert.equal(core.formatExposureTime(2), '2');
   assert.equal(core.formatExposureTime('bulb'), 'bulb');
 });
+
+test('an embedding page can ask for a known theme only', () => {
+  assert.equal(core.embedThemeFromSearch('?theme=light'), 'light');
+  assert.equal(core.embedThemeFromSearch('?lang=ja&theme=blue-grey-dark'), 'blue-grey-dark');
+  assert.equal(core.embedThemeFromSearch('?theme=neon'), null);
+  assert.equal(core.embedThemeFromSearch(''), null);
+  assert.equal(core.embedThemeFromMessage({ type: 'instaframe:theme', theme: 'dark' }), 'dark');
+  assert.equal(core.embedThemeFromMessage({ type: 'instaframe:theme', theme: '<b>' }), null);
+  assert.equal(core.embedThemeFromMessage({ type: 'other', theme: 'dark' }), null);
+  assert.equal(core.embedThemeFromMessage('instaframe:theme'), null);
+  assert.deepEqual([...core.THEMES], ['light', 'soft-white', 'blue-grey-dark', 'dark', 'system']);
+});
