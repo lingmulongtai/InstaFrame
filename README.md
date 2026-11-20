@@ -134,6 +134,13 @@ Sample photograph: [Jo Sorgenfri on Unsplash](https://unsplash.com/photos/4OmQ8p
 - [Issue #42](https://github.com/lingmulongtai/InstaFrame/issues/42): 実VoiceOver / NVDAと全テーマの手動コントラスト確認
 - [Issue #43](https://github.com/lingmulongtai/InstaFrame/issues/43): 低メモリ実機での長時間・大規模な写真/動画混在プロファイル
 
+## ほかのサイトへの埋め込み
+
+`<iframe>` で埋め込むとき、埋め込み元のサイトのテーマに合わせられます。どちらも保存しないので、InstaFrame を単体で開いたときは利用者自身の設定のままです。
+
+- 開くとき：URLに `?theme=` を付けます（`light`・`soft-white`・`blue-grey-dark`・`dark`・`system`）。例：`https://lingmulongtai.github.io/InstaFrame/?theme=light`
+- 開いたあと：埋め込み元のページから `iframe.contentWindow.postMessage({ type: 'instaframe:theme', theme: 'dark' }, 'https://lingmulongtai.github.io')` を送ると切り替わります。親ページ以外からのメッセージと、上記以外のテーマ名は無視します。
+
 ## ローカル実行
 
 初回に `npm.cmd ci` を実行してください。`index.html`を直接開くこともできますが、依存ライブラリの準備とブラウザのセキュリティ制限回避を兼ねた、同梱のローカルHTTPサーバーを推奨します。

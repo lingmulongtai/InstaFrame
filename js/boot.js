@@ -5,7 +5,8 @@
  * the static HTML (English copy, default theme, empty canvases, every mobile
  * panel) before translations and saved preferences are applied. That produced
  * a visible jump on hard reloads. This script restores the saved theme so the
- * page background is already correct, and marks the document as booting so
+ * page background is already correct (or the theme an embedding page asks for
+ * with ?theme=), and marks the document as booting so
  * CSS keeps the UI hidden until app.js has finished its first synchronous
  * setup pass. CSS also reveals the page on its own if app.js never runs.
  */
@@ -21,8 +22,17 @@
     prefs = {};
   }
 
+  // A page that embeds InstaFrame can ask for its own theme with ?theme= (this visit only).
+  let embedTheme = null;
+  try {
+    const asked = new URLSearchParams(location.search).get('theme');
+    if (THEMES.includes(asked)) embedTheme = asked;
+  } catch (_) {
+    embedTheme = null;
+  }
+
   root.classList.add('is-booting');
-  root.setAttribute('data-theme', THEMES.includes(prefs.theme) ? prefs.theme : 'dark');
+  root.setAttribute('data-theme', embedTheme || (THEMES.includes(prefs.theme) ? prefs.theme : 'dark'));
   root.setAttribute('data-layout', LAYOUTS.includes(prefs.layout) ? prefs.layout : 'left');
   root.setAttribute('data-editor-size', EDITOR_SIZES.includes(prefs.editorSize) ? prefs.editorSize : 'comfortable');
 
