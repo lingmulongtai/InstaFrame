@@ -7845,6 +7845,21 @@ function savePrefs(p)  { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme || 'light');
 }
+
+// A page that embeds InstaFrame can set the theme with ?theme= and keep it in step
+// afterwards with postMessage({ type: 'instaframe:theme', theme }). Neither is saved,
+// so opening InstaFrame on its own still uses the visitor's choice.
+const EMBED_THEME = InstaFrameCore.embedThemeFromSearch(location.search);
+function _syncThemeChoice(theme) {
+  document.querySelectorAll('input[name="themeChoice"]').forEach(r => { r.checked = r.value === theme; });
+}
+window.addEventListener('message', event => {
+  if (window.parent === window || event.source !== window.parent) return;
+  const theme = InstaFrameCore.embedThemeFromMessage(event.data);
+  if (!theme) return;
+  applyTheme(theme);
+  _syncThemeChoice(theme);
+});
 function applyLayout(layout) {
   document.documentElement.setAttribute('data-layout', layout || 'left');
 }
@@ -7909,7 +7924,7 @@ function setupCustomizePanel() {
   const prefs = loadPrefs();
 
   // ── Theme ──────────────────────────────────────────────────────────────────
-  const savedTheme = prefs.theme || 'dark';
+  const savedTheme = EMBED_THEME || prefs.theme || 'dark';
   applyTheme(savedTheme);
   document.querySelectorAll('input[name="themeChoice"]').forEach(r => {
     if (r.value === savedTheme) r.checked = true;
@@ -8431,7 +8446,7 @@ function _restorePageResources() {
 // Apply theme & layout immediately (before paint) to avoid flash
 ;(function() {
   const p = loadPrefs();
-  applyTheme(p.theme || 'dark');
+  applyTheme(EMBED_THEME || p.theme || 'dark');
   applyLayout(p.layout || 'left');
   applyEditorSize(p.editorSize || 'comfortable');
   _applyAccentColor(p.accentColor || '#bdd7e3');

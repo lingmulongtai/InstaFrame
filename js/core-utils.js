@@ -12,6 +12,27 @@
   const PREVIEW_ZOOM_SLIDER_MIN = 50;
   const PREVIEW_ZOOM_SLIDER_MAX = 1200;
   const MAX_SAFE_CANVAS_SIDE = 16_384;
+  const THEMES = Object.freeze(['light', 'soft-white', 'blue-grey-dark', 'dark', 'system']);
+
+  /**
+   * A theme asked for by the page that embeds InstaFrame, as `?theme=` in the URL.
+   * It is used for that visit only and never replaces the visitor's saved choice.
+   */
+  function embedThemeFromSearch(search) {
+    try {
+      const theme = new URLSearchParams(String(search || '')).get('theme');
+      return THEMES.includes(theme) ? theme : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A theme change sent by the embedding page: { type: 'instaframe:theme', theme }. */
+  function embedThemeFromMessage(data) {
+    return data && typeof data === 'object' && data.type === 'instaframe:theme' && THEMES.includes(data.theme)
+      ? data.theme
+      : null;
+  }
 
   function normalizePreviewQuality(value) {
     return PREVIEW_QUALITIES.includes(value) ? value : 'auto';
@@ -328,6 +349,9 @@
     PREVIEW_ZOOM_SLIDER_MIN,
     PREVIEW_ZOOM_SLIDER_MAX,
     MAX_SAFE_CANVAS_SIDE,
+    THEMES,
+    embedThemeFromSearch,
+    embedThemeFromMessage,
     normalizePreviewQuality,
     getPreviewZoomForSliderValue,
     getPreviewSliderValueForZoom,
